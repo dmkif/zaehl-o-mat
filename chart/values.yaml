@@ -1,0 +1,60 @@
+replicaCount: 1
+
+backend:
+  image:
+    repository: ghcr.io/dmkif/zaehl-o-mat-backend
+    pullPolicy: IfNotPresent
+    tag: ""  # defaults to Chart.appVersion
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  env:
+    DEBUG: "false"
+    UPLOAD_PATH: /data/uploads
+    OIL_PRICE_SOURCE: heizoel-aktuell
+  # Reference an existing secret with keys:
+  #   DATABASE_URL, JWT_SECRET_KEY,
+  #   OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_DISCOVERY_URL,
+  #   OIDC_REDIRECT_URI, SUPERADMIN_USER, SUPERADMIN_PASSWORD
+  existingSecret: ""
+
+frontend:
+  image:
+    repository: ghcr.io/dmkif/zaehl-o-mat-frontend
+    pullPolicy: IfNotPresent
+    tag: ""
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+ingress:
+  enabled: true
+  className: traefik
+  host: zaehlomat.apps.schmulzer.de
+  tls: true
+  certIssuer: letsencrypt-prod
+
+persistence:
+  enabled: true
+  storageClass: longhorn
+  size: 5Gi
+
+postgresql:
+  enabled: true
+  auth:
+    database: zaehlwart
+    username: zaehlwart
+    existingSecret: zaehl-o-mat-db-secret
+    secretKeys:
+      userPasswordKey: POSTGRES_PASSWORD
+  primary:
+    persistence:
+      enabled: true
+      storageClass: longhorn
+      size: 5Gi

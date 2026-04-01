@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 80" role="img" aria-label="Zähl-O-Mat">
+  <title>Zähl-O-Mat</title>
+
+  <!-- Phone icon scaled to fit 80px height -->
+  <g transform="translate(2, 4) scale(0.65)">
+    <rect x="20" y="5" width="80" height="110" rx="16" fill="#1e293b" stroke="#475569" stroke-width="2"/>
+    <rect x="25" y="18" width="70" height="82" rx="4" fill="#060e1a"/>
+    <rect x="46" y="11" width="12" height="4" rx="2" fill="#334155"/>
+    <circle cx="67" cy="13" r="3" fill="#334155"/>
+    <circle cx="67" cy="13" r="1.5" fill="#64748b"/>
+    <rect x="45" y="106" width="30" height="4" rx="2" fill="#334155"/>
+    <rect x="28" y="34" width="64" height="32" rx="5" fill="#0a1628" stroke="#38bdf8" stroke-width="1.5"/>
+    <line x1="33" y1="39" x2="88" y2="39" stroke="#1e3a5f" stroke-width="0.8"/>
+    <line x1="33" y1="62" x2="88" y2="62" stroke="#1e3a5f" stroke-width="0.8"/>
+    <line x1="44" y1="39" x2="44" y2="62" stroke="#1e3a5f" stroke-width="0.8"/>
+    <line x1="60" y1="39" x2="60" y2="62" stroke="#1e3a5f" stroke-width="0.8"/>
+    <line x1="76" y1="34" x2="76" y2="66" stroke="#38bdf8" stroke-width="1.2" opacity="0.5"/>
+    <rect x="77" y="35" width="14" height="30" rx="3" fill="#1a0808"/>
+    <text x="36" y="57" text-anchor="middle" font-family="'Consolas','Courier New',monospace" font-size="15" font-weight="700" fill="#38bdf8">0</text>
+    <text x="52" y="57" text-anchor="middle" font-family="'Consolas','Courier New',monospace" font-size="15" font-weight="700" fill="#38bdf8">1</text>
+    <text x="68" y="57" text-anchor="middle" font-family="'Consolas','Courier New',monospace" font-size="15" font-weight="700" fill="#38bdf8">2</text>
+    <text x="84" y="57" text-anchor="middle" font-family="'Consolas','Courier New',monospace" font-size="15" font-weight="700" fill="#ef4444">4</text>
+    <line x1="28" y1="50" x2="92" y2="50" stroke="#34d399" stroke-width="1.5" opacity="0.9"/>
+    <polygon points="23,47 23,53 29,50" fill="#34d399" opacity="0.9"/>
+    <polygon points="97,47 97,53 91,50" fill="#34d399" opacity="0.9"/>
+    <circle cx="51" cy="87" r="4" fill="#38bdf8"/>
+    <circle cx="60" cy="87" r="4" fill="#facc15"/>
+    <circle cx="69" cy="87" r="4" fill="#f97316"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="82" y="38"
+        font-family="'Inter','Segoe UI',Arial,sans-serif"
+        font-size="28" font-weight="800"
+        fill="#f1f5f9">Zähl-O-Mat</text>
+
+  <line x1="82" y1="46" x2="316" y2="46" stroke="#1e293b" stroke-width="1"/>
+
+  <circle cx="82"  cy="59" r="4" fill="#38bdf8"/>
+  <circle cx="93"  cy="59" r="4" fill="#facc15"/>
+  <circle cx="104" cy="59" r="4" fill="#f97316"/>
+
+  <text x="114" y="63"
+        font-family="'Inter','Segoe UI',Arial,sans-serif"
+        font-size="12" font-weight="400"
+        fill="#64748b" letter-spacing="0.3">Smarte Verbrauchserfassung</text>
+</svg>

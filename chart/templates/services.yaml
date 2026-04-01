@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-backend
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "zaehl-o-mat.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-frontend
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "zaehl-o-mat.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend

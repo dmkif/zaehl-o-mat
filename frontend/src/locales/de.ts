@@ -1,0 +1,71 @@
+export default {
+  nav: {
+    dashboard: 'Dashboard',
+    properties: 'Objekte',
+    admin: 'Administration',
+  },
+  common: {
+    loading: 'Laden…',
+    save: 'Speichern',
+    saving: 'Speichert…',
+    cancel: 'Abbrechen',
+    delete: 'Löschen',
+    logout: 'Abmelden',
+    toggle_theme: 'Theme wechseln',
+  },
+  login: {
+    subtitle: 'Smarte Verbrauchserfassung für Wasser, Strom & Heizöl',
+    with_sso: 'Mit SSO anmelden',
+    username: 'Benutzername',
+    password: 'Passwort',
+    admin_login: 'Administrator-Login',
+  },
+  auth: {
+    processing: 'Anmeldung wird verarbeitet…',
+  },
+  dashboard: {
+    title: 'Dashboard',
+    properties: 'Objekte',
+    meters: 'Aktive Zähler',
+    oil_price: 'Heizöl-Marktpreis',
+  },
+  properties: {
+    title: 'Objekte',
+    add: 'Objekt hinzufügen',
+    name: 'Name',
+    address: 'Adresse',
+  },
+  meters: {
+    title: 'Zähler',
+    add: 'Zähler hinzufügen',
+    name: 'Bezeichnung',
+    serial: 'Seriennummer',
+    location: 'Einbauort',
+  },
+  meter: {
+    consumption: 'Verbrauchsverlauf',
+    add_reading: 'Ablesung erfassen',
+    readings: 'Ablesungen',
+  },
+  reading: {
+    date: 'Datum',
+    value: 'Zählerstand',
+    source: 'Quelle',
+    note: 'Notiz',
+    enter_value: 'z. B. 00123.4',
+    save: 'Ablesung speichern',
+  },
+  ocr: {
+    capture: 'Foto aufnehmen',
+    upload: 'Bild hochladen',
+    scanning: 'Erkennung läuft…',
+    detected_value: 'Erkannter Wert (bitte prüfen)',
+  },
+  admin: {
+    title: 'Administration',
+    users: 'Nutzerverwaltung',
+    username: 'Benutzername',
+    email: 'E-Mail',
+    role: 'Rolle',
+  },
+}

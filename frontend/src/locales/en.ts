@@ -1,0 +1,71 @@
+export default {
+  nav: {
+    dashboard: 'Dashboard',
+    properties: 'Properties',
+    admin: 'Administration',
+  },
+  common: {
+    loading: 'Loading…',
+    save: 'Save',
+    saving: 'Saving…',
+    cancel: 'Cancel',
+    delete: 'Delete',
+    logout: 'Log out',
+    toggle_theme: 'Toggle theme',
+  },
+  login: {
+    subtitle: 'Smart consumption tracking for water, electricity & heating oil',
+    with_sso: 'Sign in with SSO',
+    username: 'Username',
+    password: 'Password',
+    admin_login: 'Administrator login',
+  },
+  auth: {
+    processing: 'Processing login…',
+  },
+  dashboard: {
+    title: 'Dashboard',
+    properties: 'Properties',
+    meters: 'Active meters',
+    oil_price: 'Heating oil market price',
+  },
+  properties: {
+    title: 'Properties',
+    add: 'Add property',
+    name: 'Name',
+    address: 'Address',
+  },
+  meters: {
+    title: 'Meters',
+    add: 'Add meter',
+    name: 'Label',
+    serial: 'Serial number',
+    location: 'Installation location',
+  },
+  meter: {
+    consumption: 'Consumption history',
+    add_reading: 'Record reading',
+    readings: 'Readings',
+  },
+  reading: {
+    date: 'Date',
+    value: 'Meter value',
+    source: 'Source',
+    note: 'Note',
+    enter_value: 'e.g. 00123.4',
+    save: 'Save reading',
+  },
+  ocr: {
+    capture: 'Take photo',
+    upload: 'Upload image',
+    scanning: 'Recognizing…',
+    detected_value: 'Detected value (please verify)',
+  },
+  admin: {
+    title: 'Administration',
+    users: 'User management',
+    username: 'Username',
+    email: 'Email',
+    role: 'Role',
+  },
+}
