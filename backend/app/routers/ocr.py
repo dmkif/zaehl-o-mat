@@ -154,13 +154,14 @@ def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
     return candidates[0][1]
 
 
-def _llm_fallback(filepath: Path) -> str | None:
+def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
     """
     Ask a local Ollama vision model to read the meter display when EasyOCR fails.
     Model and URL are read from OLLAMA_MODEL / OLLAMA_URL environment variables.
-    Returns a cleaned digit string or None on any failure.
+    Returns (reading, serial_number) — either value may be None on failure.
     """
     import base64
+    import json
     import re
 
     import httpx
@@ -187,29 +188,52 @@ def _llm_fallback(filepath: Path) -> str | None:
             json={
                 "model": model,
                 "prompt": (
-                    "This is a photo of a utility meter (electricity, water or oil). "
-                    "Read only the main consumption counter display — the large digits "
-                    "that show the current meter reading. "
-                    "Reply with ONLY those digits and an optional decimal point, "
-                    "nothing else, no units, no extra text."
+                    "You are analyzing a photo of a utility meter (electricity, water, or oil).\n"
+                    'Reply ONLY with valid JSON in this exact format: {"reading": "VALUE", "serial": "VALUE"}\n'
+                    "- reading: ONLY the main consumption counter digits on the large display, "
+                    "with optional decimal point, no units, no spaces.\n"
+                    "- serial: the serial number or device ID printed on the meter label "
+                    "(typically 6-12 digits, often labeled Nr., S/N, or Zähler-Nr.).\n"
+                    "If you cannot read a field, use null."
                 ),
                 "images": [b64],
                 "stream": False,
+                "format": "json",
             },
             timeout=180.0,
         )
         resp.raise_for_status()
         text = resp.json().get("response", "").strip()
-        # Accept digits and at most one decimal separator
-        digits_only = re.sub(r"[^\d.,]", "", text).replace(",", ".")
-        digits_only = digits_only.strip(".")
-        if len(re.sub(r"\D", "", digits_only)) >= 3:
-            return digits_only
-        return None
+
+        # Parse JSON response from LLM
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            m = re.search(r'\{[^}]+\}', text, re.DOTALL)
+            try:
+                data = json.loads(m.group()) if m else {}
+            except json.JSONDecodeError:
+                data = {}
+
+        def _clean_reading(v: object) -> str | None:
+            if not v or not isinstance(v, str):
+                return None
+            cleaned = re.sub(r"[^\d.,]", "", v).replace(",", ".").strip(".")
+            if len(re.sub(r"\D", "", cleaned)) >= 3:
+                return cleaned
+            return None
+
+        def _clean_serial(v: object) -> str | None:
+            if not v or not isinstance(v, str):
+                return None
+            s = v.strip()
+            return None if not s or s.lower() == "null" else s
+
+        return _clean_reading(data.get("reading")), _clean_serial(data.get("serial"))
     except Exception:
         import logging
         logging.getLogger(__name__).warning("LLM fallback failed for %s", filepath)
-        return None
+        return None, None
 
 
 @router.post("/scan")
@@ -241,11 +265,12 @@ async def scan_meter(
 
     raw_texts: list = []
     detected = None
+    detected_serial = None
 
     # LLM primary: use Ollama Vision if configured; fall back to OCR if
     # Ollama is unavailable or returns nothing useful.
     if os.environ.get("OLLAMA_URL"):
-        detected = _llm_fallback(filepath)
+        detected, detected_serial = _llm_fallback(filepath)
 
     # OCR fallback (also sole method when OLLAMA_URL is not set)
     if detected is None:
@@ -273,4 +298,5 @@ async def scan_meter(
         "image_path": f"uploads/{filename}",
         "raw_texts": raw_texts,
         "detected_value": detected,
+        "detected_serial": detected_serial,
     }

@@ -19,7 +19,7 @@
       <!-- Add reading + OCR -->
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 mb-6">
         <h2 class="font-semibold mb-3">{{ $t('meter.add_reading') }}</h2>
-        <OcrCapture :meter-id="meterId" :property-id="propertyId" @reading-added="fetchReadings" />
+        <OcrCapture :meter-id="meterId" :property-id="propertyId" :serial-number="meter.serial_number ?? undefined" @reading-added="fetchReadings" />
       </div>
 
       <!-- Readings table -->

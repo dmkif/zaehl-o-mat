@@ -19,12 +19,23 @@
         <div v-if="scanning" class="text-sm text-gray-500 animate-pulse">{{ $t('ocr.scanning') }}</div>
         <template v-else>
           <label class="text-xs text-gray-500">{{ $t('ocr.detected_value') }}</label>
-          <input
-            v-model="confirmedValue"
-            type="text"
-            inputmode="decimal"
-            class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2 font-mono text-lg"
-          />
+          <div class="flex items-center gap-2">
+            <input
+              v-model="confirmedValue"
+              type="text"
+              inputmode="decimal"
+              class="flex-1 rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2 font-mono text-lg"
+            />
+            <span
+              v-if="serialMismatch"
+              class="text-amber-500 text-xl"
+              :title="serialWarningTitle"
+            >⚠️</span>
+          </div>
+          <div v-if="detectedSerial" class="text-xs text-gray-400 mt-0.5">
+            Erkannte Nr.: <span class="font-mono">{{ detectedSerial }}</span>
+            <span v-if="serialNumber && normalizeSerial(detectedSerial) === normalizeSerial(serialNumber)" class="text-green-500 ml-1">✓</span>
+          </div>
         </template>
       </div>
     </div>
@@ -59,20 +70,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 
-const props = defineProps<{ meterId: string; propertyId: string }>()
+const props = defineProps<{ meterId: string; propertyId: string; serialNumber?: string }>()
 const emit = defineEmits<{ (e: 'reading-added'): void }>()
 
 const authStore = useAuthStore()
 const previewUrl = ref<string | null>(null)
 const imagePath = ref<string | null>(null)
 const confirmedValue = ref('')
+const detectedSerial = ref<string | null>(null)
 const note = ref('')
 const scanning = ref(false)
 const saving = ref(false)
 const errorMsg = ref('')
+
+function normalizeSerial(s: string) {
+  return s.replace(/[\s\-]/g, '').toUpperCase()
+}
+
+const serialMismatch = computed(() => {
+  if (!confirmedValue.value) return false
+  // Warn if detected value matches the stored serial number (OCR read the wrong thing)
+  const storedSerial = props.serialNumber
+  if (storedSerial && normalizeSerial(confirmedValue.value) === normalizeSerial(storedSerial)) return true
+  // Warn if detected serial doesn't match the stored serial number
+  if (storedSerial && detectedSerial.value && normalizeSerial(detectedSerial.value) !== normalizeSerial(storedSerial)) return true
+  return false
+})
+
+const serialWarningTitle = computed(() => {
+  const storedSerial = props.serialNumber
+  if (storedSerial && normalizeSerial(confirmedValue.value) === normalizeSerial(storedSerial)) {
+    return 'Erkannter Wert entspricht der gespeicherten Seriennummer – möglicherweise falscher Wert'
+  }
+  if (storedSerial && detectedSerial.value && normalizeSerial(detectedSerial.value) !== normalizeSerial(storedSerial)) {
+    return `Erkannte Seriennr. (${detectedSerial.value}) stimmt nicht mit gespeicherter Nr. (${storedSerial}) überein`
+  }
+  return ''
+})
 
 async function onFileSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
@@ -80,6 +117,7 @@ async function onFileSelected(event: Event) {
   previewUrl.value = URL.createObjectURL(file)
   imagePath.value = null
   confirmedValue.value = ''
+  detectedSerial.value = null
   scanning.value = true
   errorMsg.value = ''
 
@@ -97,6 +135,7 @@ async function onFileSelected(event: Event) {
       const data = await res.json()
       confirmedValue.value = data.detected_value ?? ''
       imagePath.value = data.image_path ?? null
+      detectedSerial.value = data.detected_serial ?? null
     } else {
       errorMsg.value = 'OCR fehlgeschlagen'
     }
