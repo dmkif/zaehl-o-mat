@@ -226,3 +226,16 @@ class OilMarketPrice(Base):
     price_per_100l: Mapped[float] = mapped_column(Numeric(precision=8, scale=2), nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class OidcPkceState(Base):
+    """Short-lived PKCE state used during the OIDC authorization code flow.
+
+    Rows are cleaned up automatically at insert time (rows older than 10 minutes
+    are deleted) so the table stays small without requiring a background job.
+    """
+    __tablename__ = "oidc_pkce_states"
+
+    state: Mapped[str] = mapped_column(String(64), primary_key=True)
+    code_verifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)

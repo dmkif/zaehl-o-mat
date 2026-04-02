@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
 
-from jose import JWTError, jwt
+from authlib.jose import JsonWebToken, JoseError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -14,6 +14,7 @@ from app.models import User, UserRole
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
+_jwt = JsonWebToken([settings.jwt_algorithm])
 
 
 def hash_password(password: str) -> str:
@@ -25,16 +26,19 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:
-    to_encode = data.copy()
+    payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=expires_minutes or settings.jwt_access_token_expire_minutes
     )
-    to_encode["exp"] = expire
-    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    payload["exp"] = int(expire.timestamp())
+    header = {"alg": settings.jwt_algorithm}
+    return _jwt.encode(header, payload, settings.jwt_secret_key).decode()
 
 
 def decode_access_token(token: str) -> dict:
-    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    claims = _jwt.decode(token, settings.jwt_secret_key)
+    claims.validate()
+    return dict(claims)
 
 
 def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
@@ -84,7 +88,7 @@ def get_current_user(
         user_id: str = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    except JWTError:
+    except JoseError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()

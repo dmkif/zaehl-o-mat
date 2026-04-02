@@ -2,7 +2,9 @@ import hashlib
 import os
 import secrets
 import base64
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,25 +20,31 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
-from app.models import User, UserRole
+from app.models import User, UserRole, OidcPkceState
 from app.schemas.auth import TokenResponse, SuperadminLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# In-memory PKCE store (code_verifier keyed by state).
-# For production scale, swap with Redis; fine for single-replica pod.
-_pkce_store: dict[str, str] = {}
+# OIDC discovery config cache with 1 h TTL (D3)
 _oidc_config_cache: Optional[dict] = None
+_oidc_config_fetched_at: Optional[datetime] = None
+_OIDC_CACHE_TTL = timedelta(hours=1)
 
 
 async def _oidc_config() -> dict:
-    global _oidc_config_cache
-    if _oidc_config_cache:
+    global _oidc_config_cache, _oidc_config_fetched_at
+    now = datetime.now(timezone.utc)
+    if (
+        _oidc_config_cache
+        and _oidc_config_fetched_at
+        and now - _oidc_config_fetched_at < _OIDC_CACHE_TTL
+    ):
         return _oidc_config_cache
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(settings.oidc_discovery_url)
         resp.raise_for_status()
         _oidc_config_cache = resp.json()
+        _oidc_config_fetched_at = now
     return _oidc_config_cache
 
 
@@ -47,13 +55,23 @@ def _pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def _cleanup_expired_pkce(db: Session) -> None:
+    """Delete PKCE state rows older than 10 minutes."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+    db.query(OidcPkceState).filter(OidcPkceState.created_at < cutoff).delete()
+    db.commit()
+
+
 @router.get("/login")
-async def login():
+async def login(db: Session = Depends(get_db)):
     """Redirect browser to Authentik for OIDC authentication."""
     cfg = await _oidc_config()
     state = secrets.token_urlsafe(16)
     verifier, challenge = _pkce_pair()
-    _pkce_store[state] = verifier
+
+    _cleanup_expired_pkce(db)
+    db.add(OidcPkceState(state=state, code_verifier=verifier))
+    db.commit()
 
     params = {
         "response_type": "code",
@@ -64,7 +82,6 @@ async def login():
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
-    from urllib.parse import urlencode
     url = cfg["authorization_endpoint"] + "?" + urlencode(params)
     return RedirectResponse(url=url)
 
@@ -76,9 +93,20 @@ async def callback(
     db: Session = Depends(get_db),
 ):
     """Exchange authorization code for tokens, return JWT."""
-    verifier = _pkce_store.pop(state, None)
-    if not verifier:
+    pkce_row = db.query(OidcPkceState).filter(OidcPkceState.state == state).first()
+    if not pkce_row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
+
+    # Validate TTL (belt-and-suspenders alongside periodic cleanup)
+    age = datetime.now(timezone.utc) - pkce_row.created_at
+    if age > timedelta(minutes=10):
+        db.delete(pkce_row)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="State expired")
+
+    verifier = pkce_row.code_verifier
+    db.delete(pkce_row)
+    db.commit()
 
     cfg = await _oidc_config()
     async with httpx.AsyncClient(timeout=15) as client:
