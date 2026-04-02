@@ -21,6 +21,9 @@ services:
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
+    environment:
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_CONTEXT_LENGTH: "2048"
     devices:
       - nvidia.com/gpu=all
 
@@ -46,7 +49,7 @@ services:
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: qwen2.5vl:3b
+      OLLAMA_MODEL: minicpm-v:8b
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""
