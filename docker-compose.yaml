@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zaehlwart
+      POSTGRES_USER: zaehlwart
+      POSTGRES_PASSWORD: zaehlwart
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zaehlwart"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data/uploads
+    environment:
+      DATABASE_URL: postgresql://zaehlwart:zaehlwart@db:5432/zaehlwart
+      JWT_SECRET_KEY: local-dev-secret-change-in-prod
+      SUPERADMIN_USER: admin
+      SUPERADMIN_PASSWORD: admin123
+      UPLOAD_PATH: /data/uploads
+      OIL_PRICE_SOURCE: heizoel-aktuell
+      APP_BASE_URL: http://localhost:5173
+      DEBUG: "true"
+      # OIDC optional – leer lassen deaktiviert SSO
+      OIDC_CLIENT_ID: ""
+      OIDC_CLIENT_SECRET: ""
+      OIDC_DISCOVERY_URL: ""
+      OIDC_REDIRECT_URI: "http://localhost:5173/auth/callback"
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  db-data:
+  uploads:
