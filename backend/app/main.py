@@ -1,16 +1,16 @@
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import SessionLocal, engine
-from app.models import Base
+from app.database import SessionLocal
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,9 +38,6 @@ async def _run_oil_price():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables on startup (alembic handles proper migrations; this is a safety net)
-    Base.metadata.create_all(bind=engine)
-
     # Fetch oil price immediately so data is available from the first request
     await _run_oil_price()
 
@@ -70,8 +67,17 @@ app.add_middleware(
     allow_origins=[settings.app_base_url, "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    response = await call_next(request)
+    response.headers["x-request-id"] = req_id
+    return response
 
 # Routers
 from app.routers import auth, properties, meters, readings, ocr, dashboard, admin, uploads  # noqa: E402
@@ -88,3 +94,27 @@ app.include_router(uploads.router, prefix="/api")
 # Ensure upload directory exists
 uploads_dir = Path(settings.upload_path)
 uploads_dir.mkdir(parents=True, exist_ok=True)
+
+
+from fastapi import Response  # noqa: E402
+from app.database import get_db  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+
+
+@app.get("/api/health", tags=["health"])
+def health(response: Response):
+    """Liveness + readiness probe: checks DB connectivity and scheduler state."""
+    db_ok = False
+    try:
+        db = next(get_db())
+        db.execute(text("SELECT 1"))
+        db.close()
+        db_ok = True
+    except Exception:
+        pass
+
+    scheduler_ok = scheduler.running
+    ok = db_ok and scheduler_ok
+    if not ok:
+        response.status_code = 503
+    return {"status": "ok" if ok else "degraded", "db": db_ok, "scheduler": scheduler_ok}
