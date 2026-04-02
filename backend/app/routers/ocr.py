@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -7,6 +8,7 @@ import re
 import uuid
 from pathlib import Path
 
+import filetype
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
@@ -20,8 +22,20 @@ router = APIRouter(prefix="/ocr", tags=["ocr"])
 
 logger = logging.getLogger(__name__)
 
-# EasyOCR reader is lazily initialized to avoid slow startup
+# Allowed image MIME types (checked by magic bytes via `filetype` library)
+_ALLOWED_IMAGE_MIMES = frozenset({
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+})
+
+# EasyOCR reader is lazily initialized to avoid slow startup.
+# A lock ensures only one thread initialises or uses the reader at a time.
 _reader = None
+_reader_lock = asyncio.Lock()
 
 
 def _get_reader():
@@ -234,36 +248,51 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
         return None, None
 
 
-def _run_ocr_on_file(filepath: Path) -> dict:
-    """Run the full OCR/LLM pipeline on an existing file and return detection results."""
+def _run_ocr_on_file_sync(filepath: Path) -> dict:
+    """Synchronous OCR (EasyOCR only) — called from asyncio.to_thread."""
     raw_texts: list = []
+    detected = None
+
+    proc_path = None
+    img_size = (0, 0)
+    try:
+        reader = _get_reader()
+        proc_path, img_size = _preprocess_image(filepath)
+        results = reader.readtext(str(proc_path), detail=1)
+    except Exception as exc:
+        logger.error("OCR failed: %s", exc)
+        raise RuntimeError(f"OCR processing failed: {exc}") from exc
+    finally:
+        if proc_path and proc_path.exists():
+            proc_path.unlink(missing_ok=True)
+
+    raw_texts = [
+        {"text": text, "conf": round(float(conf), 3)}
+        for (_, text, conf) in results
+    ]
+    detected = _extract_numeric(results, img_size=img_size)
+    return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": None}
+
+
+async def _run_ocr_on_file(filepath: Path) -> dict:
+    """Run the full OCR/LLM pipeline on an existing file and return detection results."""
     detected = None
     detected_serial = None
 
+    # LLM runs synchronously via httpx (blocking I/O) — offload to thread
     if os.environ.get("OLLAMA_URL"):
-        detected, detected_serial = _llm_fallback(filepath)
+        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath)
 
     if detected is None:
-        proc_path = None
-        img_size = (0, 0)
-        try:
-            reader = _get_reader()
-            proc_path, img_size = _preprocess_image(filepath)
-            results = reader.readtext(str(proc_path), detail=1)
-        except Exception as exc:
-            logger.error("OCR failed: %s", exc)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
-        finally:
-            if proc_path and proc_path.exists():
-                proc_path.unlink(missing_ok=True)
+        # EasyOCR is CPU-bound — run in thread pool behind the reader lock
+        async with _reader_lock:
+            try:
+                result = await asyncio.to_thread(_run_ocr_on_file_sync, filepath)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        return result
 
-        raw_texts = [
-            {"text": text, "conf": round(float(conf), 3)}
-            for (_, text, conf) in results
-        ]
-        detected = _extract_numeric(results, img_size=img_size)
-
-    return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": detected_serial}
+    return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
 
 
 @router.post("/rescan/{reading_id}")
@@ -305,7 +334,7 @@ async def rescan_reading(
     if not filepath.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
 
-    result = _run_ocr_on_file(filepath)
+    result = await _run_ocr_on_file(filepath)
     return {"image_path": reading.image_path, **result}
 
 
@@ -328,6 +357,11 @@ async def scan_meter(
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image too large (max 10 MB)")
+
+    # Magic-bytes validation: distrust the client-supplied Content-Type
+    detected_mime = filetype.guess_mime(contents)
+    if detected_mime not in _ALLOWED_IMAGE_MIMES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be a supported image (JPEG, PNG, WEBP, GIF, BMP, TIFF)")
 
     # Validate that the requesting user has access to the given meter
     if meter_id is not None:
@@ -353,5 +387,5 @@ async def scan_meter(
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
 
-    result = _run_ocr_on_file(filepath)
+    result = await _run_ocr_on_file(filepath)
     return {"image_path": f"uploads/{filename}", **result}

@@ -7,7 +7,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import SessionLocal, engine
@@ -75,7 +74,7 @@ app.add_middleware(
 )
 
 # Routers
-from app.routers import auth, properties, meters, readings, ocr, dashboard, admin  # noqa: E402
+from app.routers import auth, properties, meters, readings, ocr, dashboard, admin, uploads  # noqa: E402
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(properties.router, prefix="/api")
@@ -84,8 +83,8 @@ app.include_router(readings.router, prefix="/api")
 app.include_router(ocr.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(uploads.router, prefix="/api")
 
-# Serve uploaded files (images referenced in readings)
+# Ensure upload directory exists
 uploads_dir = Path(settings.upload_path)
 uploads_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
