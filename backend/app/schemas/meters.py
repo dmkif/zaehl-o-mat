@@ -12,7 +12,7 @@ class MeterCreate(BaseModel):
     serial_number: Optional[str] = None
     location: Optional[str] = None
     notes: Optional[str] = None
-    integration_type: IntegrationType = IntegrationType.none
+    integration_type: IntegrationType = IntegrationType.manual
     integration_config: Optional[Any] = None
 
 

@@ -22,7 +22,7 @@ class PropertyResponse(BaseModel):
     id: uuid.UUID
     name: str
     address: Optional[str]
-    property_type: PropertyType
+    property_type: Optional[PropertyType]
     manager_ldap_group: Optional[str]
 
     model_config = {"from_attributes": True}

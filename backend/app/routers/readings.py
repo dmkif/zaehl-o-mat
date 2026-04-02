@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -81,7 +81,7 @@ def create_reading(
     reading = Reading(
         meter_id=meter_id,
         value=body.value,
-        read_at=body.read_at or datetime.utcnow(),
+        read_at=body.read_at or datetime.now(timezone.utc),
         source=body.source or ReadingSource.manual,
         image_path=body.image_path,
         note=body.note,

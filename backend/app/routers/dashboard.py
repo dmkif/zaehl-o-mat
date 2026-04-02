@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -142,7 +142,7 @@ def cost_forecast(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     # Use last 90 days of readings for trend
-    since = datetime.utcnow() - timedelta(days=90)
+    since = datetime.now(timezone.utc) - timedelta(days=90)
     readings = (
         db.query(Reading)
         .filter(Reading.meter_id == meter_id, Reading.read_at >= since)
@@ -167,7 +167,7 @@ def cost_forecast(
     price_per_unit = float(price_entry.price_per_unit) if price_entry else None
 
     forecast = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for m in range(1, months_ahead + 1):
         month_consumption = daily_consumption * 30
         cost = month_consumption * price_per_unit if price_per_unit else None

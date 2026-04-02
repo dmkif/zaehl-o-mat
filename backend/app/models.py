@@ -6,15 +6,18 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects import sqlite as _sqlite
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -24,6 +27,11 @@ from app.database import Base
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+# SQLite does not support BigInteger as an autoincrement PK.
+# Use this type for such columns so tests work without PostgreSQL.
+_BigIntPK = BigInteger().with_variant(_sqlite.INTEGER(), "sqlite")
 
 
 # ── Enums ──────────────────────────────────────────────────────────────────────
@@ -60,6 +68,13 @@ class IntegrationType(str, enum.Enum):
     homeassistant = "homeassistant"
 
 
+class PropertyType(str, enum.Enum):
+    residential = "residential"
+    commercial = "commercial"
+    industrial = "industrial"
+    other = "other"
+
+
 class ReadingSource(str, enum.Enum):
     manual = "manual"
     auto = "auto"
@@ -93,7 +108,7 @@ class User(Base):
 class LdapRoleMapping(Base):
     __tablename__ = "ldap_role_mappings"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     ldap_group: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     app_role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
 
@@ -108,8 +123,8 @@ class Property(Base):
     manager_ldap_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="property", cascade="all, delete-orphan")
-    meters: Mapped[list["Meter"]] = relationship(back_populates="property", cascade="all, delete-orphan")
+    property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="prop", cascade="all, delete-orphan")
+    meters: Mapped[list["Meter"]] = relationship(back_populates="prop", cascade="all, delete-orphan")
     oil_deliveries: Mapped[list["OilDelivery"]] = relationship(back_populates="property", cascade="all, delete-orphan")
 
 
@@ -117,12 +132,12 @@ class PropertyUser(Base):
     __tablename__ = "property_users"
     __table_args__ = (UniqueConstraint("property_id", "user_id"),)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[PropertyUserRole] = mapped_column(Enum(PropertyUserRole), nullable=False, default=PropertyUserRole.user)
 
-    property: Mapped["Property"] = relationship(back_populates="property_users")
+    prop: Mapped["Property"] = relationship(back_populates="property_users")
     user: Mapped["User"] = relationship(back_populates="property_users")
 
 
@@ -144,7 +159,7 @@ class Meter(Base):
     replaced_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("meters.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    property: Mapped["Property"] = relationship(back_populates="meters")
+    prop: Mapped["Property"] = relationship(back_populates="meters")
     readings: Mapped[list["Reading"]] = relationship(back_populates="meter", cascade="all, delete-orphan")
     price_entries: Mapped[list["PriceEntry"]] = relationship(back_populates="meter", cascade="all, delete-orphan")
     replaced_by: Mapped["Meter | None"] = relationship("Meter", foreign_keys=[replaced_by_id], remote_side="Meter.id")
@@ -162,7 +177,7 @@ class Reading(Base):
               postgresql_where="source IN ('auto', 'archived')"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     meter_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("meters.id", ondelete="CASCADE"), nullable=False)
     value: Mapped[float] = mapped_column(Numeric(precision=12, scale=3), nullable=False)
     read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -177,7 +192,7 @@ class Reading(Base):
 class PriceEntry(Base):
     __tablename__ = "price_entries"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     meter_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("meters.id", ondelete="CASCADE"), nullable=False)
     price_per_unit: Mapped[float] = mapped_column(Numeric(precision=10, scale=4), nullable=False)
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -189,7 +204,7 @@ class PriceEntry(Base):
 class OilDelivery(Base):
     __tablename__ = "oil_deliveries"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
     liters: Mapped[float] = mapped_column(Numeric(precision=10, scale=2), nullable=False)
     total_price: Mapped[float] = mapped_column(Numeric(precision=10, scale=2), nullable=False)
@@ -206,8 +221,8 @@ class OilMarketPrice(Base):
     __tablename__ = "oil_market_prices"
     __table_args__ = (UniqueConstraint("price_date", "source"),)
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    price_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
+    price_date: Mapped[datetime] = mapped_column(Date, nullable=False)
     price_per_100l: Mapped[float] = mapped_column(Numeric(precision=8, scale=2), nullable=False)
     source: Mapped[str] = mapped_column(String(50), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
