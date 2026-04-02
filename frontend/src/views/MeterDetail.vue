@@ -31,6 +31,7 @@
               <th class="text-left py-2">{{ $t('reading.date') }}</th>
               <th class="text-right py-2">{{ $t('reading.value') }}</th>
               <th class="text-center py-2">{{ $t('reading.source') }}</th>
+              <th class="text-center py-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -46,11 +47,43 @@
                   }"
                 >{{ r.source }}</span>
               </td>
+              <td class="py-2 text-center">
+                <button
+                  v-if="r.image_path"
+                  class="text-gray-400 hover:text-blue-500 transition-colors"
+                  :title="$t('reading.rescan')"
+                  @click="startRescan(r)"
+                >
+                  <!-- Refresh icon -->
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  </svg>
+                </button>
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
     </template>
+  </div>
+
+  <!-- Re-scan result dialog -->
+  <div v-if="rescanResult" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="rescanResult = null">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+      <h3 class="font-semibold text-lg mb-4">{{ $t('reading.rescan_result') }}</h3>
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-1">
+        {{ $t('reading.detected_value') }}: <span class="font-mono font-semibold">{{ rescanResult.detected_value ?? '—' }}</span>
+      </p>
+      <p v-if="rescanResult.detected_serial" class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+        {{ $t('reading.detected_serial') }}: <span class="font-mono">{{ rescanResult.detected_serial }}</span>
+      </p>
+      <div class="flex gap-3 justify-end">
+        <button class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600" @click="rescanResult = null">
+          {{ $t('common.close') }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -108,5 +141,18 @@ async function fetchReadings() {
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) readings.value = await res.json()
+}
+
+const rescanResult = ref<any>(null)
+
+async function startRescan(reading: any) {
+  rescanResult.value = null
+  const res = await apiFetch(`/api/ocr/rescan/${reading.id}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authStore.token}` },
+  })
+  if (res.ok) {
+    rescanResult.value = await res.json()
+  }
 }
 </script>

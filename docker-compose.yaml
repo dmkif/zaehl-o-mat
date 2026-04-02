@@ -15,7 +15,7 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.20.0
     restart: unless-stopped
     ports:
       - "11434:11434"

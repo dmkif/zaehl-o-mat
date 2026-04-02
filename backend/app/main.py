@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -29,11 +28,11 @@ def _run_retention():
         db.close()
 
 
-def _run_oil_price():
+async def _run_oil_price():
     from app.services.oil_price import fetch_and_store_oil_price
     db = SessionLocal()
     try:
-        asyncio.get_event_loop().run_until_complete(fetch_and_store_oil_price(db))
+        await fetch_and_store_oil_price(db)
     finally:
         db.close()
 
@@ -42,6 +41,9 @@ def _run_oil_price():
 async def lifespan(app: FastAPI):
     # Create tables on startup (alembic handles proper migrations; this is a safety net)
     Base.metadata.create_all(bind=engine)
+
+    # Fetch oil price immediately so data is available from the first request
+    await _run_oil_price()
 
     # Schedule jobs
     scheduler.add_job(_run_retention, CronTrigger(hour=3, minute=0), id="retention")

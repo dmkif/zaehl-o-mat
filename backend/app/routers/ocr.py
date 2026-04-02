@@ -234,6 +234,81 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
         return None, None
 
 
+def _run_ocr_on_file(filepath: Path) -> dict:
+    """Run the full OCR/LLM pipeline on an existing file and return detection results."""
+    raw_texts: list = []
+    detected = None
+    detected_serial = None
+
+    if os.environ.get("OLLAMA_URL"):
+        detected, detected_serial = _llm_fallback(filepath)
+
+    if detected is None:
+        proc_path = None
+        img_size = (0, 0)
+        try:
+            reader = _get_reader()
+            proc_path, img_size = _preprocess_image(filepath)
+            results = reader.readtext(str(proc_path), detail=1)
+        except Exception as exc:
+            logger.error("OCR failed: %s", exc)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
+        finally:
+            if proc_path and proc_path.exists():
+                proc_path.unlink(missing_ok=True)
+
+        raw_texts = [
+            {"text": text, "conf": round(float(conf), 3)}
+            for (_, text, conf) in results
+        ]
+        detected = _extract_numeric(results, img_size=img_size)
+
+    return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": detected_serial}
+
+
+@router.post("/rescan/{reading_id}")
+async def rescan_reading(
+    reading_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Re-run OCR/LLM on the image already stored for an existing reading.
+    The reading record is not modified — the client decides whether to update the value.
+    """
+    from app.models import Reading, Meter, PropertyUser
+    reading = db.query(Reading).filter(Reading.id == reading_id).first()
+    if not reading:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reading not found")
+
+    # Verify the caller has access to the meter this reading belongs to
+    meter = db.query(Meter).filter(Meter.id == reading.meter_id).first()
+    if not meter:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meter not found")
+
+    if current_user.role not in (UserRole.superadmin, UserRole.admin):
+        assoc = (
+            db.query(PropertyUser)
+            .filter(
+                PropertyUser.property_id == meter.property_id,
+                PropertyUser.user_id == current_user.id,
+            )
+            .first()
+        )
+        if not assoc:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+    if not reading.image_path:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reading has no associated image")
+
+    filepath = Path(settings.upload_path) / Path(reading.image_path).name
+    if not filepath.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
+
+    result = _run_ocr_on_file(filepath)
+    return {"image_path": reading.image_path, **result}
+
+
 @router.post("/scan")
 async def scan_meter(
     file: UploadFile = File(...),
@@ -278,39 +353,5 @@ async def scan_meter(
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
 
-    raw_texts: list = []
-    detected = None
-    detected_serial = None
-
-    # LLM primary: use Ollama Vision if configured; fall back to OCR if
-    # Ollama is unavailable or returns nothing useful.
-    if os.environ.get("OLLAMA_URL"):
-        detected, detected_serial = _llm_fallback(filepath)
-
-    # OCR fallback (also sole method when OLLAMA_URL is not set)
-    if detected is None:
-        proc_path = None
-        img_size = (0, 0)
-        try:
-            reader = _get_reader()
-            proc_path, img_size = _preprocess_image(filepath)
-            results = reader.readtext(str(proc_path), detail=1)
-        except Exception as exc:
-            logger.error("OCR failed: %s", exc)
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
-        finally:
-            if proc_path and proc_path.exists():
-                proc_path.unlink(missing_ok=True)
-
-        raw_texts = [
-            {"text": text, "conf": round(float(conf), 3)}
-            for (_, text, conf) in results
-        ]
-        detected = _extract_numeric(results, img_size=img_size)
-
-    return {
-        "image_path": f"uploads/{filename}",
-        "raw_texts": raw_texts,
-        "detected_value": detected,
-        "detected_serial": detected_serial,
-    }
+    result = _run_ocr_on_file(filepath)
+    return {"image_path": f"uploads/{filename}", **result}

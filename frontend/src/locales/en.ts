@@ -9,6 +9,7 @@ export default {
     save: 'Save',
     saving: 'Saving…',
     cancel: 'Cancel',
+    close: 'Close',
     delete: 'Delete',
     logout: 'Log out',
     toggle_theme: 'Toggle theme',
@@ -54,6 +55,10 @@ export default {
     note: 'Note',
     enter_value: 'e.g. 00123.4',
     save: 'Save reading',
+    rescan: 'Re-scan image',
+    rescan_result: 'Detection result',
+    detected_value: 'Detected value',
+    detected_serial: 'Detected serial',
   },
   ocr: {
     capture: 'Take photo',
