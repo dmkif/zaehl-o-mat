@@ -14,8 +14,8 @@
     "pinia": "^2.1.7",
     "vue-i18n": "^9.13.1",
     "axios": "^1.7.2",
-    "apexcharts": "^3.49.1",
-    "vue3-apexcharts": "^1.4.4"
+    "apexcharts": "^5.10.0",
+    "vue3-apexcharts": "^1.11.1"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.5",
