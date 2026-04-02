@@ -14,12 +14,24 @@ services:
       timeout: 5s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    devices:
+      - nvidia.com/gpu=all
+
   backend:
     build: ./backend
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      ollama:
+        condition: service_started
     ports:
       - "8000:8000"
     volumes:
@@ -33,6 +45,8 @@ services:
       OIL_PRICE_SOURCE: heizoel-aktuell
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen2.5vl:3b
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""
@@ -66,3 +80,4 @@ services:
 volumes:
   db-data:
   uploads:
+  ollama-data:

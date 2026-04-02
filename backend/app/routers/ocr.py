@@ -154,6 +154,64 @@ def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
     return candidates[0][1]
 
 
+def _llm_fallback(filepath: Path) -> str | None:
+    """
+    Ask a local Ollama vision model to read the meter display when EasyOCR fails.
+    Model and URL are read from OLLAMA_MODEL / OLLAMA_URL environment variables.
+    Returns a cleaned digit string or None on any failure.
+    """
+    import base64
+    import re
+
+    import httpx
+
+    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+    model = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:7b")
+
+    try:
+        # Resize to max 800px before sending to LLM to limit visual-token count
+        # and avoid OOM on systems with limited RAM (6–8 GB).
+        from PIL import Image
+        import io as _io
+        img = Image.open(filepath)
+        max_side = 800
+        if max(img.size) > max_side:
+            scale = max_side / max(img.size)
+            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
+        buf = _io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=85)
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        resp = httpx.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": (
+                    "This is a photo of a utility meter (electricity, water or oil). "
+                    "Read only the main consumption counter display — the large digits "
+                    "that show the current meter reading. "
+                    "Reply with ONLY those digits and an optional decimal point, "
+                    "nothing else, no units, no extra text."
+                ),
+                "images": [b64],
+                "stream": False,
+            },
+            timeout=180.0,
+        )
+        resp.raise_for_status()
+        text = resp.json().get("response", "").strip()
+        # Accept digits and at most one decimal separator
+        digits_only = re.sub(r"[^\d.,]", "", text).replace(",", ".")
+        digits_only = digits_only.strip(".")
+        if len(re.sub(r"\D", "", digits_only)) >= 3:
+            return digits_only
+        return None
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("LLM fallback failed for %s", filepath)
+        return None
+
+
 @router.post("/scan")
 async def scan_meter(
     file: UploadFile = File(...),
@@ -181,30 +239,35 @@ async def scan_meter(
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
 
-    # Run OCR
-    proc_path = None
-    img_size = (0, 0)
-    try:
-        reader = _get_reader()
-        proc_path, img_size = _preprocess_image(filepath)
-        # allowlist restricts EasyOCR to digits and decimal separators only,
-        # which dramatically reduces false matches against serial numbers /
-        # alphanumeric labels on the meter face.
-        results = reader.readtext(str(proc_path), detail=1)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).error("OCR failed: %s", exc)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
-    finally:
-        if proc_path and proc_path.exists():
-            proc_path.unlink(missing_ok=True)
+    raw_texts: list = []
+    detected = None
 
-    # Convert to JSON-serializable format (EasyOCR bbox uses numpy.int32)
-    raw_texts = [
-        {"text": text, "conf": round(float(conf), 3)}
-        for (_, text, conf) in results
-    ]
-    detected = _extract_numeric(results, img_size=img_size)
+    # LLM primary: use Ollama Vision if configured; fall back to OCR if
+    # Ollama is unavailable or returns nothing useful.
+    if os.environ.get("OLLAMA_URL"):
+        detected = _llm_fallback(filepath)
+
+    # OCR fallback (also sole method when OLLAMA_URL is not set)
+    if detected is None:
+        proc_path = None
+        img_size = (0, 0)
+        try:
+            reader = _get_reader()
+            proc_path, img_size = _preprocess_image(filepath)
+            results = reader.readtext(str(proc_path), detail=1)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("OCR failed: %s", exc)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
+        finally:
+            if proc_path and proc_path.exists():
+                proc_path.unlink(missing_ok=True)
+
+        raw_texts = [
+            {"text": text, "conf": round(float(conf), 3)}
+            for (_, text, conf) in results
+        ]
+        detected = _extract_numeric(results, img_size=img_size)
 
     return {
         "image_path": f"uploads/{filename}",
