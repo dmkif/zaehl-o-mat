@@ -1,5 +1,8 @@
+import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -27,7 +30,6 @@ def _run_retention():
 
 
 def _run_oil_price():
-    import asyncio
     from app.services.oil_price import fetch_and_store_oil_price
     db = SessionLocal()
     try:
@@ -82,10 +84,6 @@ app.include_router(dashboard.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
 # Serve uploaded files (images referenced in readings)
-import os
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
-
 uploads_dir = Path(settings.upload_path)
 uploads_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")

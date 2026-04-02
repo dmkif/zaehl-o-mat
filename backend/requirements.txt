@@ -12,7 +12,6 @@ authlib==1.6.9
 httpx==0.28.1
 python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
-bcrypt<4
 apscheduler==3.11.2
 beautifulsoup4==4.14.3
 requests==2.32.3

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { apiFetch } from '@/utils/api'
 
 interface AuthUser {
   id: string
@@ -32,7 +33,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchMe() {
     if (!token.value) return
     try {
-      const res = await fetch('/api/auth/me', {
+      const res = await apiFetch('/api/auth/me', {
         headers: { Authorization: `Bearer ${token.value}` },
       })
       if (res.ok) {

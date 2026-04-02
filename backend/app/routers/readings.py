@@ -1,11 +1,13 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models import Meter, Property, PropertyUser, PropertyUserRole, Reading, ReadingSource, User, UserRole
 from app.schemas.readings import ReadingCreate, ReadingResponse
@@ -104,5 +106,8 @@ def delete_reading(
     reading = db.query(Reading).filter(Reading.id == reading_id, Reading.meter_id == meter_id).first()
     if not reading:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if reading.image_path:
+        img_file = Path(settings.upload_path) / Path(reading.image_path).name
+        img_file.unlink(missing_ok=True)
     db.delete(reading)
     db.commit()

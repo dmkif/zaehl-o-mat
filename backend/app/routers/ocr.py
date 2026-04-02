@@ -1,8 +1,13 @@
+import base64
 import io
+import json
+import logging
 import os
+import re
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -12,6 +17,8 @@ from app.database import get_db
 from app.models import User, Meter, Property, PropertyUser, UserRole
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
+
+logger = logging.getLogger(__name__)
 
 # EasyOCR reader is lazily initialized to avoid slow startup
 _reader = None
@@ -92,7 +99,6 @@ def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
     - +0.1/+0.4 bbox height bonus    → display digits are physically larger
                                        than label or serial-number text
     """
-    import re
 
     img_h = img_size[1] if img_size else 0
     candidates = []
@@ -160,12 +166,6 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
     Model and URL are read from OLLAMA_MODEL / OLLAMA_URL environment variables.
     Returns (reading, serial_number) — either value may be None on failure.
     """
-    import base64
-    import json
-    import re
-
-    import httpx
-
     ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
     model = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:7b")
 
@@ -173,13 +173,12 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
         # Resize to max 800px before sending to LLM to limit visual-token count
         # and avoid OOM on systems with limited RAM (6–8 GB).
         from PIL import Image
-        import io as _io
         img = Image.open(filepath)
         max_side = 800
         if max(img.size) > max_side:
             scale = max_side / max(img.size)
             img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
-        buf = _io.BytesIO()
+        buf = io.BytesIO()
         img.convert("RGB").save(buf, format="JPEG", quality=85)
         b64 = base64.b64encode(buf.getvalue()).decode()
 
@@ -231,8 +230,7 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
 
         return _clean_reading(data.get("reading")), _clean_serial(data.get("serial"))
     except Exception:
-        import logging
-        logging.getLogger(__name__).warning("LLM fallback failed for %s", filepath)
+        logger.warning("LLM fallback failed for %s", filepath)
         return None, None
 
 
@@ -255,6 +253,23 @@ async def scan_meter(
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image too large (max 10 MB)")
+
+    # Validate that the requesting user has access to the given meter
+    if meter_id is not None:
+        meter = db.query(Meter).filter(Meter.id == meter_id).first()
+        if not meter:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Meter not found")
+        if current_user.role not in (UserRole.superadmin, UserRole.admin):
+            assoc = (
+                db.query(PropertyUser)
+                .filter(
+                    PropertyUser.property_id == meter.property_id,
+                    PropertyUser.user_id == current_user.id,
+                )
+                .first()
+            )
+            if not assoc:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     # Save to disk
     upload_dir = Path(settings.upload_path)
@@ -281,8 +296,7 @@ async def scan_meter(
             proc_path, img_size = _preprocess_image(filepath)
             results = reader.readtext(str(proc_path), detail=1)
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error("OCR failed: %s", exc)
+            logger.error("OCR failed: %s", exc)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="OCR processing failed")
         finally:
             if proc_path and proc_path.exists():
