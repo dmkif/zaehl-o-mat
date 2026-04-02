@@ -17,3 +17,4 @@ htmlcov/
 .env
 .DS_Store
 node_modules/
+Beispielzähler/
