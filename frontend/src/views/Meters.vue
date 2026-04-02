@@ -46,16 +46,13 @@
               class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2">
               <option value="water">💧 Wasser</option>
               <option value="electricity">⚡ Strom</option>
-              <option value="heating_oil">🛢️ Heizöl</option>
-              <option value="gas">🔥 Gas</option>
-              <option value="heat">♨️ Wärme</option>
+              <option value="oil">🛢️ Heizöl</option>
             </select>
             <select v-model="newMeter.unit"
               class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2">
-              <option value="m3">m³</option>
-              <option value="kwh">kWh</option>
-              <option value="liter">Liter</option>
-              <option value="wh">Wh</option>
+              <option value="m³">m³</option>
+              <option value="kWh">kWh</option>
+              <option value="L">Liter</option>
             </select>
             <input v-model="newMeter.serial_number" :placeholder="$t('meters.serial')"
               class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2" />
@@ -90,7 +87,7 @@ const loading = ref(true)
 const meters = ref<any[]>([])
 const showCreate = ref(false)
 const newMeter = ref({
-  name: '', meter_type: 'water', unit: 'm3',
+  name: '', meter_type: 'water', unit: 'm³',
   serial_number: '', location: '',
 })
 
