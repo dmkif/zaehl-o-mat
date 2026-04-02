@@ -37,13 +37,14 @@
 import { RouterLink, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
+import { apiFetch } from '@/utils/api'
 
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 const router = useRouter()
 
 async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST' })
+  await apiFetch('/api/auth/logout', { method: 'POST' })
   authStore.logout()
   router.push('/login')
 }

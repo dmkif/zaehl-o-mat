@@ -50,6 +50,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 
 const authStore = useAuthStore()
 const loadingUsers = ref(true)
@@ -59,7 +60,7 @@ onMounted(fetchUsers)
 
 async function fetchUsers() {
   loadingUsers.value = true
-  const res = await fetch('/api/admin/users', {
+  const res = await apiFetch('/api/admin/users', {
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) users.value = await res.json()
@@ -67,7 +68,7 @@ async function fetchUsers() {
 }
 
 async function updateRole(u: any) {
-  await fetch(`/api/admin/users/${u.id}/role`, {
+  await apiFetch(`/api/admin/users/${u.id}/role`, {
     method: 'PATCH',
     headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ role: u.role }),
@@ -76,7 +77,7 @@ async function updateRole(u: any) {
 
 async function deleteUser(u: any) {
   if (!confirm(`Nutzer "${u.username}" wirklich löschen?`)) return
-  const res = await fetch(`/api/admin/users/${u.id}`, {
+  const res = await apiFetch(`/api/admin/users/${u.id}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${authStore.token}` },
   })

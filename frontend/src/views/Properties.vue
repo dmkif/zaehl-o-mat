@@ -63,6 +63,7 @@
 import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 
 const authStore = useAuthStore()
 const loading = ref(true)
@@ -74,7 +75,7 @@ onMounted(fetchProperties)
 
 async function fetchProperties() {
   loading.value = true
-  const res = await fetch('/api/properties', {
+  const res = await apiFetch('/api/properties', {
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) properties.value = await res.json()
@@ -82,7 +83,7 @@ async function fetchProperties() {
 }
 
 async function createProperty() {
-  const res = await fetch('/api/properties', {
+  const res = await apiFetch('/api/properties', {
     method: 'POST',
     headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(newProp.value),

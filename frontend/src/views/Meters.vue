@@ -77,6 +77,7 @@
 import { ref, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 import MeterTypeIcon from '@/components/MeterTypeIcon.vue'
 
 const authStore = useAuthStore()
@@ -95,7 +96,7 @@ onMounted(fetchMeters)
 
 async function fetchMeters() {
   loading.value = true
-  const res = await fetch(`/api/properties/${propertyId}/meters`, {
+  const res = await apiFetch(`/api/properties/${propertyId}/meters`, {
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) meters.value = await res.json()
@@ -103,7 +104,7 @@ async function fetchMeters() {
 }
 
 async function createMeter() {
-  const res = await fetch(`/api/properties/${propertyId}/meters`, {
+  const res = await apiFetch(`/api/properties/${propertyId}/meters`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(newMeter.value),

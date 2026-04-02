@@ -58,6 +58,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 import OcrCapture from '@/components/OcrCapture.vue'
 
 const authStore = useAuthStore()
@@ -93,7 +94,7 @@ function formatDate(iso: string) {
 
 onMounted(async () => {
   const [mRes] = await Promise.all([
-    fetch(`/api/properties/${propertyId}/meters/${meterId}`, {
+    apiFetch(`/api/properties/${propertyId}/meters/${meterId}`, {
       headers: { Authorization: `Bearer ${authStore.token}` },
     }),
   ])
@@ -103,7 +104,7 @@ onMounted(async () => {
 })
 
 async function fetchReadings() {
-  const res = await fetch(`/api/properties/${propertyId}/meters/${meterId}/readings?limit=200`, {
+  const res = await apiFetch(`/api/properties/${propertyId}/meters/${meterId}/readings?limit=200`, {
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) readings.value = await res.json()

@@ -31,6 +31,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
 
@@ -40,7 +41,7 @@ const summary = ref<any>(null)
 
 onMounted(async () => {
   try {
-    const res = await fetch('/api/dashboard/summary', {
+    const res = await apiFetch('/api/dashboard/summary', {
       headers: { Authorization: `Bearer ${authStore.token}` },
     })
     if (res.ok) summary.value = await res.json()

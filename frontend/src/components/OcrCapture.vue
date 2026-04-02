@@ -72,6 +72,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { apiFetch } from '@/utils/api'
 
 const props = defineProps<{ meterId: string; propertyId: string; serialNumber?: string }>()
 const emit = defineEmits<{ (e: 'reading-added'): void }>()
@@ -126,7 +127,7 @@ async function onFileSelected(event: Event) {
   form.append('meter_id', props.meterId)
 
   try {
-    const res = await fetch('/api/ocr/scan', {
+    const res = await apiFetch('/api/ocr/scan', {
       method: 'POST',
       headers: { Authorization: `Bearer ${authStore.token}` },
       body: form,
@@ -151,7 +152,7 @@ async function saveReading() {
   saving.value = true
   errorMsg.value = ''
   try {
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/properties/${props.propertyId}/meters/${props.meterId}/readings`,
       {
         method: 'POST',
