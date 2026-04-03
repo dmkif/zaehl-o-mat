@@ -10,7 +10,7 @@ from pathlib import Path
 
 import filetype
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -42,61 +42,125 @@ def _get_reader():
     global _reader
     if _reader is None:
         import easyocr  # type: ignore
-        _reader = easyocr.Reader(["de", "en"], gpu=False)
+        _reader = easyocr.Reader(["de", "en"], gpu=True)
     return _reader
 
 
-def _preprocess_image(filepath: Path) -> tuple:
+def _preprocess_image(filepath: Path, already_cropped: bool = False) -> tuple:
     """
-    Pre-process image for better OCR accuracy.
-    Returns (proc_path, (width, height)) of the processed image.
+    Pre-process a utility-meter photo for EasyOCR.  Handles three common
+    meter display types found in German households:
 
-    Key steps:
-    - Resize to max 2000px (speeds up EasyOCR)
-    - Weighted grayscale: suppress red channel to reduce LED-glow artefacts
-      (Holley and similar meters have a bright red blinking LED)
-    - Autocontrast: stretches histogram to full 0-255 range
-    - Unsharp mask: enhances edges for digit separation
+    - Red-LED backlit LCD (Holley DTS541 etc.): bright red background, dark segments
+    - Natural-light reflective LCD (PROTEUS, ITron): bright gray background, dark digits
+    - Dark-background LCD (HYDRUS/Diehl, Kamstrup): dark background, light digits
+
+    Pipeline:
+    1. Auto-detect the display strip using Canny edges on a blurred grayscale.
+       Sigma ≈ 1.5 % of image height suppresses fine label text while preserving
+       large (~5 % image height) LCD digit edges.
+    2. Extract the red channel from the detected crop (maximises contrast for
+       red-LED meters; for others it is an approximate grayscale and still works).
+    3. Apply CLAHE (tight 3×3 tiles) to enhance local contrast.
+    4. If the result is predominantly dark (dark-background display), invert it
+       so that EasyOCR always receives dark text on a bright background.
+    5. Denoise + 4× upscale + light sharpen.
+
+    Returns (proc_path, (proc_width, proc_height)).
     """
-    import numpy as np
-    from PIL import Image, ImageFilter
-
-    img = Image.open(filepath)
-
-    # Resize if too large; EasyOCR is accurate enough at 2000px
-    max_dim = 2000
-    w, h = img.size
-    if max(w, h) > max_dim:
-        scale = max_dim / max(w, h)
-        img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-
-    orig_size = img.size  # (width, height) – used later for bbox scoring
-
-    # Weighted grayscale: reduce red weight (0.10 vs. standard 0.299)
-    # so a bright red LED in the center doesn't overexpose surrounding digits.
-    if img.mode in ("RGB", "RGBA"):
-        rgb = img.convert("RGB")
-        r_arr = np.array(rgb.split()[0], dtype=np.float32)
-        g_arr = np.array(rgb.split()[1], dtype=np.float32)
-        b_arr = np.array(rgb.split()[2], dtype=np.float32)
-        gray = (0.10 * r_arr + 0.70 * g_arr + 0.20 * b_arr).clip(0, 255).astype(np.uint8)
-        img = Image.fromarray(gray, mode="L")
-    else:
-        img = img.convert("L")
-
-    # CLAHE (Contrast Limited Adaptive Histogram Equalization) applies local
-    # contrast enhancement tile-by-tile instead of globally — this brightens
-    # dark display areas (LCD/LED) relative to the bright paper background.
     import cv2
-    img_array = np.array(img) if img.mode == "L" else np.array(img.convert("L"))
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    img_array = clahe.apply(img_array)
-    img = Image.fromarray(img_array, mode="L")
-    img = img.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+    import numpy as np
+    from PIL import Image
+
+    img = cv2.imread(str(filepath))
+    if img is None:
+        raise ValueError(f"Cannot read image: {filepath}")
+
+    h, w = img.shape[:2]
+
+    # ── Step 1: Auto-detect display strip ───────────────────────────────────
+    # Skipped when already_cropped=True: the user already selected the meter
+    # display area with the crop UI, so we use the full image as-is.
+    if already_cropped:
+        display = img
+        dh, dw = display.shape[:2]
+    else:
+        # Blur sigma ≈ 1.5 % of image height: large enough to erase fine print and
+        # barcodes (< 0.5 % feature size) but small enough to keep LCD digit edges
+        # (typically ~5 % of image height).
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        sigma = max(5.0, h * 0.015)
+        blurred_detect = cv2.GaussianBlur(gray, (0, 0), sigma)
+        edges = cv2.Canny(blurred_detect, 30, 100)
+
+        strip_h = max(20, h // 20)   # ≈ 5 % of height per scanning strip
+        stride  = max(10, h // 50)   # ≈ 2 % stride (50 % overlap between strips)
+        best_score = -1.0
+        best_y1 = int(h * 0.35)      # safe default
+
+        # Search only in 10–70 % of image height (display is never at top/bottom)
+        for y0 in range(int(h * 0.10), int(h * 0.70), stride):
+            band = edges[y0:min(h, y0 + strip_h), int(w * 0.10):int(w * 0.90)]
+            if band.size == 0:
+                continue
+            score = float(np.mean(band))  # mean edge density after de-noising blur
+            if score > best_score:
+                best_score, best_y1 = score, y0
+
+        # Expand winning strip by ±1 strip to avoid clipping digit ascenders/descenders
+        crop_y1 = max(0, best_y1 - strip_h)
+        crop_y2 = min(h, best_y1 + 2 * strip_h)
+        crop_x1 = int(w * 0.10)
+        crop_x2 = int(w * 0.90)
+        display = img[crop_y1:crop_y2, crop_x1:crop_x2]
+        dh, dw = display.shape[:2]
+        if dh < 10 or dw < 20:
+            display = img   # fallback: use full image
+            dh, dw = display.shape[:2]
+
+    # ── Step 2: Red-channel CLAHE ────────────────────────────────────────────
+    r_ch = display[:, :, 2]  # OpenCV BGR → index 2 = red
+    clahe = cv2.createCLAHE(clipLimit=10.0, tileGridSize=(3, 3))
+    enhanced = clahe.apply(r_ch)
+
+    # ── Step 3: Invert dark-background displays ──────────────────────────────
+    # HYDRUS / Diehl-type meters show bright white digits on a dark LCD.
+    # After red-channel CLAHE those pixels are bright on dark (inverted for OCR).
+    # Threshold: overall mean < 90 ≈ predominantly dark crop → invert.
+    if float(np.mean(enhanced)) < 90:
+        enhanced = cv2.bitwise_not(enhanced)
+
+    # ── Step 4: Denoise + 4× upscale + light sharpen ────────────────────────
+    denoised = cv2.fastNlMeansDenoising(enhanced, h=12)
+    scale = 4
+    upscaled = cv2.resize(denoised, (dw * scale, dh * scale), interpolation=cv2.INTER_CUBIC)
+    k = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharp = cv2.filter2D(upscaled, -1, k)
 
     proc_path = filepath.with_suffix(".proc.jpg")
-    img.save(proc_path, quality=95)
-    return proc_path, orig_size
+    Image.fromarray(sharp).save(proc_path, quality=95)
+    proc_size = (sharp.shape[1], sharp.shape[0])  # (width, height) — PIL convention
+    return proc_path, proc_size
+
+
+# Transliteration table for common 7-segment LCD misreads.
+# These arise because EasyOCR was not trained on 7-segment fonts.
+_SEG7_SUBS = str.maketrans("JODIlBGT", "00011867")
+
+
+def _fix_seven_segment(text: str) -> str:
+    """
+    Apply 7-segment LCD character substitutions and remove intra-digit spaces.
+
+    Examples:
+      "J309 735 Wn" → "0309735"   (J=0, spaces stripped, unit suffix dropped)
+      "0305 735"    → "0305735"
+    """
+    text = text.translate(_SEG7_SUBS)
+    # Remove spaces that EasyOCR inserts between consecutive digit characters
+    # (7-segment display segments are often separated by a small gap)
+    text = re.sub(r'(?<=\d) +(?=\d)', '', text)
+    return text
 
 
 def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
@@ -181,7 +245,8 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
     Returns (reading, serial_number) — either value may be None on failure.
     """
     ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    model = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:7b")
+    # Use `or` fallback so an empty-string env var also picks up the default
+    model = os.environ.get("OLLAMA_MODEL") or "qwen2.5vl:7b"
 
     try:
         # Resize to max 800px before sending to LLM to limit visual-token count
@@ -248,17 +313,27 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
         return None, None
 
 
-def _run_ocr_on_file_sync(filepath: Path) -> dict:
+def _run_ocr_on_file_sync(filepath: Path, already_cropped: bool = False) -> dict:
     """Synchronous OCR (EasyOCR only) — called from asyncio.to_thread."""
-    raw_texts: list = []
-    detected = None
-
     proc_path = None
     img_size = (0, 0)
     try:
         reader = _get_reader()
-        proc_path, img_size = _preprocess_image(filepath)
-        results = reader.readtext(str(proc_path), detail=1)
+        proc_path, img_size = _preprocess_image(filepath, already_cropped=already_cropped)
+        results = reader.readtext(
+            str(proc_path),
+            detail=1,
+            paragraph=False,
+            # Parameters tuned for 7-segment LCD meter displays:
+            # low_text=0.3  → detect faint/partial segments
+            # text_threshold=0.5 → reduce false positives without missing digits
+            # link_threshold=0.2 → join adjacent digit segments into one text box
+            # width_ths=0.9 → merge horizontally adjacent text boxes (full number)
+            low_text=0.3,
+            text_threshold=0.5,
+            link_threshold=0.2,
+            width_ths=0.9,
+        )
     except Exception as exc:
         logger.error("OCR failed: %s", exc)
         raise RuntimeError(f"OCR processing failed: {exc}") from exc
@@ -266,31 +341,62 @@ def _run_ocr_on_file_sync(filepath: Path) -> dict:
         if proc_path and proc_path.exists():
             proc_path.unlink(missing_ok=True)
 
+    # Apply 7-segment substitutions before scoring; keep raw text in response
+    corrected_results = [
+        (bbox, _fix_seven_segment(text), conf) for (bbox, text, conf) in results
+    ]
     raw_texts = [
         {"text": text, "conf": round(float(conf), 3)}
-        for (_, text, conf) in results
+        for (_, text, conf) in corrected_results
     ]
-    detected = _extract_numeric(results, img_size=img_size)
+    detected = _extract_numeric(corrected_results, img_size=img_size)
     return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": None}
 
 
-async def _run_ocr_on_file(filepath: Path) -> dict:
-    """Run the full OCR/LLM pipeline on an existing file and return detection results."""
+async def _run_ocr_on_file(
+    filepath: Path,
+    engine: str = "auto",
+    already_cropped: bool = False,
+) -> dict:
+    """
+    Run OCR/LLM pipeline on an existing image file.
+
+    engine:
+      "auto"  — try LLM first (if OLLAMA_URL is set), fall back to EasyOCR
+      "ocr"   — EasyOCR only, skip LLM entirely
+      "llm"   — Ollama only; raises HTTP 503 when OLLAMA_URL is not configured
+    already_cropped:
+      When True, skips the auto-strip-detection step in _preprocess_image
+      (the user already isolated the display area via the crop UI).
+    """
+    if engine == "llm":
+        if not os.environ.get("OLLAMA_URL"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Ollama engine requested but OLLAMA_URL is not configured",
+            )
+        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath)
+        return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
+
+    if engine == "ocr":
+        async with _reader_lock:
+            try:
+                return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    # engine == "auto": LLM first (if available), fall back to EasyOCR
     detected = None
     detected_serial = None
-
-    # LLM runs synchronously via httpx (blocking I/O) — offload to thread
     if os.environ.get("OLLAMA_URL"):
         detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath)
 
     if detected is None:
-        # EasyOCR is CPU-bound — run in thread pool behind the reader lock
         async with _reader_lock:
             try:
-                result = await asyncio.to_thread(_run_ocr_on_file_sync, filepath)
+                return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)
             except RuntimeError as exc:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-        return result
 
     return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
 
@@ -298,6 +404,7 @@ async def _run_ocr_on_file(filepath: Path) -> dict:
 @router.post("/rescan/{reading_id}")
 async def rescan_reading(
     reading_id: int,
+    engine: str = Query("auto", pattern="^(auto|ocr|llm)$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -334,7 +441,7 @@ async def rescan_reading(
     if not filepath.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
 
-    result = await _run_ocr_on_file(filepath)
+    result = await _run_ocr_on_file(filepath, engine=engine)
     return {"image_path": reading.image_path, **result}
 
 
@@ -342,6 +449,8 @@ async def rescan_reading(
 async def scan_meter(
     file: UploadFile = File(...),
     meter_id: uuid.UUID | None = None,
+    engine: str = Form("auto", pattern="^(auto|ocr|llm)$"),
+    already_cropped: bool = Form(False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -387,5 +496,5 @@ async def scan_meter(
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
 
-    result = await _run_ocr_on_file(filepath)
+    result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=already_cropped)
     return {"image_path": f"uploads/{filename}", **result}

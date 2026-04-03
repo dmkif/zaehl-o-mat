@@ -24,12 +24,18 @@ services:
     environment:
       OLLAMA_FLASH_ATTENTION: "1"
       OLLAMA_CONTEXT_LENGTH: "2048"
+    # CDI device access for NVIDIA GPU.
+    # If startup fails with "no such file or directory" for a DRI device,
+    # regenerate the CDI spec on the host:
+    #   sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     devices:
       - nvidia.com/gpu=all
 
   backend:
     build: ./backend
     restart: unless-stopped
+    devices:
+      - nvidia.com/gpu=all
     depends_on:
       db:
         condition: service_healthy
@@ -49,7 +55,7 @@ services:
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: minicpm-v:8b
+      OLLAMA_MODEL: "qwen2.5vl:7b"
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""

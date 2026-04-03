@@ -72,6 +72,15 @@
   <div v-if="rescanResult" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50" @click.self="rescanResult = null">
     <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
       <h3 class="font-semibold text-lg mb-4">{{ $t('reading.rescan_result') }}</h3>
+      <!-- Engine selector -->
+      <div class="flex items-center gap-2 mb-4">
+        <label class="text-xs text-gray-500 whitespace-nowrap">{{ $t('ocr.engine_mode') }}</label>
+        <select v-model="rescanEngine" class="flex-1 text-xs rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5">
+          <option value="auto">{{ $t('ocr.engine_auto') }}</option>
+          <option value="ocr">{{ $t('ocr.engine_ocr') }}</option>
+          <option value="llm">{{ $t('ocr.engine_llm') }}</option>
+        </select>
+      </div>
       <p class="text-sm text-gray-600 dark:text-gray-300 mb-1">
         {{ $t('reading.detected_value') }}: <span class="font-mono font-semibold">{{ rescanResult.detected_value ?? '—' }}</span>
       </p>
@@ -82,6 +91,9 @@
         <button class="px-4 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600" @click="rescanResult = null">
           {{ $t('common.close') }}
         </button>
+        <button class="px-4 py-2 text-sm rounded-lg bg-brand-600 hover:bg-brand-700 text-white font-semibold" @click="retryRescan">
+          {{ $t('ocr.scan') }}
+        </button>
       </div>
     </div>
   </div>
@@ -90,12 +102,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import OcrCapture from '@/components/OcrCapture.vue'
 
 const authStore = useAuthStore()
 const route = useRoute()
+const { t } = useI18n()
 const propertyId = route.params.propertyId as string
 const meterId = route.params.meterId as string
 
@@ -144,15 +158,24 @@ async function fetchReadings() {
 }
 
 const rescanResult = ref<any>(null)
+const rescanTarget = ref<any>(null)
+const rescanEngine = ref<'auto' | 'ocr' | 'llm'>('auto')
 
 async function startRescan(reading: any) {
   rescanResult.value = null
-  const res = await apiFetch(`/api/ocr/rescan/${reading.id}`, {
+  rescanTarget.value = reading
+  const res = await apiFetch(`/api/ocr/rescan/${reading.id}?engine=${rescanEngine.value}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${authStore.token}` },
   })
   if (res.ok) {
     rescanResult.value = await res.json()
   }
+}
+
+async function retryRescan() {
+  if (!rescanTarget.value) return
+  rescanResult.value = null
+  await startRescan(rescanTarget.value)
 }
 </script>
