@@ -259,7 +259,7 @@ async function saveReading() {
   errorMsg.value = ''
   try {
     const res = await apiFetch(
-      `/api/properties/${props.propertyId}/meters/${props.meterId}/readings`,
+      `/api/properties/${props.propertyId}/meters/${props.meterId}/readings/`,
       {
         method: 'POST',
         headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
