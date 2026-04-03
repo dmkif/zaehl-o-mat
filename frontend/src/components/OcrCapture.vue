@@ -265,7 +265,7 @@ async function saveReading() {
         headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           value: parseFloat(confirmedValue.value.replace(',', '.')),
-          source: imagePath.value ? 'ocr' : 'manual',
+          source: imagePath.value ? 'auto' : 'manual',
           image_path: imagePath.value,
           note: note.value || null,
         }),

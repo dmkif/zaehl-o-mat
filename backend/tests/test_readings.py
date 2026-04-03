@@ -173,6 +173,67 @@ class TestCreateReading:
         r = client.post(_url(prop.id, meter.id), headers=auth_headers(admin), json={})
         assert r.status_code == 422
 
+    def test_invalid_source_value_returns_422(self, client, db):
+        """Regression: source='ocr' is not a valid ReadingSource value."""
+        prop = make_property(db)
+        meter = make_meter(db, prop.id)
+        admin = make_user(db, role=UserRole.admin)
+        r = client.post(
+            _url(prop.id, meter.id),
+            headers=auth_headers(admin),
+            json={"value": 100.0, "source": "ocr"},
+        )
+        assert r.status_code == 422
+
+    def test_create_reading_with_auto_source(self, client, db):
+        """OCR-scanned readings must be saveable with source='auto'."""
+        prop = make_property(db)
+        meter = make_meter(db, prop.id)
+        admin = make_user(db, role=UserRole.admin)
+        r = client.post(
+            _url(prop.id, meter.id),
+            headers=auth_headers(admin),
+            json={"value": 12345.6, "source": "auto", "image_path": "uploads/test.jpg"},
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["source"] == "auto"
+        assert body["image_path"] == "uploads/test.jpg"
+
+    def test_create_reading_trailing_slash_not_required(self, client, db):
+        """POST without trailing slash must reach the endpoint (no redirect body loss)."""
+        prop = make_property(db)
+        meter = make_meter(db, prop.id)
+        admin = make_user(db, role=UserRole.admin)
+        # TestClient follows redirects by default, so this also validates the redirect works
+        r = client.post(
+            _url(prop.id, meter.id),
+            headers=auth_headers(admin),
+            json={"value": 777.0, "source": "manual"},
+        )
+        assert r.status_code == 201
+        assert float(r.json()["value"]) == pytest.approx(777.0)
+
+    def test_create_ocr_reading_full_flow(self, client, db):
+        """Full OCR save flow: value as float, source auto, image_path optional note."""
+        prop = make_property(db)
+        meter = make_meter(db, prop.id)
+        admin = make_user(db, role=UserRole.admin)
+        payload = {
+            "value": 99834.5,
+            "source": "auto",
+            "image_path": "uploads/meter_scan.jpg",
+            "note": "OCR confidence 0.92",
+        }
+        r = client.post(_url(prop.id, meter.id), headers=auth_headers(admin), json=payload)
+        assert r.status_code == 201
+        body = r.json()
+        assert float(body["value"]) == pytest.approx(99834.5)
+        assert body["source"] == "auto"
+        assert body["image_path"] == "uploads/meter_scan.jpg"
+        assert body["note"] == "OCR confidence 0.92"
+        assert body["read_at"] is not None
+
 
 class TestDeleteReading:
     def test_admin_can_delete_reading(self, client, db):
