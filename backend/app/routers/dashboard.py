@@ -13,8 +13,49 @@ from app.models import (
     Meter, OilDelivery, OilMarketPrice, PriceEntry, Property,
     PropertyUser, Reading, User, UserRole, MeterType,
 )
+from app.services.buy_signal import compute_oil_buy_signal
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _avg_daily_consumption_365d(
+    meter_id: uuid.UUID, db: Session, invert: bool = False
+) -> Optional[float]:
+    """Compute average daily consumption over the last 365 days using consecutive reading pairs.
+
+    For meters where the value increases over time (gas, water, electricity) use the default
+    ``invert=False`` which sums positive deltas.  For oil tanks where the level *decreases* as
+    fuel is consumed set ``invert=True`` to sum the absolute values of negative deltas instead.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=365)
+    readings = (
+        db.query(Reading)
+        .filter(Reading.meter_id == meter_id, Reading.read_at >= since)
+        .order_by(Reading.read_at.asc())
+        .all()
+    )
+    if len(readings) < 2:
+        return None
+
+    total_consumption = 0.0
+    total_days = 0.0
+    for i in range(1, len(readings)):
+        delta = float(readings[i].value) - float(readings[i - 1].value)
+        if invert:
+            qualifies = delta < 0
+            amount = abs(delta)
+        else:
+            qualifies = delta > 0
+            amount = delta
+        if qualifies:
+            days = (readings[i].read_at - readings[i - 1].read_at).total_seconds() / 86400
+            if days > 0:
+                total_consumption += amount
+                total_days += days
+
+    if total_days == 0:
+        return None
+    return round(total_consumption / total_days, 4)
 
 
 def _accessible_property_ids(user: User, db: Session) -> list[uuid.UUID]:
@@ -46,6 +87,7 @@ def dashboard_summary(
             .order_by(Reading.read_at.desc())
             .first()
         )
+        avg_daily = _avg_daily_consumption_365d(m.id, db)
         meter_summaries.append(
             {
                 "meter_id": str(m.id),
@@ -55,24 +97,46 @@ def dashboard_summary(
                 "property_id": str(m.property_id),
                 "latest_value": str(latest.value) if latest else None,
                 "latest_read_at": latest.read_at.isoformat() if latest else None,
+                "avg_daily_consumption_365d": avg_daily,
             }
         )
 
-    # Latest oil market price
+    # Oil Reichweite per property (oil meter = direct tank level reading)
+    oil_reichweite: dict[str, Optional[int]] = {}
+    for m in meters:
+        if m.meter_type != MeterType.oil:
+            continue
+        latest = (
+            db.query(Reading)
+            .filter(Reading.meter_id == m.id)
+            .order_by(Reading.read_at.desc())
+            .first()
+        )
+        avg_daily = _avg_daily_consumption_365d(m.id, db, invert=True)
+        if latest and avg_daily and avg_daily > 0:
+            days = int(float(latest.value) / avg_daily)
+            oil_reichweite[str(m.property_id)] = days
+        else:
+            oil_reichweite.setdefault(str(m.property_id), None)
+
+    # Latest oil market price + buy signal
     oil_price = (
         db.query(OilMarketPrice)
         .order_by(OilMarketPrice.price_date.desc())
         .first()
     )
+    buy_signal = compute_oil_buy_signal(db)
 
     return {
         "property_count": len(prop_ids),
         "active_meter_count": len(meters),
         "meters": meter_summaries,
+        "oil_reichweite": oil_reichweite,
         "oil_market_price": {
             "price_per_100l": str(oil_price.price_per_100l) if oil_price else None,
             "date": oil_price.price_date.isoformat() if oil_price else None,
             "source": oil_price.source if oil_price else None,
+            "buy_signal": buy_signal,
         },
     }
 
@@ -181,3 +245,72 @@ def cost_forecast(
         )
 
     return {"meter_id": str(meter_id), "forecast": forecast, "insufficient_data": False}
+
+
+@router.get("/property/{property_id}/type-aggregates")
+def property_type_aggregates(
+    property_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Cumulative consumption per meter type for a property over the last 365 days."""
+    from fastapi import HTTPException, status
+
+    prop = db.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    prop_ids = _accessible_property_ids(current_user, db)
+    if property_id not in prop_ids:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+    meters = (
+        db.query(Meter)
+        .filter(Meter.property_id == property_id, Meter.replaced_at.is_(None))
+        .all()
+    )
+
+    since = datetime.now(timezone.utc) - timedelta(days=365)
+
+    # Unit mapping per meter type
+    type_unit = {
+        MeterType.water: "m³",
+        MeterType.electricity: "kWh",
+        MeterType.oil: "L",
+    }
+
+    # Aggregate per type
+    type_data: dict[MeterType, dict] = {}
+    for m in meters:
+        readings = (
+            db.query(Reading)
+            .filter(Reading.meter_id == m.id, Reading.read_at >= since)
+            .order_by(Reading.read_at.asc())
+            .all()
+        )
+        if len(readings) < 2:
+            consumption = 0.0
+        else:
+            # Sum only positive deltas (ignore resets)
+            consumption = sum(
+                max(0.0, float(readings[i].value) - float(readings[i - 1].value))
+                for i in range(1, len(readings))
+            )
+
+        if m.meter_type not in type_data:
+            type_data[m.meter_type] = {
+                "meter_type": m.meter_type.value,
+                "total_consumption": 0.0,
+                "unit": type_unit.get(m.meter_type, m.unit.value),
+                "meter_count": 0,
+                "period_days": 365,
+            }
+        type_data[m.meter_type]["total_consumption"] += consumption
+        type_data[m.meter_type]["meter_count"] += 1
+
+    aggregates = []
+    for entry in type_data.values():
+        entry["total_consumption"] = round(entry["total_consumption"], 3)
+        aggregates.append(entry)
+
+    return {"property_id": str(property_id), "aggregates": aggregates}

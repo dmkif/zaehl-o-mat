@@ -19,6 +19,7 @@
     <div v-if="meter.latest_read_at" class="text-xs text-gray-400 mt-1">
       {{ formatDate(meter.latest_read_at) }}
     </div>
+    <slot name="extra" />
   </RouterLink>
 </template>
 
