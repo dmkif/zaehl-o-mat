@@ -59,29 +59,30 @@ async def fetch_and_store_oil_price(db: Session) -> Optional[OilMarketPrice]:
 
 
 async def _fetch_heizoel_aktuell() -> float:
-    """Scrape current Heizöl price from heizoel-aktuell.de."""
-    url = "https://www.heizoel-aktuell.de/"
+    """Scrape current Heizöl price (national average per 100L) from heizoel24.de."""
+    url = "https://www.heizoel24.de/"
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; Zaehl-O-Mat/1.0)"})
         resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    # The page shows current price in an element; try common selectors
+    import re
+    # Price is rendered as: <div class="display-3 font-weight-bold m-0"><span>154,23</span>€</div>
     for selector in [
-        '[class*="current-price"]',
-        '[class*="preis"]',
-        '[data-price]',
-        "span.price",
+        "div.display-3.font-weight-bold.m-0 span",
+        "div.display-3.font-weight-bold.m-0",
+        '[class*="display-3"]',
     ]:
         el = soup.select_one(selector)
         if el:
-            text = el.get_text(strip=True).replace(",", ".").replace("€", "").strip()
+            text = el.get_text(strip=True)
+            clean = re.sub(r"[^\d,.]", "", text).replace(",", ".")
             try:
-                return float(text.split()[0])
-            except (ValueError, IndexError):
+                return float(clean)
+            except ValueError:
                 continue
 
-    raise ValueError("Could not parse price from heizoel-aktuell.de")
+    raise ValueError("Could not parse price from heizoel24.de")
 
 
 async def _fetch_tankerkoenig() -> float:
