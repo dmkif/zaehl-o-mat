@@ -5,14 +5,7 @@ import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
   plugins: [
-    vue({
-      template: {
-        compilerOptions: {
-          // Tell Vue these are native custom elements, not Vue components
-          isCustomElement: (tag) => tag.startsWith('cropper-'),
-        },
-      },
-    }),
+    vue(),
     tailwindcss(),
   ],
   resolve: {

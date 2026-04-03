@@ -45,35 +45,16 @@
       </button>
     </template>
 
-    <!-- ── Stage: crop — cropperjs v2 Web Components ── -->
+    <!-- ── Stage: crop — vue-advanced-cropper ── -->
     <template v-else-if="stage === 'crop'">
       <p class="text-xs text-gray-500">{{ $t('ocr.crop_hint') }}</p>
-      <!-- cropper-canvas is the root Web Component; background adds a checkerboard -->
-      <cropper-canvas
-        background
-        style="max-height: 320px; border-radius: 0.75rem; overflow: hidden;"
-      >
-        <cropper-image :src="originalUrl ?? ''" alt="" translatable></cropper-image>
-        <cropper-selection
-          ref="selectionEl"
-          :initial-coverage="0.5"
-          movable
-          resizable
-          keyboard
-        >
-          <!-- move handle covers the interior -->
-          <cropper-handle action="move" theme-color="rgba(255,255,255,0.25)"></cropper-handle>
-          <!-- eight edge/corner resize handles -->
-          <cropper-handle action="n-resize"></cropper-handle>
-          <cropper-handle action="e-resize"></cropper-handle>
-          <cropper-handle action="s-resize"></cropper-handle>
-          <cropper-handle action="w-resize"></cropper-handle>
-          <cropper-handle action="ne-resize"></cropper-handle>
-          <cropper-handle action="nw-resize"></cropper-handle>
-          <cropper-handle action="se-resize"></cropper-handle>
-          <cropper-handle action="sw-resize"></cropper-handle>
-        </cropper-selection>
-      </cropper-canvas>
+      <div style="height: 400px; border-radius: 0.75rem; overflow: hidden;">
+        <Cropper
+          ref="cropperRef"
+          :src="originalUrl ?? ''"
+          class="h-full"
+        />
+      </div>
       <div class="flex gap-2">
         <button @click="resetCrop" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           {{ $t('ocr.crop_reset') }}
@@ -141,20 +122,10 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  CropperCanvas,
-  CropperImage,
-  CropperSelection,
-  CropperHandle,
-} from 'cropperjs'
+import { Cropper } from 'vue-advanced-cropper'
+import 'vue-advanced-cropper/dist/style.css'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
-
-// Register cropperjs v2 custom elements once
-CropperCanvas.$define()
-CropperImage.$define()
-CropperSelection.$define()
-CropperHandle.$define()
 
 const props = defineProps<{ meterId: string; propertyId: string; serialNumber?: string }>()
 const emit = defineEmits<{ (e: 'reading-added'): void }>()
@@ -168,8 +139,7 @@ const stage = ref<Stage>('idle')
 // Recognised engine preference — persists as long as the component is mounted
 const engine = ref<'auto' | 'ocr' | 'llm'>('auto')
 
-// Refs to v2 custom elements
-const selectionEl = ref<CropperSelection | null>(null)
+const cropperRef = ref<InstanceType<typeof Cropper> | null>(null)
 const originalUrl = ref<string | null>(null)
 
 // Result state
@@ -217,7 +187,7 @@ function onFileSelected(event: Event) {
 }
 
 function resetCrop() {
-  selectionEl.value?.$reset()
+  cropperRef.value?.reset()
 }
 
 function cancelCrop() {
@@ -237,13 +207,12 @@ function backToCrop() {
 // ── OCR scan ──────────────────────────────────────────────────────────────
 
 async function startScan() {
-  const sel = selectionEl.value
-  if (!sel) return
+  if (!cropperRef.value) return
   stage.value = 'scanning'
   errorMsg.value = ''
 
-  // v2: CropperSelection.$toCanvas() renders the selected area to a canvas
-  const canvas = await sel.$toCanvas({ width: 2400 })
+  const { canvas } = cropperRef.value.getResult()
+  if (!canvas) { stage.value = 'crop'; return }
   const blob: Blob = await new Promise((resolve, reject) =>
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error('toBlob failed'))),
