@@ -15,7 +15,7 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:0.20.0
+    image: ollama/ollama:0.20.2
     restart: unless-stopped
     ports:
       - "11434:11434"
@@ -55,7 +55,7 @@ services:
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: "qwen2.5vl:7b"
+      OLLAMA_MODEL: "gemma4:e2b"
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""

@@ -11,6 +11,7 @@ from pathlib import Path
 import filetype
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -238,7 +239,7 @@ def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
     return candidates[0][1]
 
 
-def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
+def _llm_fallback(filepath: Path, already_cropped: bool = False) -> tuple[str | None, str | None]:
     """
     Ask a local Ollama vision model to read the meter display when EasyOCR fails.
     Model and URL are read from OLLAMA_MODEL / OLLAMA_URL environment variables.
@@ -249,11 +250,12 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
     model = os.environ.get("OLLAMA_MODEL") or "qwen2.5vl:7b"
 
     try:
-        # Resize to max 800px before sending to LLM to limit visual-token count
-        # and avoid OOM on systems with limited RAM (6–8 GB).
+        # For already-cropped display images, 800px is enough.
+        # For full uncropped meter photos (bulk upload), use 1500px so the
+        # meter display area remains large enough for the model to read.
         from PIL import Image
         img = Image.open(filepath)
-        max_side = 800
+        max_side = 800 if already_cropped else 1500
         if max(img.size) > max_side:
             scale = max_side / max(img.size)
             img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
@@ -266,17 +268,31 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
             json={
                 "model": model,
                 "prompt": (
-                    "You are analyzing a photo of a utility meter (electricity, water, or oil).\n"
-                    'Reply ONLY with valid JSON in this exact format: {"reading": "VALUE", "serial": "VALUE"}\n'
-                    "- reading: ONLY the main consumption counter digits on the large display, "
-                    "with optional decimal point, no units, no spaces.\n"
-                    "- serial: the serial number or device ID printed on the meter label "
-                    "(typically 6-12 digits, often labeled Nr., S/N, or Zähler-Nr.).\n"
-                    "If you cannot read a field, use null."
+                    "Analyze the utility meter in this photo.\n"
+                    "\n"
+                    'Return ONLY valid JSON: {"reading": "VALUE", "serial": "VALUE"}\n'
+                    "\n"
+                    "READING:\n"
+                    "- The main consumption counter on the digital display.\n"
+                    "- Read ALL digit positions from left to right, including leading zeros.\n"
+                    "- Include the decimal point if present.\n"
+                    "- Do NOT skip any drums or windows, even if dim or partially rotated.\n"
+                    "- Ignore handwritten numbers, stickers, or annotations.\n"
+                    "- No spaces, no units, no thousands separators.\n"
+                    "\n"
+                    "SERIAL:\n"
+                    "- The serial number or device ID printed on the meter label.\n"
+                    "- Look for labels like Nr., S/N, Zähler-Nr., Eigentum, or similar.\n"
+                    "- Include ALL leading zeros exactly as printed.\n"
+                    "- Only alphanumeric characters, no spaces or punctuation.\n"
+                    "\n"
+                    "If a field is unreadable, use null."
                 ),
                 "images": [b64],
                 "stream": False,
                 "format": "json",
+                "think": False,
+                "options": {"temperature": 0, "num_ctx": 8192},
             },
             timeout=180.0,
         )
@@ -304,13 +320,120 @@ def _llm_fallback(filepath: Path) -> tuple[str | None, str | None]:
         def _clean_serial(v: object) -> str | None:
             if not v or not isinstance(v, str):
                 return None
-            s = v.strip()
+            s = re.sub(r'[\s\-]', '', v).strip()
             return None if not s or s.lower() == "null" else s
 
         return _clean_reading(data.get("reading")), _clean_serial(data.get("serial"))
     except Exception:
         logger.warning("LLM fallback failed for %s", filepath)
         return None, None
+
+
+def _normalize_serial(s: str) -> str:
+    """Strip whitespace, hyphens, dots, slashes; uppercase for comparison."""
+    return re.sub(r'[\s\-\.\/]', '', s).upper()
+
+
+def _match_serial_to_meters(serial: str, meters: list) -> tuple:
+    """
+    Match a detected serial string against a list of Meter objects.
+
+    Returns (best_match_or_None, confidence_str, candidate_list)
+    confidence: "exact" | "partial" | "none"
+    """
+    if not serial:
+        return None, "none", []
+
+    norm_detected = _normalize_serial(serial)
+    exact: list = []
+    partial: list = []
+
+    for meter in meters:
+        if not meter.serial_number:
+            continue
+        norm_meter = _normalize_serial(meter.serial_number)
+        if norm_detected == norm_meter:
+            exact.append(meter)
+        elif norm_detected in norm_meter or norm_meter in norm_detected:
+            partial.append(meter)
+
+    if len(exact) == 1:
+        return exact[0], "exact", []
+    elif exact:
+        return exact[0], "partial", exact
+    elif len(partial) == 1:
+        return partial[0], "partial", []
+    elif partial:
+        return partial[0], "partial", partial
+    else:
+        return None, "none", []
+
+
+def _meter_to_dict(meter) -> dict:
+    return {
+        "id": str(meter.id),
+        "property_id": str(meter.property_id),
+        "name": meter.name,
+        "serial_number": meter.serial_number,
+        "meter_type": meter.meter_type.value,
+        "unit": meter.unit.value,
+    }
+
+
+def _extract_serial_sync(filepath: Path) -> str | None:
+    """
+    Run OCR on a user-cropped serial number area.
+
+    No LCD-specific preprocessing — the user has already isolated the serial label.
+    Pipeline: grayscale → CLAHE → upscale → sharpen.
+    Returns the best alphanumeric candidate, or None.
+    """
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    img = cv2.imread(str(filepath))
+    if img is None:
+        return None
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+    enhanced = clahe.apply(gray)
+
+    h, w = enhanced.shape[:2]
+    upscaled = cv2.resize(enhanced, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+    k = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    sharpened = cv2.filter2D(upscaled, -1, k)
+
+    proc_path = filepath.with_suffix(".serial_proc.jpg")
+    Image.fromarray(sharpened).save(proc_path, quality=95)
+
+    try:
+        reader = _get_reader()
+        results = reader.readtext(
+            str(proc_path),
+            detail=1,
+            paragraph=False,
+            low_text=0.3,
+            text_threshold=0.4,
+            width_ths=0.9,
+        )
+    except Exception:
+        return None
+    finally:
+        proc_path.unlink(missing_ok=True)
+
+    candidates = []
+    for (_, text, conf) in results:
+        cleaned = re.sub(r'\s+', '', text)
+        alnum_ratio = sum(c.isalnum() for c in cleaned) / max(len(cleaned), 1)
+        if len(cleaned) >= 4 and alnum_ratio >= 0.5:
+            candidates.append((conf, cleaned))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
 
 
 def _run_ocr_on_file_sync(filepath: Path, already_cropped: bool = False) -> dict:
@@ -375,7 +498,7 @@ async def _run_ocr_on_file(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Ollama engine requested but OLLAMA_URL is not configured",
             )
-        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath)
+        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
         return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
 
     if engine == "ocr":
@@ -389,7 +512,7 @@ async def _run_ocr_on_file(
     detected = None
     detected_serial = None
     if os.environ.get("OLLAMA_URL"):
-        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath)
+        detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
 
     if detected is None:
         async with _reader_lock:
@@ -441,13 +564,23 @@ async def rescan_reading(
     if not filepath.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image file not found on disk")
 
-    result = await _run_ocr_on_file(filepath, engine=engine)
+    result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=True)
+
+    # If a serial crop is stored and OCR mode is used, also detect the serial number
+    if result.get("detected_serial") is None and reading.serial_image_path and engine in ("ocr", "auto"):
+        serial_filepath = Path(settings.upload_path) / Path(reading.serial_image_path).name
+        if serial_filepath.exists():
+            async with _reader_lock:
+                detected_serial = await asyncio.to_thread(_extract_serial_sync, serial_filepath)
+            result["detected_serial"] = detected_serial
+
     return {"image_path": reading.image_path, **result}
 
 
 @router.post("/scan")
 async def scan_meter(
     file: UploadFile = File(...),
+    serial_file: UploadFile | None = File(None),
     meter_id: uuid.UUID | None = None,
     engine: str = Form("auto", pattern="^(auto|ocr|llm)$"),
     already_cropped: bool = Form(False),
@@ -456,6 +589,8 @@ async def scan_meter(
 ):
     """
     Upload a meter photo and extract the reading via OCR.
+    Optionally also upload a second crop of the serial number area (serial_file)
+    for dedicated serial number OCR.
     Returns the detected numeric value (string) for the client to confirm before saving.
     The image is also saved so it can be referenced when creating a Reading.
     """
@@ -471,6 +606,18 @@ async def scan_meter(
     detected_mime = filetype.guess_mime(contents)
     if detected_mime not in _ALLOWED_IMAGE_MIMES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be a supported image (JPEG, PNG, WEBP, GIF, BMP, TIFF)")
+
+    # Validate optional serial file
+    serial_contents: bytes | None = None
+    if serial_file is not None:
+        if not serial_file.content_type or not serial_file.content_type.startswith("image/"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be an image")
+        serial_contents = await serial_file.read()
+        if len(serial_contents) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Serial image too large (max 10 MB)")
+        serial_detected_mime = filetype.guess_mime(serial_contents)
+        if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be a supported image")
 
     # Validate that the requesting user has access to the given meter
     if meter_id is not None:
@@ -489,7 +636,7 @@ async def scan_meter(
             if not assoc:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
-    # Save to disk
+    # Save display crop to disk
     upload_dir = Path(settings.upload_path)
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{uuid.uuid4()}{Path(file.filename or 'img.jpg').suffix.lower() or '.jpg'}"
@@ -497,4 +644,165 @@ async def scan_meter(
     filepath.write_bytes(contents)
 
     result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=already_cropped)
-    return {"image_path": f"uploads/{filename}", **result}
+
+    # If serial file provided and OCR didn't already detect serial (LLM may have), run dedicated serial OCR
+    serial_image_path: str | None = None
+    if serial_contents is not None and result.get("detected_serial") is None:
+        serial_filename = f"{uuid.uuid4()}_serial{Path(serial_file.filename or 'serial.jpg').suffix.lower() or '.jpg'}"
+        serial_filepath = upload_dir / serial_filename
+        serial_filepath.write_bytes(serial_contents)
+        serial_image_path = f"uploads/{serial_filename}"
+        async with _reader_lock:
+            detected_serial = await asyncio.to_thread(_extract_serial_sync, serial_filepath)
+        result["detected_serial"] = detected_serial
+    elif serial_contents is not None:
+        # LLM already found serial — still save the crop for future rescan
+        serial_filename = f"{uuid.uuid4()}_serial{Path(serial_file.filename or 'serial.jpg').suffix.lower() or '.jpg'}"
+        serial_filepath = upload_dir / serial_filename
+        serial_filepath.write_bytes(serial_contents)
+        serial_image_path = f"uploads/{serial_filename}"
+
+    return {"image_path": f"uploads/{filename}", "serial_image_path": serial_image_path, **result}
+
+
+@router.post("/bulk-scan")
+async def bulk_scan_meters(
+    files: list[UploadFile] = File(...),
+    property_id: uuid.UUID | None = Form(None),
+    engine: str = Form("auto", pattern="^(auto|ocr|llm)$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload multiple meter images at once for batch OCR processing.
+    Each image is scanned for a reading value and serial number. The detected
+    serial is matched against the user's accessible meters.
+    Streams results as Server-Sent Events (text/event-stream):
+      - One unnamed "data:" event per processed image
+      - A final "event: complete" carrying the full accessible meter list
+    """
+    if not files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
+    if len(files) > 50:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum 50 files per batch")
+
+    # ── Build accessible meter list ───────────────────────────────────────────
+    if current_user.role in (UserRole.superadmin, UserRole.admin):
+        if property_id:
+            meters = db.query(Meter).filter(
+                Meter.property_id == property_id,
+                Meter.replaced_at.is_(None),
+            ).all()
+        else:
+            meters = db.query(Meter).filter(Meter.replaced_at.is_(None)).all()
+    else:
+        accessible_props = (
+            db.query(PropertyUser.property_id)
+            .filter(PropertyUser.user_id == current_user.id)
+            .subquery()
+        )
+        if property_id:
+            has_access = (
+                db.query(PropertyUser)
+                .filter(
+                    PropertyUser.property_id == property_id,
+                    PropertyUser.user_id == current_user.id,
+                )
+                .first()
+            )
+            if not has_access:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+            meters = db.query(Meter).filter(
+                Meter.property_id == property_id,
+                Meter.replaced_at.is_(None),
+            ).all()
+        else:
+            meters = db.query(Meter).filter(
+                Meter.property_id.in_(accessible_props),
+                Meter.replaced_at.is_(None),
+            ).all()
+
+    # ── Read all file contents upfront (UploadFile is only readable during the request scope) ──
+    upload_dir = Path(settings.upload_path)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_payloads: list[tuple[str, bytes]] = []
+    for f in files:
+        file_payloads.append((f.filename or "image.jpg", await f.read()))
+
+    all_meters_dicts = [_meter_to_dict(m) for m in meters]
+
+    async def generate():
+        for original_filename, contents in file_payloads:
+            item: dict = {
+                "original_filename": original_filename,
+                "temp_image_path": None,
+                "exif_date": None,
+                "detected_value": None,
+                "detected_serial": None,
+                "matched_meter": None,
+                "match_confidence": "none",
+                "candidate_meters": [],
+                "error": None,
+            }
+            try:
+                if len(contents) > 10 * 1024 * 1024:
+                    item["error"] = "File too large (max 10 MB)"
+                    yield f"data: {json.dumps(item)}\n\n"
+                    continue
+
+                detected_mime = filetype.guess_mime(contents)
+                if detected_mime not in _ALLOWED_IMAGE_MIMES:
+                    item["error"] = "Not a supported image format (JPEG, PNG, WEBP, BMP, TIFF)"
+                    yield f"data: {json.dumps(item)}\n\n"
+                    continue
+
+                ext = Path(original_filename).suffix.lower() or ".jpg"
+                filename = f"{uuid.uuid4()}{ext}"
+                filepath = upload_dir / filename
+                filepath.write_bytes(contents)
+                item["temp_image_path"] = f"uploads/{filename}"
+
+                # Extract EXIF date
+                try:
+                    from PIL import Image as _PILImg
+                    with _PILImg.open(filepath) as _pimg:
+                        _exif = _pimg.getexif()
+                        for _tag in (36867, 36868, 306):  # DateTimeOriginal, DateTimeDigitized, DateTime
+                            _val = _exif.get(_tag)
+                            if _val:
+                                item["exif_date"] = _val[:10].replace(':', '-')
+                                break
+                except Exception:
+                    pass
+
+                ocr_result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=False)
+                item["detected_value"] = ocr_result.get("detected_value")
+                item["detected_serial"] = ocr_result.get("detected_serial")
+
+                # Serial → meter matching
+                serial = item["detected_serial"]
+                if serial:
+                    matched, confidence, candidates = _match_serial_to_meters(serial, meters)
+                    item["match_confidence"] = confidence
+                    if matched:
+                        item["matched_meter"] = _meter_to_dict(matched)
+                    item["candidate_meters"] = [_meter_to_dict(m) for m in candidates]
+
+            except Exception as exc:
+                logger.error("Bulk scan error for %s: %s", original_filename, exc)
+                item["error"] = f"OCR failed: {exc}"
+
+            yield f"data: {json.dumps(item)}\n\n"
+
+        # Final event carries the full meter list for the review UI
+        yield f"event: complete\ndata: {json.dumps({'meters': all_meters_dicts})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

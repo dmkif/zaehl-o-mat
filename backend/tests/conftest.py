@@ -71,8 +71,17 @@ def client(db: Session) -> Generator[TestClient, None, None]:
             pass
 
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
-        yield c
+
+    # The lifespan calls _run_oil_price() immediately on startup, which:
+    #   (a) makes a real HTTP request to heizoel24.de, and
+    #   (b) creates a session via app.database.SessionLocal — a separate in-memory
+    #       SQLite engine that has no tables, since create_all() was called on the
+    #       test engine above.
+    # Patching it to a no-op fixes both issues without affecting any endpoint tests.
+    from unittest.mock import AsyncMock, patch
+    with patch("app.main._run_oil_price", new_callable=AsyncMock):
+        with TestClient(app) as c:
+            yield c
     app.dependency_overrides.clear()
 
 

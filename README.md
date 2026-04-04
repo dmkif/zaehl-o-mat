@@ -8,6 +8,8 @@ A self-hosted utility meter management application. Take a photo of any meter (e
 - OCR pipeline: EasyOCR + optional Ollama vision model (GPU-accelerated)
 - Serial number detection — warns when the photo doesn't match the registered meter
 - Oil heating price tracking (daily cronjob, heizoel-aktuell source)
+- Dashboard with consumption overview, daily averages per meter, meter type aggregates, and heating oil buy signal
+- Admins and superadmins can edit or delete individual readings directly in the meter detail view
 - Role-based access: `superadmin` / `admin` / `manager` / `user`
 - SSO via OIDC (Authentik or any OpenID Connect provider) with PKCE
 - Helm chart for Kubernetes deployment
@@ -19,7 +21,7 @@ git clone https://github.com/dmkif/zaehl-o-mat.git
 cd zaehl-o-mat
 
 # Pull the Ollama vision model (required once)
-docker run --rm -it ollama/ollama ollama pull minicpm-v:8b
+docker run --rm -it ollama/ollama ollama pull gemma4:e4b
 
 # Start the stack
 docker compose up -d
@@ -49,7 +51,7 @@ All variables are set on the `backend` service.
 | `DEBUG` | `false` | Enable debug logging |
 | **Ollama** | | |
 | `OLLAMA_URL` | `""` | Ollama API base URL (e.g. `http://ollama:11434`). Leave empty to disable. |
-| `OLLAMA_MODEL` | `qwen2.5vl:7b` | Vision model name |
+| `OLLAMA_MODEL` | `gemma4:e4b` | Vision model name |
 | **Oil price** | | |
 | `OIL_PRICE_SOURCE` | `heizoel-aktuell` | Price source: `heizoel-aktuell` \| `tankerkoenig` \| `custom` |
 | `OIL_PRICE_API_KEY` | `""` | API key for tankerkoenig or custom source |
@@ -82,10 +84,10 @@ The OCR pipeline first tries Ollama if `OLLAMA_URL` is configured. The model is 
 
 If Ollama is unavailable or returns nothing, EasyOCR with custom preprocessing (CLAHE, unsharp mask, weighted grayscale) is used as fallback.
 
-Recommended model: [`minicpm-v:8b`](https://ollama.com/library/minicpm-v) — good accuracy on meter displays, runs on 6–8 GB VRAM.
+Recommended model: [`gemma4:e4b`](https://ollama.com/library/gemma4) — best accuracy on mechanical and digital meter displays, runs on 6–8 GB VRAM. Uses `think: false` and `temperature: 0` for deterministic output.
 
 ```bash
-ollama pull minicpm-v:8b
+ollama pull gemma4:e4b
 ```
 
 ## Helm Chart (Kubernetes)
@@ -111,6 +113,17 @@ SUPERADMIN_PASSWORD
 ```
 
 See [`chart/values.yaml`](chart/values.yaml) for all available values.
+
+## Role-Based Access
+
+| Role | Permissions |
+|---|---|
+| `superadmin` | Full access, including all properties and built-in admin login |
+| `admin` | Full access to all properties; can edit and delete any reading |
+| `manager` | Read/write access to assigned properties (add readings, no delete) |
+| `user` | Read-only access to assigned properties |
+
+Admins and superadmins see **Edit** (✏️) and **Delete** (🗑️) buttons next to every reading in the meter detail view. Editable fields: meter value, date/time, and optional note.
 
 ## Development
 

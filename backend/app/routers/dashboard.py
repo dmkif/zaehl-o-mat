@@ -291,11 +291,19 @@ def property_type_aggregates(
         if len(readings) < 2:
             consumption = 0.0
         else:
-            # Sum only positive deltas (ignore resets)
-            consumption = sum(
-                max(0.0, float(readings[i].value) - float(readings[i - 1].value))
-                for i in range(1, len(readings))
-            )
+            # Oil tanks decrease as fuel is consumed → sum absolute negative deltas.
+            # All other meter types (electricity, water) increase → sum positive deltas.
+            invert = m.meter_type == MeterType.oil
+            if invert:
+                consumption = sum(
+                    abs(min(0.0, float(readings[i].value) - float(readings[i - 1].value)))
+                    for i in range(1, len(readings))
+                )
+            else:
+                consumption = sum(
+                    max(0.0, float(readings[i].value) - float(readings[i - 1].value))
+                    for i in range(1, len(readings))
+                )
 
         if m.meter_type not in type_data:
             type_data[m.meter_type] = {

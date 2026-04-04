@@ -10,7 +10,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models import Meter, Property, PropertyUser, PropertyUserRole, Reading, ReadingSource, User, UserRole
-from app.schemas.readings import ReadingCreate, ReadingResponse
+from app.schemas.readings import ReadingCreate, ReadingResponse, ReadingUpdate
 
 router = APIRouter(prefix="/properties/{property_id}/meters/{meter_id}/readings", tags=["readings"])
 
@@ -86,6 +86,7 @@ def create_reading(
         read_at=body.read_at or datetime.now(timezone.utc),
         source=body.source or ReadingSource.manual,
         image_path=body.image_path,
+        serial_image_path=body.serial_image_path,
         note=body.note,
     )
     db.add(reading)
@@ -109,5 +110,31 @@ def delete_reading(
     if reading.image_path:
         img_file = Path(settings.upload_path) / Path(reading.image_path).name
         img_file.unlink(missing_ok=True)
+    if reading.serial_image_path:
+        serial_file = Path(settings.upload_path) / Path(reading.serial_image_path).name
+        serial_file.unlink(missing_ok=True)
     db.delete(reading)
     db.commit()
+
+
+@router.patch("/{reading_id}", response_model=ReadingResponse)
+def update_reading(
+    property_id: uuid.UUID,
+    meter_id: uuid.UUID,
+    reading_id: int,
+    body: ReadingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_meter_with_access(property_id, meter_id, current_user, db, require_write=True)
+    reading = db.query(Reading).filter(Reading.id == reading_id, Reading.meter_id == meter_id).first()
+    if not reading:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if body.value is not None:
+        reading.value = body.value
+    if body.read_at is not None:
+        reading.read_at = body.read_at
+    reading.note = body.note
+    db.commit()
+    db.refresh(reading)
+    return reading

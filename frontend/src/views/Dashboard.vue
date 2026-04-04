@@ -70,7 +70,7 @@
             </thead>
             <tbody>
               <tr v-for="row in agg.aggregates" :key="row.meter_type" class="border-b border-gray-100 dark:border-gray-700 last:border-0">
-                <td class="py-1 pr-4 capitalize">{{ row.meter_type }}</td>
+                <td class="py-1 pr-4">{{ $t(`meter_types.${row.meter_type}`) || row.meter_type }}</td>
                 <td class="py-1 pr-4 font-mono">{{ formatConsumption(row.total_consumption) }}</td>
                 <td class="py-1">{{ row.unit }}</td>
               </tr>

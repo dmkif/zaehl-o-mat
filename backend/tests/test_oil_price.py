@@ -120,11 +120,11 @@ class TestFetchAndStoreOilPrice:
 
     @pytest.mark.anyio
     async def test_heizoel_aktuell_parses_price_from_html(self, db, monkeypatch):
-        """_fetch_heizoel_aktuell must extract price from a [class*='current-price'] element."""
+        """_fetch_heizoel_aktuell must extract price from div.display-3.font-weight-bold.m-0 span."""
         _patch_setting(monkeypatch, oil_price_source="heizoel-aktuell")
         html = (
             '<html><body>'
-            '<span class="current-price">79,50 €</span>'
+            '<div class="display-3 font-weight-bold m-0"><span>79,50</span>€</div>'
             '</body></html>'
         )
         mock_resp = MagicMock()

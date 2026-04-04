@@ -11,6 +11,7 @@ class ReadingCreate(BaseModel):
     read_at: Optional[datetime] = None
     source: Optional[ReadingSource] = ReadingSource.manual
     image_path: Optional[str] = None
+    serial_image_path: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -21,6 +22,13 @@ class ReadingResponse(BaseModel):
     read_at: datetime
     source: ReadingSource
     image_path: Optional[str]
+    serial_image_path: Optional[str]
     note: Optional[str]
 
     model_config = {"from_attributes": True}
+
+
+class ReadingUpdate(BaseModel):
+    value: Optional[Decimal] = None
+    read_at: Optional[datetime] = None
+    note: Optional[str] = None

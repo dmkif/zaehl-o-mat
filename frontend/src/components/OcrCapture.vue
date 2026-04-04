@@ -59,11 +59,35 @@
         <button @click="resetCrop" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           {{ $t('ocr.crop_reset') }}
         </button>
-        <button @click="startScan" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold text-sm transition">
+        <button @click="goToSerialCrop" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold text-sm transition">
           {{ $t('ocr.scan') }}
         </button>
         <button @click="cancelCrop" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           {{ $t('common.cancel') }}
+        </button>
+      </div>
+    </template>
+
+    <!-- ── Stage: serial_crop — optional second crop for serial number ── -->
+    <template v-else-if="stage === 'serial_crop'">
+      <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $t('ocr.serial_crop_title') }}</p>
+      <p class="text-xs text-gray-500">{{ $t('ocr.serial_crop_hint') }}</p>
+      <div style="height: 350px; border-radius: 0.75rem; overflow: hidden;">
+        <Cropper
+          ref="serialCropperRef"
+          :src="originalUrl ?? ''"
+          class="h-full"
+        />
+      </div>
+      <div class="flex gap-2">
+        <button @click="serialCropperRef?.reset()" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+          {{ $t('ocr.crop_reset') }}
+        </button>
+        <button @click="startScan(true)" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold text-sm transition">
+          {{ $t('ocr.serial_scan') }}
+        </button>
+        <button @click="startScan(false)" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
+          {{ $t('ocr.serial_skip') }}
         </button>
       </div>
     </template>
@@ -133,18 +157,21 @@ const emit = defineEmits<{ (e: 'reading-added'): void }>()
 const { t } = useI18n()
 const authStore = useAuthStore()
 
-type Stage = 'idle' | 'crop' | 'scanning' | 'result'
+type Stage = 'idle' | 'crop' | 'serial_crop' | 'scanning' | 'result'
 const stage = ref<Stage>('idle')
 
 // Recognised engine preference — persists as long as the component is mounted
 const engine = ref<'auto' | 'ocr' | 'llm'>('auto')
 
 const cropperRef = ref<InstanceType<typeof Cropper> | null>(null)
+const serialCropperRef = ref<InstanceType<typeof Cropper> | null>(null)
 const originalUrl = ref<string | null>(null)
 
 // Result state
 const previewUrl = ref<string | null>(null)
+const serialPreviewUrl = ref<string | null>(null)
 const imagePath = ref<string | null>(null)
+const serialImagePath = ref<string | null>(null)
 const confirmedValue = ref('')
 const detectedSerial = ref<string | null>(null)
 const note = ref('')
@@ -193,9 +220,11 @@ function resetCrop() {
 function cancelCrop() {
   if (originalUrl.value) { URL.revokeObjectURL(originalUrl.value); originalUrl.value = null }
   if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = null }
+  if (serialPreviewUrl.value) { URL.revokeObjectURL(serialPreviewUrl.value); serialPreviewUrl.value = null }
   confirmedValue.value = ''
   detectedSerial.value = null
   imagePath.value = null
+  serialImagePath.value = null
   errorMsg.value = ''
   stage.value = 'idle'
 }
@@ -206,13 +235,11 @@ function backToCrop() {
 
 // ── OCR scan ──────────────────────────────────────────────────────────────
 
-async function startScan() {
+async function goToSerialCrop() {
   if (!cropperRef.value) return
-  stage.value = 'scanning'
-  errorMsg.value = ''
-
+  // Extract display crop blob for preview (it will be re-extracted at scan time too)
   const { canvas } = cropperRef.value.getResult()
-  if (!canvas) { stage.value = 'crop'; return }
+  if (!canvas) return
   const blob: Blob = await new Promise((resolve, reject) =>
     canvas.toBlob(
       (b) => (b ? resolve(b) : reject(new Error('toBlob failed'))),
@@ -220,12 +247,50 @@ async function startScan() {
       0.92,
     ),
   )
-
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = URL.createObjectURL(blob)
+  stage.value = 'serial_crop'
+}
+
+async function startScan(withSerial: boolean) {
+  stage.value = 'scanning'
+  errorMsg.value = ''
+
+  // Re-crop display area from original image
+  // We stored the blob in previewUrl already; re-extract fresh from cropper to be safe
+  // Actually previewUrl was set in goToSerialCrop. Re-fetch it as blob.
+  // Instead, call the display cropper... but it's unmounted now (serial_crop stage).
+  // So we rely on the blob stored as previewUrl blob URL.
+  // We need a fresh blob from previewUrl (a blob URL can be fetched):
+  let displayBlob: Blob
+  try {
+    displayBlob = await fetch(previewUrl.value!).then(r => r.blob())
+  } catch {
+    errorMsg.value = t('ocr.error_failed')
+    stage.value = 'serial_crop'
+    return
+  }
+
+  let serialBlob: Blob | null = null
+  if (withSerial && serialCropperRef.value) {
+    const { canvas: sc } = serialCropperRef.value.getResult()
+    if (sc) {
+      const resolvedSerialBlob: Blob = await new Promise((resolve, reject) =>
+        sc.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('toBlob failed'))),
+          'image/jpeg',
+          0.92,
+        ),
+      )
+      serialBlob = resolvedSerialBlob
+      if (serialPreviewUrl.value) URL.revokeObjectURL(serialPreviewUrl.value)
+      serialPreviewUrl.value = URL.createObjectURL(resolvedSerialBlob)
+    }
+  }
 
   const form = new FormData()
-  form.append('file', blob, 'crop.jpg')
+  form.append('file', displayBlob, 'crop.jpg')
+  if (serialBlob) form.append('serial_file', serialBlob, 'serial.jpg')
   form.append('meter_id', props.meterId)
   form.append('engine', engine.value)
   form.append('already_cropped', 'true')
@@ -240,6 +305,7 @@ async function startScan() {
       const data = await res.json()
       confirmedValue.value = data.detected_value ?? ''
       imagePath.value = data.image_path ?? null
+      serialImagePath.value = data.serial_image_path ?? null
       detectedSerial.value = data.detected_serial ?? null
     } else {
       errorMsg.value = t('ocr.error_failed')
@@ -267,6 +333,7 @@ async function saveReading() {
           value: parseFloat(confirmedValue.value.replace(',', '.')),
           source: imagePath.value ? 'auto' : 'manual',
           image_path: imagePath.value,
+          serial_image_path: serialImagePath.value,
           note: note.value || null,
         }),
       },
@@ -275,7 +342,10 @@ async function saveReading() {
       confirmedValue.value = ''
       note.value = ''
       if (previewUrl.value) { URL.revokeObjectURL(previewUrl.value); previewUrl.value = null }
+      if (serialPreviewUrl.value) { URL.revokeObjectURL(serialPreviewUrl.value); serialPreviewUrl.value = null }
       if (originalUrl.value) { URL.revokeObjectURL(originalUrl.value); originalUrl.value = null }
+      imagePath.value = null
+      serialImagePath.value = null
       stage.value = 'idle'
       emit('reading-added')
     } else {
@@ -291,5 +361,6 @@ async function saveReading() {
 onBeforeUnmount(() => {
   if (originalUrl.value) URL.revokeObjectURL(originalUrl.value)
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  if (serialPreviewUrl.value) URL.revokeObjectURL(serialPreviewUrl.value)
 })
 </script>
