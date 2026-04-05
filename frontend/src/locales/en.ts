@@ -141,4 +141,9 @@ export default {
     crop_display_title: 'Step 1: Crop display area',
     crop_display_hint: 'Select the area showing the meter digits.',
   },
+  status: {
+    backend: 'Backend',
+    ocr: 'OCR',
+    llm: 'LLM',
+  },
 }

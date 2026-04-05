@@ -1,9 +1,20 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
+# Secrets directory: pydantic-settings reads files like /run/secrets/database_url
+# as values for their matching settings fields.  Environment variables take precedence.
+_secrets_dir = Path("/run/secrets")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        secrets_dir=_secrets_dir if _secrets_dir.is_dir() else None,
+    )
 
     # Database
     database_url: str = "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart"
@@ -32,6 +43,10 @@ class Settings(BaseSettings):
 
     # File storage
     upload_path: str = "/data/uploads"
+
+    # Ollama vision model (optional — leave ollama_url empty to disable)
+    ollama_url: str = ""
+    ollama_model: str = "gemma4:e4b"
 
     # Oil price fetcher
     oil_price_source: str = "heizoel-aktuell"  # heizoel-aktuell | tankerkoenig | custom

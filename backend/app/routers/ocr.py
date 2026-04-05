@@ -3,7 +3,6 @@ import base64
 import io
 import json
 import logging
-import os
 import re
 import uuid
 from pathlib import Path
@@ -37,11 +36,26 @@ _ALLOWED_IMAGE_MIMES = frozenset({
 # A lock ensures only one thread initialises or uses the reader at a time.
 _reader = None
 _reader_lock = asyncio.Lock()
+_easyocr_available: bool | None = None  # cached import check
+
+
+def _is_easyocr_available() -> bool:
+    """Return True if the easyocr package is importable (cached)."""
+    global _easyocr_available
+    if _easyocr_available is None:
+        try:
+            import easyocr  # type: ignore  # noqa: F401
+            _easyocr_available = True
+        except ImportError:
+            _easyocr_available = False
+    return _easyocr_available
 
 
 def _get_reader():
     global _reader
     if _reader is None:
+        if not _is_easyocr_available():
+            return None
         import easyocr  # type: ignore
         _reader = easyocr.Reader(["de", "en"], gpu=True)
     return _reader
@@ -242,12 +256,13 @@ def _extract_numeric(results: list, img_size: tuple = (0, 0)) -> str | None:
 def _llm_fallback(filepath: Path, already_cropped: bool = False) -> tuple[str | None, str | None]:
     """
     Ask a local Ollama vision model to read the meter display when EasyOCR fails.
-    Model and URL are read from OLLAMA_MODEL / OLLAMA_URL environment variables.
+    Model and URL are read from settings (config.py).
     Returns (reading, serial_number) — either value may be None on failure.
     """
-    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    # Use `or` fallback so an empty-string env var also picks up the default
-    model = os.environ.get("OLLAMA_MODEL") or "qwen2.5vl:7b"
+    ollama_url = settings.ollama_url
+    if not ollama_url:
+        return None, None
+    model = settings.ollama_model
 
     try:
         # For already-cropped display images, 800px is enough.
@@ -493,7 +508,7 @@ async def _run_ocr_on_file(
       (the user already isolated the display area via the crop UI).
     """
     if engine == "llm":
-        if not os.environ.get("OLLAMA_URL"):
+        if not settings.ollama_url:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Ollama engine requested but OLLAMA_URL is not configured",
@@ -502,6 +517,11 @@ async def _run_ocr_on_file(
         return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
 
     if engine == "ocr":
+        if not _is_easyocr_available():
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="EasyOCR engine requested but easyocr is not installed",
+            )
         async with _reader_lock:
             try:
                 return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)
@@ -511,10 +531,10 @@ async def _run_ocr_on_file(
     # engine == "auto": LLM first (if available), fall back to EasyOCR
     detected = None
     detected_serial = None
-    if os.environ.get("OLLAMA_URL"):
+    if settings.ollama_url:
         detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
 
-    if detected is None:
+    if detected is None and _is_easyocr_available():
         async with _reader_lock:
             try:
                 return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)

@@ -39,20 +39,36 @@ spec:
             {{- end }}
             - name: UPLOAD_PATH
               value: /data/uploads
+            {{- if .Values.ollama.enabled }}
+            - name: OLLAMA_URL
+              value: {{ .Values.ollama.url | quote }}
+            - name: OLLAMA_MODEL
+              value: {{ .Values.ollama.model | quote }}
+            {{- end }}
           volumeMounts:
             - name: uploads
               mountPath: /data/uploads
+            {{- if .Values.backend.secretVolume.enabled }}
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
-              path: /api/docs
+              path: /api/health
               port: http
-            initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /api/docs
+              path: /api/health
               port: http
-            initialDelaySeconds: 10
             periodSeconds: 10
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
@@ -64,3 +80,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.backend.secretVolume.enabled }}
+        - name: secrets
+          secret:
+            secretName: {{ .Values.backend.secretVolume.secretName }}
+        {{- end }}

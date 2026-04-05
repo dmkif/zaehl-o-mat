@@ -140,4 +140,9 @@ export default {
     crop_display_title: 'Schritt 1: Anzeige markieren',
     crop_display_hint: 'Markiere den Bereich mit den Zählerziffern.',
   },
+  status: {
+    backend: 'Backend',
+    ocr: 'OCR',
+    llm: 'LLM',
+  },
 }

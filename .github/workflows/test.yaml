@@ -42,12 +42,7 @@ jobs:
           SECRET_KEY: "ci-test-secret-key-not-for-production"
           UPLOAD_PATH: "/tmp/zaehl-o-mat-test-uploads"
         run: |
-          python -m pytest \
-            tests/test_readings.py \
-            tests/test_meters.py \
-            tests/test_properties.py \
-            tests/test_dashboard.py \
-            tests/test_retention.py \
+          python -m pytest tests/ \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \

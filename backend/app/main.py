@@ -99,11 +99,12 @@ uploads_dir.mkdir(parents=True, exist_ok=True)
 from fastapi import Response  # noqa: E402
 from app.database import get_db  # noqa: E402
 from sqlalchemy import text  # noqa: E402
+import httpx as _httpx  # noqa: E402
 
 
 @app.get("/api/health", tags=["health"])
 def health(response: Response):
-    """Liveness + readiness probe: checks DB connectivity and scheduler state."""
+    """Liveness + readiness probe: checks DB, scheduler, OCR and LLM availability."""
     db_ok = False
     try:
         db = next(get_db())
@@ -114,7 +115,33 @@ def health(response: Response):
         pass
 
     scheduler_ok = scheduler.running
-    ok = db_ok and scheduler_ok
-    if not ok:
+
+    # EasyOCR availability (cached import check)
+    from app.routers.ocr import _is_easyocr_available
+    ocr_ok = _is_easyocr_available()
+
+    # Ollama / LLM reachability
+    llm_ok = False
+    llm_model: str | None = None
+    if settings.ollama_url:
+        llm_model = settings.ollama_model
+        try:
+            r = _httpx.get(f"{settings.ollama_url}/api/tags", timeout=3.0)
+            llm_ok = r.status_code == 200
+        except Exception:
+            pass
+
+    # Core services (DB + scheduler) determine overall health.
+    # OCR and LLM are optional — their absence does not degrade status.
+    core_ok = db_ok and scheduler_ok
+    if not core_ok:
         response.status_code = 503
-    return {"status": "ok" if ok else "degraded", "db": db_ok, "scheduler": scheduler_ok}
+
+    return {
+        "status": "ok" if core_ok else "degraded",
+        "db": db_ok,
+        "scheduler": scheduler_ok,
+        "ocr": ocr_ok,
+        "llm": llm_ok,
+        "llm_model": llm_model,
+    }

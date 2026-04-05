@@ -20,6 +20,17 @@ backend:
   #   OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_DISCOVERY_URL,
   #   OIDC_REDIRECT_URI, SUPERADMIN_USER, SUPERADMIN_PASSWORD
   existingSecret: ""
+  # Mount an existing secret as files to /run/secrets/ (one key per file).
+  # pydantic-settings reads these automatically — env vars take precedence.
+  secretVolume:
+    enabled: false
+    secretName: ""  # Name of k8s Secret to project as files
+
+ollama:
+  enabled: false
+  # URL of an external Ollama instance (leave empty to disable LLM OCR)
+  url: ""
+  model: "gemma4:e4b"
 
 frontend:
   image:

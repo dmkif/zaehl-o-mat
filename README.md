@@ -65,6 +65,24 @@ All variables are set on the `backend` service.
 | `OIDC_MANAGER_GROUP` | `verwalter` | OIDC group mapped to the `manager` role |
 | `OIDC_USER_GROUP` | `user` | OIDC group mapped to the `user` role |
 
+### Secrets from Files
+
+Instead of environment variables the backend can read secrets from files mounted
+at `/run/secrets/`.  Each file name corresponds to a setting name in lower-case
+(e.g. `/run/secrets/database_url`).  This is the standard Kubernetes projected-
+volume pattern and removes the need for `envFrom` secret refs.
+
+Environment variables take precedence over file-based secrets.
+
+**Helm chart example** (values.yaml):
+
+```yaml
+backend:
+  secretVolume:
+    enabled: true
+    secretName: zaehl-o-mat-secrets   # existing k8s Secret with one key per setting
+```
+
 ## OIDC Setup (Authentik)
 
 1. Create an **OAuth2/OpenID Connect** provider in Authentik.
@@ -74,9 +92,14 @@ All variables are set on the `backend` service.
 
 When `OIDC_CLIENT_ID` is set, the login page shows a **"Login with SSO"** button in addition to the local superadmin login.
 
-## Ollama Vision Model
+## Ollama Vision Model (Optional)
 
-The OCR pipeline first tries Ollama if `OLLAMA_URL` is configured. The model is asked for a structured JSON response containing the meter reading and serial number:
+The OCR pipeline is fully optional.  If `OLLAMA_URL` is empty the LLM path is
+skipped; if `easyocr` is not installed the classical OCR path is skipped.  The
+app starts and operates normally without either — OCR endpoints will return
+appropriate errors when a specific engine is requested but unavailable.
+
+When `OLLAMA_URL` is configured, the model is asked for a structured JSON response containing the meter reading and serial number:
 
 ```
 {"reading": "12345.6", "serial": "0012345678"}
@@ -89,6 +112,25 @@ Recommended model: [`gemma4:e4b`](https://ollama.com/library/gemma4) — best ac
 ```bash
 ollama pull gemma4:e4b
 ```
+
+## Health Check
+
+`GET /api/health` returns the status of all subsystems:
+
+```json
+{
+  "status": "ok",
+  "db": true,
+  "scheduler": true,
+  "ocr": true,
+  "llm": true,
+  "llm_model": "gemma4:e4b"
+}
+```
+
+- **status** is `"ok"` when DB and scheduler are healthy, `"degraded"` otherwise (HTTP 503).
+- **ocr** / **llm** reflect availability but do not affect overall status — they are optional.
+- The frontend shows these as a traffic-light indicator in the footer.
 
 ## Helm Chart (Kubernetes)
 
