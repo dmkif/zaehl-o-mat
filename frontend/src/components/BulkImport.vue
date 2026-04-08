@@ -85,7 +85,7 @@
         <div class="ml-auto flex items-center gap-2">
           <label class="text-xs text-gray-500">{{ $t('bulk.all_date') }}</label>
           <input
-            type="date"
+            type="datetime-local"
             v-model="globalDate"
             @change="applyGlobalDate"
             class="text-xs rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1"
@@ -159,6 +159,16 @@
                 >
                   {{ item.match_confidence === 'exact' ? $t('bulk.exact') : item.match_confidence === 'partial' ? $t('bulk.partial') : $t('bulk.unmatched') }}
                 </span>
+                <span
+                  v-if="item.detection_method"
+                  class="text-xs font-medium px-1.5 py-0.5 rounded-full"
+                  :class="{
+                    'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300': item.detection_method === 'llm',
+                    'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300': item.detection_method === 'ocr',
+                  }"
+                >
+                  {{ item.detection_method === 'llm' ? 'LLM' : 'OCR' }}
+                </span>
               </div>
 
               <!-- Meter selector -->
@@ -202,7 +212,7 @@
                 />
                 <input
                   v-model="item.read_at"
-                  type="date"
+                  type="datetime-local"
                   class="w-full sm:w-auto text-sm rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5"
                 />
               </div>
@@ -349,6 +359,7 @@ interface ScanResult {
   exif_date: string | null
   detected_value: string | null
   detected_serial: string | null
+  detection_method: 'ocr' | 'llm' | null
   matched_meter: MeterSummary | null
   match_confidence: MatchConf
   candidate_meters: MeterSummary[]
@@ -369,7 +380,8 @@ const selectedFiles = ref<File[]>([])
 const scanDone = ref(0)
 const reviewItems = ref<ReviewItem[]>([])
 const allMeters = ref<MeterSummary[]>([])
-const globalDate = ref(new Date().toISOString().slice(0, 10))
+const _now = new Date()
+const globalDate = ref(`${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}T${String(_now.getHours()).padStart(2, '0')}:${String(_now.getMinutes()).padStart(2, '0')}`)
 
 const blobUrls = ref<Record<string, string>>({})
 
@@ -472,6 +484,7 @@ async function cropSubmit(withSerial: boolean) {
     const item = reviewItems.value[cropIndex.value]
     if (data.detected_value) item.confirmed_value = data.detected_value
     if (data.detected_serial != null) item.detected_serial = data.detected_serial
+    if (data.detection_method) item.detection_method = data.detection_method
 
     // Replace stored image path + reload thumbnail with the new cropped image
     if (data.image_path) {
@@ -549,7 +562,8 @@ async function startScan() {
   if (props.propertyId) form.append('property_id', props.propertyId)
   form.append('engine', engine.value)
 
-  const today = new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 
   try {
     const res = await fetch('/api/ocr/bulk-scan', {

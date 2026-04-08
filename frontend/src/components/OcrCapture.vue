@@ -110,6 +110,16 @@
               inputmode="decimal"
               class="flex-1 rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-3 py-2 font-mono text-lg"
             />
+            <span
+              v-if="detectionMethod"
+              class="text-xs font-medium px-1.5 py-0.5 rounded-full"
+              :class="{
+                'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300': detectionMethod === 'llm',
+                'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300': detectionMethod === 'ocr',
+              }"
+            >
+              {{ detectionMethod === 'llm' ? 'LLM' : 'OCR' }}
+            </span>
             <span v-if="serialMismatch" class="text-amber-500 text-xl" :title="serialWarningTitle">⚠️</span>
           </div>
           <div v-if="detectedSerial" class="text-xs text-gray-400 mt-0.5">
@@ -174,6 +184,7 @@ const imagePath = ref<string | null>(null)
 const serialImagePath = ref<string | null>(null)
 const confirmedValue = ref('')
 const detectedSerial = ref<string | null>(null)
+const detectionMethod = ref<string | null>(null)
 const note = ref('')
 const saving = ref(false)
 const errorMsg = ref('')
@@ -223,6 +234,7 @@ function cancelCrop() {
   if (serialPreviewUrl.value) { URL.revokeObjectURL(serialPreviewUrl.value); serialPreviewUrl.value = null }
   confirmedValue.value = ''
   detectedSerial.value = null
+  detectionMethod.value = null
   imagePath.value = null
   serialImagePath.value = null
   errorMsg.value = ''
@@ -307,6 +319,7 @@ async function startScan(withSerial: boolean) {
       imagePath.value = data.image_path ?? null
       serialImagePath.value = data.serial_image_path ?? null
       detectedSerial.value = data.detected_serial ?? null
+      detectionMethod.value = data.detection_method ?? null
     } else {
       errorMsg.value = t('ocr.error_failed')
     }

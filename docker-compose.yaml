@@ -15,7 +15,7 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:0.20.2
+    image: ollama/ollama:0.20.3
     restart: unless-stopped
     ports:
       - "11434:11434"
@@ -23,7 +23,7 @@ services:
       - ollama-data:/root/.ollama
     environment:
       OLLAMA_FLASH_ATTENTION: "1"
-      OLLAMA_CONTEXT_LENGTH: "2048"
+      OLLAMA_CONTEXT_LENGTH: "4096"
     # CDI device access for NVIDIA GPU.
     # If startup fails with "no such file or directory" for a DRI device,
     # regenerate the CDI spec on the host:

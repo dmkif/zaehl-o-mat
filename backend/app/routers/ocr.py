@@ -61,6 +61,41 @@ def _get_reader():
     return _reader
 
 
+def _extract_exif_datetime(filepath: Path) -> str | None:
+    """
+    Extract the photo-taken datetime from EXIF metadata.
+
+    Checks DateTimeOriginal (36867) and DateTimeDigitized (36868) in the
+    Exif sub-IFD first, then falls back to DateTime (306) in the root IFD.
+
+    Returns a string like ``"2025-12-24T14:30"`` (date + time) or
+    ``"2025-12-24"`` (date only if the time portion is missing/short),
+    or ``None`` when no EXIF date is found.
+    """
+    try:
+        from PIL import Image as _PILImg
+        with _PILImg.open(filepath) as _pimg:
+            _exif = _pimg.getexif()
+            _val = None
+            # DateTimeOriginal / DateTimeDigitized live in the Exif sub-IFD
+            _exif_ifd = _exif.get_ifd(0x8769)
+            for _tag in (36867, 36868):  # DateTimeOriginal, DateTimeDigitized
+                _val = _exif_ifd.get(_tag)
+                if _val:
+                    break
+            # Fallback: DateTime in root IFD
+            if not _val:
+                _val = _exif.get(306)
+            if _val:
+                # EXIF format "YYYY:MM:DD HH:MM:SS" → "YYYY-MM-DDTHH:MM"
+                if len(_val) >= 19:
+                    return _val[:10].replace(':', '-') + 'T' + _val[11:16]
+                return _val[:10].replace(':', '-')
+    except Exception:
+        pass
+    return None
+
+
 def _preprocess_image(filepath: Path, already_cropped: bool = False) -> tuple:
     """
     Pre-process a utility-meter photo for EasyOCR.  Handles three common
@@ -488,7 +523,7 @@ def _run_ocr_on_file_sync(filepath: Path, already_cropped: bool = False) -> dict
         for (_, text, conf) in corrected_results
     ]
     detected = _extract_numeric(corrected_results, img_size=img_size)
-    return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": None}
+    return {"raw_texts": raw_texts, "detected_value": detected, "detected_serial": None, "detection_method": "ocr"}
 
 
 async def _run_ocr_on_file(
@@ -514,7 +549,7 @@ async def _run_ocr_on_file(
                 detail="Ollama engine requested but OLLAMA_URL is not configured",
             )
         detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
-        return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
+        return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial, "detection_method": "llm"}
 
     if engine == "ocr":
         if not _is_easyocr_available():
@@ -541,7 +576,7 @@ async def _run_ocr_on_file(
             except RuntimeError as exc:
                 raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
-    return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial}
+    return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial, "detection_method": "llm" if detected else None}
 
 
 @router.post("/rescan/{reading_id}")
@@ -760,6 +795,7 @@ async def bulk_scan_meters(
                 "exif_date": None,
                 "detected_value": None,
                 "detected_serial": None,
+                "detection_method": None,
                 "matched_meter": None,
                 "match_confidence": "none",
                 "candidate_meters": [],
@@ -783,22 +819,13 @@ async def bulk_scan_meters(
                 filepath.write_bytes(contents)
                 item["temp_image_path"] = f"uploads/{filename}"
 
-                # Extract EXIF date
-                try:
-                    from PIL import Image as _PILImg
-                    with _PILImg.open(filepath) as _pimg:
-                        _exif = _pimg.getexif()
-                        for _tag in (36867, 36868, 306):  # DateTimeOriginal, DateTimeDigitized, DateTime
-                            _val = _exif.get(_tag)
-                            if _val:
-                                item["exif_date"] = _val[:10].replace(':', '-')
-                                break
-                except Exception:
-                    pass
+                # Extract EXIF date + time
+                item["exif_date"] = _extract_exif_datetime(filepath)
 
                 ocr_result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=False)
                 item["detected_value"] = ocr_result.get("detected_value")
                 item["detected_serial"] = ocr_result.get("detected_serial")
+                item["detection_method"] = ocr_result.get("detection_method")
 
                 # Serial → meter matching
                 serial = item["detected_serial"]
