@@ -192,18 +192,18 @@
               </select>
 
               <!-- Value + date row -->
-              <div v-if="!item.error" class="flex gap-2 items-center">
+              <div v-if="!item.error" class="flex flex-col sm:flex-row gap-2">
                 <input
                   v-model="item.confirmed_value"
                   type="text"
                   inputmode="decimal"
                   :placeholder="$t('reading.enter_value')"
-                  class="flex-1 min-w-0 text-sm rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5 font-mono"
+                  class="w-full sm:flex-1 sm:min-w-0 text-sm rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5 font-mono"
                 />
                 <input
                   v-model="item.read_at"
                   type="date"
-                  class="text-sm rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5"
+                  class="w-full sm:w-auto text-sm rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5"
                 />
               </div>
             </div>
