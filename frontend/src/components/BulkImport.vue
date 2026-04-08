@@ -98,7 +98,7 @@
         <div
           v-for="(item, i) in reviewItems"
           :key="i"
-          class="rounded-xl border dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden"
+          class="rounded-xl border dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm"
           :class="{
             'border-green-300 dark:border-green-700': item.match_confidence === 'exact',
             'border-yellow-300 dark:border-yellow-700': item.match_confidence === 'partial',
