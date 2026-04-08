@@ -641,6 +641,7 @@ async function startScan() {
       confirmed_value: '',
       read_at: today,
       exif_date: null,
+      detection_method: null,
     }))
   } finally {
     // Ensure we always land in review (e.g. on connection drop mid-stream)
