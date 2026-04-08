@@ -139,6 +139,7 @@ def health(response: Response):
 
     return {
         "status": "ok" if core_ok else "degraded",
+        "version": app.version,
         "db": db_ok,
         "scheduler": scheduler_ok,
         "ocr": ocr_ok,

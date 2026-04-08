@@ -17,13 +17,17 @@
       {{ t('status.llm') }}
       <span v-if="llmModel" class="text-gray-400 dark:text-gray-500">({{ llmModel }})</span>
     </span>
+    <span class="ml-auto text-gray-400 dark:text-gray-500">
+      Frontend v{{ frontendVersion }}
+      <template v-if="backendVersion"> · Backend v{{ backendVersion }}</template>
+    </span>
   </div>
 
   <!-- Mobile: compact row above BottomNav -->
   <div
     class="sm:hidden flex items-center justify-center gap-4 px-2 py-1 text-[10px]
            bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700
-           text-gray-500 dark:text-gray-400 select-none"
+           text-gray-500 dark:text-gray-400 select-none flex-wrap"
   >
     <span class="inline-flex items-center gap-1">
       <span :class="dotClass(backendOk)" class="status-dot-sm" />
@@ -37,6 +41,9 @@
       <span :class="dotClass(llmOk)" class="status-dot-sm" />
       {{ t('status.llm') }}
     </span>
+    <span class="text-gray-400 dark:text-gray-500">
+      v{{ frontendVersion }}<template v-if="backendVersion"> · v{{ backendVersion }}</template>
+    </span>
   </div>
 </template>
 
@@ -46,11 +53,14 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
+const frontendVersion = __APP_VERSION__
+
 // null = unknown / not yet polled, true = ok, false = down/missing
 const backendOk = ref<boolean | null>(null)
 const ocrOk = ref<boolean | null>(null)
 const llmOk = ref<boolean | null>(null)
 const llmModel = ref<string | null>(null)
+const backendVersion = ref<string | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -70,6 +80,7 @@ async function poll() {
       ocrOk.value = data.ocr ?? false
       llmOk.value = data.llm ?? false
       llmModel.value = data.llm_model ?? null
+      backendVersion.value = data.version ?? null
       return
     }
     const data = await res.json()
@@ -77,12 +88,14 @@ async function poll() {
     ocrOk.value = data.ocr ?? false
     llmOk.value = data.llm ?? false
     llmModel.value = data.llm_model ?? null
+    backendVersion.value = data.version ?? null
   } catch {
     // Network error — backend unreachable
     backendOk.value = false
     ocrOk.value = null
     llmOk.value = null
     llmModel.value = null
+    backendVersion.value = null
   }
 }
 
