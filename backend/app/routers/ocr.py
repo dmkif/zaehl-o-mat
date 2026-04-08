@@ -620,7 +620,7 @@ async def scan_meter(
 
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Image too large (max 10 MB)")
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image too large (max 10 MB)")
 
     # Magic-bytes validation: distrust the client-supplied Content-Type
     detected_mime = filetype.guess_mime(contents)
@@ -634,7 +634,7 @@ async def scan_meter(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be an image")
         serial_contents = await serial_file.read()
         if len(serial_contents) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Serial image too large (max 10 MB)")
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Serial image too large (max 10 MB)")
         serial_detected_mime = filetype.guess_mime(serial_contents)
         if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be a supported image")
