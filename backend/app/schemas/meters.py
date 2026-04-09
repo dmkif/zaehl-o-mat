@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from app.models import MeterType, MeterUnit, IntegrationType
 
 
@@ -42,3 +42,14 @@ class MeterResponse(BaseModel):
     replaced_by_id: Optional[uuid.UUID]
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _redact_integration_config(self) -> "MeterResponse":
+        """Replace integration_config with a boolean presence indicator.
+
+        The config may contain API keys or passwords — never expose them in API responses.
+        Clients only need to know whether a config exists, not its contents.
+        """
+        if self.integration_config is not None:
+            self.integration_config = True
+        return self

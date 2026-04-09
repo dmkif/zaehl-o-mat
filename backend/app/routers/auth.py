@@ -8,7 +8,7 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,7 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
+from app.limiter import limiter
 from app.models import User, UserRole, OidcPkceState
 from app.schemas.auth import TokenResponse, SuperadminLoginRequest
 
@@ -155,7 +156,9 @@ async def callback(
 
 
 @router.post("/superadmin-login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def superadmin_login(
+    request: Request,
     body: SuperadminLoginRequest,
     db: Session = Depends(get_db),
 ):
