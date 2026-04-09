@@ -1,8 +1,8 @@
 <template>
-  <div :class="{ dark: isDark }" class="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors">
+  <div :class="{ dark: isDark }" class="min-h-screen flex flex-col bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors">
     <AppHeader v-if="authStore.isLoggedIn" />
     <!-- pb-20 on mobile so content doesn't hide behind bottom nav -->
-    <main class="container mx-auto px-4 py-6" :class="authStore.isLoggedIn ? 'pb-28 sm:pb-10' : ''">
+    <main class="flex-1 container mx-auto px-4 py-6" :class="authStore.isLoggedIn ? 'pb-28 sm:pb-10' : ''">
       <RouterView />
     </main>
     <StatusFooter v-if="authStore.isLoggedIn" />

@@ -23,9 +23,9 @@
     </span>
   </div>
 
-  <!-- Mobile: compact row above BottomNav -->
+  <!-- Mobile: compact row fixed just above BottomNav -->
   <div
-    class="sm:hidden flex items-center justify-center gap-4 px-2 py-1 text-[10px]
+    class="sm:hidden fixed bottom-16 left-0 right-0 z-40 flex items-center justify-center gap-4 px-2 py-1 text-[10px]
            bg-gray-100 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700
            text-gray-500 dark:text-gray-400 select-none flex-wrap"
   >

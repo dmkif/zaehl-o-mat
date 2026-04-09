@@ -105,4 +105,7 @@ async def _fetch_custom() -> float:
         resp = await client.get(settings.oil_price_api_url)
         resp.raise_for_status()
     data = resp.json()
-    return float(data["price_per_100l"])
+    price = data.get("price_per_100l")
+    if price is None:
+        raise ValueError("Response missing 'price_per_100l' field")
+    return float(price)

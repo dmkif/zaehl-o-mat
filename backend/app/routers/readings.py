@@ -57,8 +57,8 @@ def list_readings(
     meter_id: uuid.UUID,
     from_dt: Optional[datetime] = Query(None, alias="from"),
     to_dt: Optional[datetime] = Query(None, alias="to"),
-    limit: int = Query(200, le=10000),
-    offset: int = 0,
+    limit: int = Query(200, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -107,14 +107,16 @@ def delete_reading(
     reading = db.query(Reading).filter(Reading.id == reading_id, Reading.meter_id == meter_id).first()
     if not reading:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if reading.image_path:
-        img_file = Path(settings.upload_path) / Path(reading.image_path).name
-        img_file.unlink(missing_ok=True)
-    if reading.serial_image_path:
-        serial_file = Path(settings.upload_path) / Path(reading.serial_image_path).name
-        serial_file.unlink(missing_ok=True)
+    image_path = reading.image_path
+    serial_image_path = reading.serial_image_path
     db.delete(reading)
     db.commit()
+    if image_path:
+        img_file = Path(settings.upload_path) / Path(image_path).name
+        img_file.unlink(missing_ok=True)
+    if serial_image_path:
+        serial_file = Path(settings.upload_path) / Path(serial_image_path).name
+        serial_file.unlink(missing_ok=True)
 
 
 @router.patch("/{reading_id}", response_model=ReadingResponse)

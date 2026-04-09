@@ -1,7 +1,8 @@
 from pathlib import Path
-
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Secrets directory: pydantic-settings reads files like /run/secrets/database_url
 # as values for their matching settings fields.  Environment variables take precedence.
@@ -56,6 +57,18 @@ class Settings(BaseSettings):
     # App
     app_base_url: str = "https://zaehlomat.apps.schmulzer.de"
     debug: bool = False
+
+    @model_validator(mode="after")
+    def _validate_security_settings(self) -> "Settings":
+        if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":
+            raise ValueError(
+                "DATABASE_URL must be overridden — default credentials are insecure"
+            )
+        if self.jwt_secret_key == "change-me-in-production":
+            raise ValueError(
+                "JWT_SECRET_KEY must be set to a strong random secret"
+            )
+        return self
 
 
 settings = Settings()

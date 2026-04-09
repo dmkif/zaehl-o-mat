@@ -106,6 +106,8 @@ def update_meter(
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.property_id == property_id).first()
     if not meter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if meter.replaced_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot update a replaced meter")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(meter, field, value)
     db.commit()
@@ -125,5 +127,7 @@ def delete_meter(
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.property_id == property_id).first()
     if not meter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if meter.replaced_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot delete a replaced meter")
     db.delete(meter)
     db.commit()

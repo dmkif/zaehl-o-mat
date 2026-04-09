@@ -6,6 +6,7 @@ import bcrypt
 from authlib.jose import JsonWebToken, JoseError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -61,7 +62,7 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
         db.refresh(user)
         return user
 
-    # First login — create user
+    # First login — create user (guard against concurrent first-login race condition)
     user = User(
         id=uuid.uuid4(),
         username=username,
@@ -71,9 +72,20 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
         is_active=True,
     )
     db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    try:
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError:
+        db.rollback()
+        user = db.query(User).filter(User.oidc_sub == sub).first()
+        if not user:
+            raise
+        user.role = role
+        user.email = email
+        db.commit()
+        db.refresh(user)
+        return user
 
 
 def get_current_user(
@@ -90,7 +102,10 @@ def get_current_user(
     except JoseError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
+    try:
+        user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user

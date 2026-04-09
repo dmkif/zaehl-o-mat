@@ -8,7 +8,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.auth import require_admin, get_current_user
+from app.auth import require_admin
 from app.database import get_db
 from app.models import LdapRoleMapping, User, UserRole
 from app.schemas.admin import (
@@ -34,13 +34,11 @@ def set_user_role(
     user_id: uuid.UUID,
     body: UserRoleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     # Only superadmin may grant superadmin role
     if body.role == UserRole.superadmin and current_user.role != UserRole.superadmin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only superadmin can grant superadmin role")
-    if current_user.role not in (UserRole.superadmin, UserRole.admin):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

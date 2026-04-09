@@ -79,14 +79,27 @@ def dashboard_summary(
         .all()
     )
 
+    # Batch latest-reading lookup: one query for all meters instead of N queries
+    meter_ids = [m.id for m in meters]
+    if meter_ids:
+        latest_id_subq = (
+            db.query(func.max(Reading.id).label("max_id"))
+            .filter(Reading.meter_id.in_(meter_ids))
+            .group_by(Reading.meter_id)
+            .subquery()
+        )
+        latest_readings = (
+            db.query(Reading)
+            .filter(Reading.id.in_(db.query(latest_id_subq.c.max_id)))
+            .all()
+        )
+        latest_map: dict[uuid.UUID, Reading] = {r.meter_id: r for r in latest_readings}
+    else:
+        latest_map = {}
+
     meter_summaries = []
     for m in meters:
-        latest = (
-            db.query(Reading)
-            .filter(Reading.meter_id == m.id)
-            .order_by(Reading.read_at.desc())
-            .first()
-        )
+        latest = latest_map.get(m.id)
         avg_daily = _avg_daily_consumption_365d(m.id, db)
         meter_summaries.append(
             {
@@ -106,12 +119,7 @@ def dashboard_summary(
     for m in meters:
         if m.meter_type != MeterType.oil:
             continue
-        latest = (
-            db.query(Reading)
-            .filter(Reading.meter_id == m.id)
-            .order_by(Reading.read_at.desc())
-            .first()
-        )
+        latest = latest_map.get(m.id)  # reuse already-fetched latest reading
         avg_daily = _avg_daily_consumption_365d(m.id, db, invert=True)
         if latest and avg_daily and avg_daily > 0:
             days = int(float(latest.value) / avg_daily)

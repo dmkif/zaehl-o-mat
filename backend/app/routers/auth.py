@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 import secrets
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _oidc_config_cache: Optional[dict] = None
 _oidc_config_fetched_at: Optional[datetime] = None
 _OIDC_CACHE_TTL = timedelta(hours=1)
+_oidc_lock = asyncio.Lock()
 
 
 async def _oidc_config() -> dict:
@@ -40,11 +42,20 @@ async def _oidc_config() -> dict:
         and now - _oidc_config_fetched_at < _OIDC_CACHE_TTL
     ):
         return _oidc_config_cache
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(settings.oidc_discovery_url)
-        resp.raise_for_status()
-        _oidc_config_cache = resp.json()
-        _oidc_config_fetched_at = now
+    async with _oidc_lock:
+        # Double-checked locking: another coroutine may have refreshed while we waited
+        now = datetime.now(timezone.utc)
+        if (
+            _oidc_config_cache
+            and _oidc_config_fetched_at
+            and now - _oidc_config_fetched_at < _OIDC_CACHE_TTL
+        ):
+            return _oidc_config_cache
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(settings.oidc_discovery_url)
+            resp.raise_for_status()
+            _oidc_config_cache = resp.json()
+            _oidc_config_fetched_at = now
     return _oidc_config_cache
 
 
@@ -125,10 +136,13 @@ async def callback(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token exchange failed")
 
         tokens = token_resp.json()
+        access_token_oidc = tokens.get("access_token")
+        if not access_token_oidc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider returned no access token")
 
         userinfo_resp = await client.get(
             cfg["userinfo_endpoint"],
-            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            headers={"Authorization": f"Bearer {access_token_oidc}"},
         )
         userinfo_resp.raise_for_status()
         userinfo = userinfo_resp.json()
@@ -146,11 +160,11 @@ async def superadmin_login(
     db: Session = Depends(get_db),
 ):
     """Local login for superadmin account (bypasses OIDC)."""
-    if (
-        body.username != settings.superadmin_user
-        or not settings.superadmin_password
-        or body.password != settings.superadmin_password
-    ):
+    if not settings.superadmin_password:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    username_ok = secrets.compare_digest(body.username, settings.superadmin_user)
+    password_ok = secrets.compare_digest(body.password, settings.superadmin_password)
+    if not (username_ok and password_ok):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     user = db.query(User).filter(User.username == settings.superadmin_user).first()

@@ -8,6 +8,8 @@ import os
 # Set DATABASE_URL before any app module is imported so that app/database.py
 # does not attempt to connect to PostgreSQL during the test run.
 os.environ.setdefault("DATABASE_URL", "sqlite://")
+# Use a deterministic test-only JWT secret (never used in production)
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-production")
 # Redirect uploads to a writable temp directory during tests
 os.environ.setdefault("UPLOAD_PATH", "/tmp/zaehlwart-test-uploads")
 import uuid

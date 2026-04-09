@@ -11,6 +11,7 @@ import filetype
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -31,6 +32,18 @@ _ALLOWED_IMAGE_MIMES = frozenset({
     "image/bmp",
     "image/tiff",
 })
+
+# Safe file extension derived from verified MIME type (never trust client-supplied extension)
+_MIME_TO_EXT: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+}
+
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # EasyOCR reader is lazily initialized to avoid slow startup.
 # A lock ensures only one thread initialises or uses the reader at a time.
@@ -653,8 +666,8 @@ async def scan_meter(
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
 
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
+    contents = await file.read(_MAX_UPLOAD_BYTES + 1)
+    if len(contents) > _MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image too large (max 10 MB)")
 
     # Magic-bytes validation: distrust the client-supplied Content-Type
@@ -667,8 +680,8 @@ async def scan_meter(
     if serial_file is not None:
         if not serial_file.content_type or not serial_file.content_type.startswith("image/"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be an image")
-        serial_contents = await serial_file.read()
-        if len(serial_contents) > 10 * 1024 * 1024:
+        serial_contents = await serial_file.read(_MAX_UPLOAD_BYTES + 1)
+        if len(serial_contents) > _MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Serial image too large (max 10 MB)")
         serial_detected_mime = filetype.guess_mime(serial_contents)
         if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
@@ -694,7 +707,7 @@ async def scan_meter(
     # Save display crop to disk
     upload_dir = Path(settings.upload_path)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{uuid.uuid4()}{Path(file.filename or 'img.jpg').suffix.lower() or '.jpg'}"
+    filename = f"{uuid.uuid4()}{_MIME_TO_EXT.get(detected_mime, '.jpg')}"
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
 
@@ -703,7 +716,7 @@ async def scan_meter(
     # If serial file provided and OCR didn't already detect serial (LLM may have), run dedicated serial OCR
     serial_image_path: str | None = None
     if serial_contents is not None and result.get("detected_serial") is None:
-        serial_filename = f"{uuid.uuid4()}_serial{Path(serial_file.filename or 'serial.jpg').suffix.lower() or '.jpg'}"
+        serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"
         serial_filepath = upload_dir / serial_filename
         serial_filepath.write_bytes(serial_contents)
         serial_image_path = f"uploads/{serial_filename}"
@@ -712,7 +725,7 @@ async def scan_meter(
         result["detected_serial"] = detected_serial
     elif serial_contents is not None:
         # LLM already found serial — still save the crop for future rescan
-        serial_filename = f"{uuid.uuid4()}_serial{Path(serial_file.filename or 'serial.jpg').suffix.lower() or '.jpg'}"
+        serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"
         serial_filepath = upload_dir / serial_filename
         serial_filepath.write_bytes(serial_contents)
         serial_image_path = f"uploads/{serial_filename}"
@@ -752,9 +765,9 @@ async def bulk_scan_meters(
             meters = db.query(Meter).filter(Meter.replaced_at.is_(None)).all()
     else:
         accessible_props = (
-            db.query(PropertyUser.property_id)
-            .filter(PropertyUser.user_id == current_user.id)
-            .subquery()
+            select(PropertyUser.property_id)
+            .where(PropertyUser.user_id == current_user.id)
+            .scalar_subquery()
         )
         if property_id:
             has_access = (
@@ -813,7 +826,7 @@ async def bulk_scan_meters(
                     yield f"data: {json.dumps(item)}\n\n"
                     continue
 
-                ext = Path(original_filename).suffix.lower() or ".jpg"
+                ext = _MIME_TO_EXT.get(detected_mime, ".jpg")
                 filename = f"{uuid.uuid4()}{ext}"
                 filepath = upload_dir / filename
                 filepath.write_bytes(contents)
@@ -838,7 +851,7 @@ async def bulk_scan_meters(
 
             except Exception as exc:
                 logger.error("Bulk scan error for %s: %s", original_filename, exc)
-                item["error"] = f"OCR failed: {exc}"
+                item["error"] = "OCR processing failed"
 
             yield f"data: {json.dumps(item)}\n\n"
 
