@@ -37,8 +37,6 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-            - name: UPLOAD_PATH
-              value: /data/uploads
             {{- if .Values.ollama.enabled }}
             - name: OLLAMA_URL
               value: {{ .Values.ollama.url | quote }}
@@ -61,8 +59,10 @@ spec:
             periodSeconds: 5
             failureThreshold: 30
           livenessProbe:
+            # Process-only check: a DB outage must fail readiness, not trigger
+            # restart loops via liveness.
             httpGet:
-              path: /api/health
+              path: /api/health/live
               port: http
             periodSeconds: 30
           readinessProbe:
