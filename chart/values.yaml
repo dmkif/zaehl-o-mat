@@ -1,3 +1,6 @@
+# NOTE: keep at 1 — the backend runs an in-process scheduler (retention,
+# oil-price cron) and an in-memory rate limiter; multiple replicas would run
+# the jobs multiple times.
 replicaCount: 1
 
 backend:
@@ -56,16 +59,32 @@ persistence:
   storageClass: longhorn
   size: 5Gi
 
+# Own StatefulSet, not a bitnami/community chart dependency - avoids
+# fighting another chart's image/securityContext assumptions. Set
+# enabled: false and fill in externalDatabase.host to point at an
+# external Postgres instead.
 postgresql:
   enabled: true
+  image:
+    registry: docker.io
+    repository: library/postgres
+    tag: "18-trixie"
+    pullPolicy: IfNotPresent
   auth:
     database: zaehlwart
     username: zaehlwart
     existingSecret: zaehl-o-mat-db-secret
-    secretKeys:
-      userPasswordKey: POSTGRES_PASSWORD
-  primary:
-    persistence:
-      enabled: true
-      storageClass: longhorn
-      size: 5Gi
+    secretPasswordKey: POSTGRES_PASSWORD
+  persistence:
+    enabled: true
+    storageClass: longhorn
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+externalDatabase:
+  host: ""

@@ -12,24 +12,17 @@ spec:
     # API traffic → backend
     - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
       kind: Rule
+      middlewares:
+        - name: {{ include "zaehl-o-mat.fullname" . }}-security-headers
       services:
         - name: {{ include "zaehl-o-mat.fullname" . }}-backend
           port: 8000
-    # Auth redirect endpoints
-    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/auth`)
-      kind: Rule
-      services:
-        - name: {{ include "zaehl-o-mat.fullname" . }}-backend
-          port: 8000
-    # Uploaded images served by backend
-    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/uploads`)
-      kind: Rule
-      services:
-        - name: {{ include "zaehl-o-mat.fullname" . }}-backend
-          port: 8000
-    # Everything else → frontend SPA
+    # Everything else → frontend SPA (all backend endpoints live under /api,
+    # including /api/auth/* and /api/uploads/*)
     - match: Host(`{{ .Values.ingress.host }}`)
       kind: Rule
+      middlewares:
+        - name: {{ include "zaehl-o-mat.fullname" . }}-security-headers
       services:
         - name: {{ include "zaehl-o-mat.fullname" . }}-frontend
           port: 8080

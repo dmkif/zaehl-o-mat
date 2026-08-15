@@ -1,0 +1,20 @@
+{{- if .Values.ingress.enabled }}
+# Same security headers the docker-compose nginx proxy sets — the Kubernetes
+# path must not be weaker than the compose path.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-security-headers
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+spec:
+  headers:
+    customResponseHeaders:
+      X-Frame-Options: "SAMEORIGIN"
+      X-Content-Type-Options: "nosniff"
+      Referrer-Policy: "same-origin"
+      Content-Security-Policy: >-
+        default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob:; connect-src 'self' blob:; font-src 'self';
+        frame-ancestors 'none';
+{{- end }}
