@@ -1,5 +1,5 @@
 """
-Admin router — user management, LDAP role mappings.
+Admin router — user management.
 Only superadmin and admin roles may access these endpoints.
 """
 import uuid
@@ -10,13 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.auth import require_admin
 from app.database import get_db
-from app.models import LdapRoleMapping, User, UserRole
-from app.schemas.admin import (
-    UserResponse,
-    UserRoleUpdate,
-    LdapMappingCreate,
-    LdapMappingResponse,
-)
+from app.models import User, UserRole
+from app.schemas.admin import UserResponse, UserRoleUpdate
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -61,46 +56,4 @@ def delete_user(
     if user.role == UserRole.superadmin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete superadmin")
     db.delete(user)
-    db.commit()
-
-
-# --- LDAP role mappings ---
-
-@router.get("/ldap-mappings", response_model=List[LdapMappingResponse])
-def list_ldap_mappings(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
-):
-    return db.query(LdapRoleMapping).all()
-
-
-@router.post("/ldap-mappings", response_model=LdapMappingResponse, status_code=status.HTTP_201_CREATED)
-def create_ldap_mapping(
-    body: LdapMappingCreate,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
-):
-    existing = db.query(LdapRoleMapping).filter(LdapRoleMapping.ldap_group == body.ldap_group).first()
-    if existing:
-        existing.app_role = body.app_role
-        db.commit()
-        db.refresh(existing)
-        return existing
-    mapping = LdapRoleMapping(ldap_group=body.ldap_group, app_role=body.app_role)
-    db.add(mapping)
-    db.commit()
-    db.refresh(mapping)
-    return mapping
-
-
-@router.delete("/ldap-mappings/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_ldap_mapping(
-    mapping_id: int,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
-):
-    mapping = db.query(LdapRoleMapping).filter(LdapRoleMapping.id == mapping_id).first()
-    if not mapping:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    db.delete(mapping)
     db.commit()

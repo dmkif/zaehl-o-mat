@@ -97,20 +97,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)  # null for OIDC-only users
     oidc_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    ldap_dn: Mapped[str | None] = mapped_column(String(512), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False, default=UserRole.user)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="user")
-
-
-class LdapRoleMapping(Base):
-    __tablename__ = "ldap_role_mappings"
-
-    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
-    ldap_group: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    app_role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
 
 
 class Property(Base):
@@ -120,7 +111,6 @@ class Property(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     property_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    manager_ldap_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="prop", cascade="all, delete-orphan")

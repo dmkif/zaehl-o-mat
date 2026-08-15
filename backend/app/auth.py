@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
 
-import bcrypt
 from authlib.jose import JsonWebToken, JoseError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -15,14 +14,6 @@ from app.models import User, UserRole
 
 bearer_scheme = HTTPBearer(auto_error=False)
 _jwt = JsonWebToken([settings.jwt_algorithm])
-
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:

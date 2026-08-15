@@ -2,7 +2,6 @@
 Tests for app/auth.py
 
 Covers:
-  - Password hashing & verification
   - JWT create / decode / expiry
   - get_or_create_user_from_oidc: new user, existing user, role promotion/demotion
   - require_role: allowed roles pass, forbidden roles raise 403
@@ -21,34 +20,10 @@ from app.auth import (
     create_access_token,
     decode_access_token,
     get_or_create_user_from_oidc,
-    hash_password,
-    verify_password,
 )
 from app.config import settings
 from app.models import User, UserRole
 from tests.conftest import make_user
-
-
-# ── Password helpers ───────────────────────────────────────────────────────────
-
-class TestPasswordHashing:
-    def test_hash_differs_from_plaintext(self):
-        hashed = hash_password("secret")
-        assert hashed != "secret"
-
-    def test_verify_correct_password_returns_true(self):
-        hashed = hash_password("meinPasswort123")
-        assert verify_password("meinPasswort123", hashed) is True
-
-    def test_verify_wrong_password_returns_false(self):
-        hashed = hash_password("richtig")
-        assert verify_password("falsch", hashed) is False
-
-    def test_two_hashes_of_same_password_differ(self):
-        """bcrypt generates unique salts — two hashes must not be equal."""
-        h1 = hash_password("gleich")
-        h2 = hash_password("gleich")
-        assert h1 != h2
 
 
 # ── JWT ────────────────────────────────────────────────────────────────────────

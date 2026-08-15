@@ -5,9 +5,6 @@ Covers:
   - GET  /api/admin/users               — list all users
   - PATCH /api/admin/users/{id}/role    — update user role
   - DELETE /api/admin/users/{id}        — delete user
-  - GET  /api/admin/ldap-mappings       — list LDAP mappings
-  - POST /api/admin/ldap-mappings       — create / upsert
-  - DELETE /api/admin/ldap-mappings/{id}
 
 Access-control rules under test:
   - unauthenticated → 401
@@ -20,7 +17,7 @@ import uuid
 
 import pytest
 
-from app.models import LdapRoleMapping, UserRole
+from app.models import UserRole
 from tests.conftest import auth_headers, make_user
 
 
@@ -156,79 +153,3 @@ class TestDeleteUser:
         admin = make_user(db, role=UserRole.admin, username="admin5", email="admin5@example.com")
         r = client.delete(f"/api/admin/users/{uuid.uuid4()}", headers=auth_headers(admin))
         assert r.status_code == 404
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# LDAP mappings
-# ──────────────────────────────────────────────────────────────────────────────
-
-class TestLdapMappings:
-    def test_list_empty_returns_empty_list(self, client, db):
-        admin = make_user(db, role=UserRole.admin, username="al", email="al@example.com")
-        r = client.get("/api/admin/ldap-mappings", headers=auth_headers(admin))
-        assert r.status_code == 200
-        assert r.json() == []
-
-    def test_create_mapping(self, client, db):
-        admin = make_user(db, role=UserRole.admin, username="al2", email="al2@example.com")
-        r = client.post(
-            "/api/admin/ldap-mappings",
-            json={"ldap_group": "cn=operators,dc=example,dc=com", "app_role": "user"},
-            headers=auth_headers(admin),
-        )
-        assert r.status_code == 201
-        body = r.json()
-        assert body["ldap_group"] == "cn=operators,dc=example,dc=com"
-        assert body["app_role"] == "user"
-        assert "id" in body
-
-    def test_create_mapping_upserts_on_duplicate_group(self, client, db):
-        """POSTing the same ldap_group twice should update app_role, not create a duplicate."""
-        admin = make_user(db, role=UserRole.admin, username="al3", email="al3@example.com")
-        client.post(
-            "/api/admin/ldap-mappings",
-            json={"ldap_group": "cn=testers", "app_role": "user"},
-            headers=auth_headers(admin),
-        )
-        r = client.post(
-            "/api/admin/ldap-mappings",
-            json={"ldap_group": "cn=testers", "app_role": "admin"},
-            headers=auth_headers(admin),
-        )
-        assert r.status_code == 201
-        assert r.json()["app_role"] == "admin"
-
-        # Only one mapping should exist
-        list_r = client.get("/api/admin/ldap-mappings", headers=auth_headers(admin))
-        groups = [m["ldap_group"] for m in list_r.json()]
-        assert groups.count("cn=testers") == 1
-
-    def test_delete_mapping(self, client, db):
-        admin = make_user(db, role=UserRole.admin, username="al4", email="al4@example.com")
-        created = client.post(
-            "/api/admin/ldap-mappings",
-            json={"ldap_group": "cn=deleteme", "app_role": "user"},
-            headers=auth_headers(admin),
-        ).json()
-        r = client.delete(
-            f"/api/admin/ldap-mappings/{created['id']}",
-            headers=auth_headers(admin),
-        )
-        assert r.status_code == 204
-
-        list_r = client.get("/api/admin/ldap-mappings", headers=auth_headers(admin))
-        assert all(m["ldap_group"] != "cn=deleteme" for m in list_r.json())
-
-    def test_delete_nonexistent_mapping_returns_404(self, client, db):
-        admin = make_user(db, role=UserRole.admin, username="al5", email="al5@example.com")
-        r = client.delete("/api/admin/ldap-mappings/99999", headers=auth_headers(admin))
-        assert r.status_code == 404
-
-    def test_regular_user_cannot_create_mapping(self, client, db):
-        user = make_user(db, role=UserRole.user, username="nonadmin", email="nonadmin@example.com")
-        r = client.post(
-            "/api/admin/ldap-mappings",
-            json={"ldap_group": "cn=denied", "app_role": "user"},
-            headers=auth_headers(user),
-        )
-        assert r.status_code == 403

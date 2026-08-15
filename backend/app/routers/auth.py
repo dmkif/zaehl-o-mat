@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session
 from app.auth import (
     create_access_token,
     get_or_create_user_from_oidc,
-    verify_password,
-    hash_password,
     get_current_user,
 )
 from app.config import settings

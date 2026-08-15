@@ -8,14 +8,12 @@ class PropertyCreate(BaseModel):
     name: str
     address: Optional[str] = None
     property_type: PropertyType = PropertyType.residential
-    manager_ldap_group: Optional[str] = None
 
 
 class PropertyUpdate(BaseModel):
     name: Optional[str] = None
     address: Optional[str] = None
     property_type: Optional[PropertyType] = None
-    manager_ldap_group: Optional[str] = None
 
 
 class PropertyResponse(BaseModel):
@@ -23,7 +21,6 @@ class PropertyResponse(BaseModel):
     name: str
     address: Optional[str]
     property_type: Optional[PropertyType]
-    manager_ldap_group: Optional[str]
 
     model_config = {"from_attributes": True}
 
