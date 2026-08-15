@@ -70,9 +70,14 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+# The Vite dev server origin is only trusted in debug mode — never in production.
+_cors_origins = [settings.app_base_url]
+if settings.debug:
+    _cors_origins.append("http://localhost:5173")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.app_base_url, "http://localhost:5173"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*", "X-Request-ID"],
@@ -110,9 +115,19 @@ from sqlalchemy import text  # noqa: E402
 import httpx as _httpx  # noqa: E402
 
 
+@app.get("/api/health/live", tags=["health"])
+def health_live():
+    """Liveness probe: process is up and can serve requests.
+
+    Deliberately does NOT check the database — restarting the pod does not fix
+    a DB outage, so a dead DB must fail readiness, never liveness.
+    """
+    return {"status": "ok"}
+
+
 @app.get("/api/health", tags=["health"])
 def health(response: Response):
-    """Liveness + readiness probe: checks DB, scheduler, OCR and LLM availability."""
+    """Readiness/status probe: checks DB, scheduler, OCR and LLM availability."""
     db_ok = False
     try:
         db = next(get_db())

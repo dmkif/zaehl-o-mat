@@ -15,7 +15,7 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:0.20.3
+    image: ollama/ollama:latest
     restart: unless-stopped
     ports:
       - "11434:11434"
@@ -55,7 +55,7 @@ services:
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
       OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: "gemma4:e4b"
+      OLLAMA_MODEL: "qwen3-vl:8b"
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""
@@ -76,7 +76,7 @@ services:
       - frontend
       - backend
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - ./nginx.conf:/etc/nginx/templates/default.conf.template:ro
     command: >
