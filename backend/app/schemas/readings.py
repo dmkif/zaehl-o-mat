@@ -12,6 +12,7 @@ class ReadingCreate(BaseModel):
     source: Optional[ReadingSource] = ReadingSource.manual
     image_path: Optional[str] = None
     serial_image_path: Optional[str] = None
+    image_hash: Optional[str] = None
     note: Optional[str] = None
 
 
@@ -23,6 +24,7 @@ class ReadingResponse(BaseModel):
     source: ReadingSource
     image_path: Optional[str]
     serial_image_path: Optional[str]
+    image_hash: Optional[str]
     note: Optional[str]
 
     model_config = {"from_attributes": True}

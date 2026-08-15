@@ -185,6 +185,7 @@ class Reading(Base):
     source: Mapped[ReadingSource] = mapped_column(Enum(ReadingSource), nullable=False, default=ReadingSource.manual)
     image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     serial_image_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    image_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     meter: Mapped["Meter"] = relationship(back_populates="readings")
