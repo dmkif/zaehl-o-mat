@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date as date_type, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -330,3 +330,45 @@ def property_type_aggregates(
         aggregates.append(entry)
 
     return {"property_id": str(property_id), "aggregates": aggregates}
+
+
+@router.get("/oil-price-history")
+def oil_price_history(
+    days: int = Query(90, ge=7, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),  # noqa: ARG001
+):
+    """Historical oil market prices with a 30-day linear trend forecast."""
+    since = date_type.today() - timedelta(days=days)
+    rows = (
+        db.query(OilMarketPrice)
+        .filter(OilMarketPrice.price_date >= since)
+        .order_by(OilMarketPrice.price_date.asc())
+        .all()
+    )
+
+    history = [
+        {"date": r.price_date.isoformat(), "price": float(r.price_per_100l)}
+        for r in rows
+    ]
+
+    forecast: list[dict] = []
+    if len(history) >= 2:
+        n = len(history)
+        xs = list(range(n))
+        ys = [h["price"] for h in history]
+        sx = sum(xs)
+        sy = sum(ys)
+        sxy = sum(x * y for x, y in zip(xs, ys))
+        sx2 = sum(x * x for x in xs)
+        denom = n * sx2 - sx * sx
+        if denom != 0:
+            slope = (n * sxy - sx * sy) / denom
+            intercept = (sy - slope * sx) / n
+            last_date = rows[-1].price_date
+            for i in range(1, 31):
+                fut_date = last_date + timedelta(days=i)
+                fut_price = round(intercept + slope * (n - 1 + i), 2)
+                forecast.append({"date": fut_date.isoformat(), "price": fut_price})
+
+    return {"history": history, "forecast": forecast}

@@ -12,7 +12,7 @@
         <StatCard
           :label="$t('dashboard.oil_price')"
           :value="summary?.oil_market_price?.price_per_100l ? `${summary.oil_market_price.price_per_100l} € / 100L` : '–'"
-          :sub="summary?.oil_market_price?.date"
+          :sub="summary?.oil_market_price?.date ? new Date(summary.oil_market_price.date + 'T00:00:00').toLocaleDateString('de-DE') : undefined"
         >
           <template #suffix>
             <span
@@ -78,6 +78,20 @@
           </table>
         </div>
       </template>
+
+      <!-- Heizöl Preisverlauf + Prognose -->
+      <div
+        v-if="oilPriceHistory && oilPriceHistory.history.length >= 2"
+        class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+      >
+        <h2 class="text-lg font-semibold mb-3">📈 Heizöl Preisverlauf &amp; Prognose (90 Tage)</h2>
+        <VueApexCharts
+          type="line"
+          height="280"
+          :options="oilChartOptions"
+          :series="oilChartSeries"
+        />
+      </div>
     </template>
   </div>
 </template>
@@ -88,11 +102,13 @@ import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
+import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()
 const loading = ref(true)
 const summary = ref<any>(null)
 const typeAggregates = ref<Record<string, any>>({})
+const oilPriceHistory = ref<{ history: Array<{date: string; price: number}>; forecast: Array<{date: string; price: number}> } | null>(null)
 
 // ── Buy signal ────────────────────────────────────────────────────────────────
 
@@ -121,6 +137,36 @@ const buySignalTooltip = computed(() => {
   parts.push(`Konfidenz: ${bs.confidence}`)
   return parts.join(' | ')
 })
+
+// ── Oil price chart ───────────────────────────────────────────────────────────
+
+const oilChartSeries = computed(() => [
+  {
+    name: 'Marktpreis',
+    data: (oilPriceHistory.value?.history ?? []).map(h => ({
+      x: new Date(h.date + 'T00:00:00').getTime(),
+      y: h.price,
+    })),
+  },
+  {
+    name: 'Prognose',
+    data: (oilPriceHistory.value?.forecast ?? []).map(f => ({
+      x: new Date(f.date + 'T00:00:00').getTime(),
+      y: f.price,
+    })),
+  },
+])
+
+const oilChartOptions = computed(() => ({
+  chart: { id: 'oil-price', toolbar: { show: false }, animations: { enabled: false } },
+  xaxis: { type: 'datetime' as const, labels: { datetimeFormatter: { day: 'dd.MM.' } } },
+  yaxis: { labels: { formatter: (v: number) => `${v.toFixed(0)} €` }, title: { text: '€ / 100L' } },
+  stroke: { width: [2, 2], dashArray: [0, 6] },
+  colors: ['#3b82f6', '#f59e0b'],
+  tooltip: { x: { format: 'dd.MM.yyyy' } },
+  legend: { show: true },
+  grid: { borderColor: '#e5e7eb' },
+}))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -151,6 +197,12 @@ onMounted(async () => {
       // Fetch type aggregates for each unique property
       const propIds = [...new Set(summary.value?.meters?.map((m: any) => m.property_id) ?? [])] as string[]
       await Promise.all(propIds.map(fetchTypeAggregates))
+    }
+    const histRes = await apiFetch('/api/dashboard/oil-price-history?days=90', {
+      headers: { Authorization: `Bearer ${authStore.token}` },
+    })
+    if (histRes.ok) {
+      oilPriceHistory.value = await histRes.json()
     }
   } finally {
     loading.value = false
