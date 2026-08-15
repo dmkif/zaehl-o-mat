@@ -5,7 +5,13 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user, require_admin
 from app.database import get_db
-from app.models import Property, PropertyUser, PropertyUserRole, User, UserRole
+from app.models import Property, PropertyUser, User
+from app.permissions import (
+    accessible_property_ids,
+    get_property_or_404,
+    is_global_admin,
+    require_property_access,
+)
 from app.schemas.properties import (
     PropertyCreate,
     PropertyUpdate,
@@ -17,51 +23,19 @@ from app.schemas.properties import (
 router = APIRouter(prefix="/properties", tags=["properties"])
 
 
-def _get_property_or_404(db: Session, property_id: uuid.UUID) -> Property:
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    return prop
-
-
-def _user_can_access(prop: Property, user: User, db: Session) -> bool:
-    if user.role in (UserRole.superadmin, UserRole.admin):
-        return True
-    assoc = (
-        db.query(PropertyUser)
-        .filter(PropertyUser.property_id == prop.id, PropertyUser.user_id == user.id)
-        .first()
-    )
-    return assoc is not None
-
-
-def _user_can_manage(prop: Property, user: User, db: Session) -> bool:
-    """True if user may modify the property (admin, superadmin, or property-manager)."""
-    if user.role in (UserRole.superadmin, UserRole.admin):
-        return True
-    assoc = (
-        db.query(PropertyUser)
-        .filter(
-            PropertyUser.property_id == prop.id,
-            PropertyUser.user_id == user.id,
-            PropertyUser.role.in_([PropertyUserRole.admin, PropertyUserRole.manager]),
-        )
-        .first()
-    )
-    return assoc is not None
-
-
 @router.get("/", response_model=List[PropertyResponse])
 def list_properties(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role in (UserRole.superadmin, UserRole.admin):
+    if is_global_admin(current_user):
         return db.query(Property).all()
     # Only properties the user is assigned to
-    assocs = db.query(PropertyUser).filter(PropertyUser.user_id == current_user.id).all()
-    ids = [a.property_id for a in assocs]
-    return db.query(Property).filter(Property.id.in_(ids)).all()
+    return (
+        db.query(Property)
+        .filter(Property.id.in_(accessible_property_ids(current_user)))
+        .all()
+    )
 
 
 @router.post("/", response_model=PropertyResponse, status_code=status.HTTP_201_CREATED)
@@ -83,9 +57,8 @@ def get_property(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _get_property_or_404(db, property_id)
-    if not _user_can_access(prop, current_user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    prop = get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="read")
     return prop
 
 
@@ -96,9 +69,8 @@ def update_property(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _get_property_or_404(db, property_id)
-    if not _user_can_manage(prop, current_user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    prop = get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="write")
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(prop, field, value)
     db.commit()
@@ -112,7 +84,7 @@ def delete_property(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    prop = _get_property_or_404(db, property_id)
+    prop = get_property_or_404(db, property_id)
     db.delete(prop)
     db.commit()
 
@@ -125,9 +97,8 @@ def list_property_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _get_property_or_404(db, property_id)
-    if not _user_can_access(prop, current_user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="read")
     return db.query(PropertyUser).filter(PropertyUser.property_id == property_id).all()
 
 
@@ -138,9 +109,8 @@ def add_property_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _get_property_or_404(db, property_id)
-    if not _user_can_manage(prop, current_user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="write")
     target_user = db.query(User).filter(User.id == body.user_id).first()
     if not target_user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -168,9 +138,8 @@ def remove_property_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _get_property_or_404(db, property_id)
-    if not _user_can_manage(prop, current_user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="write")
     assoc = (
         db.query(PropertyUser)
         .filter(PropertyUser.property_id == property_id, PropertyUser.user_id == user_id)

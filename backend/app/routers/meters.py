@@ -1,50 +1,16 @@
 import uuid
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import Meter, Property, PropertyUser, PropertyUserRole, User, UserRole
+from app.models import Meter, User
+from app.permissions import get_property_or_404, require_property_access
 from app.schemas.meters import MeterCreate, MeterUpdate, MeterResponse
 
 router = APIRouter(prefix="/properties/{property_id}/meters", tags=["meters"])
-
-
-def _property_or_404(db: Session, property_id: uuid.UUID) -> Property:
-    prop = db.query(Property).filter(Property.id == property_id).first()
-    if not prop:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Property not found")
-    return prop
-
-
-def _check_read(prop: Property, user: User, db: Session):
-    if user.role in (UserRole.superadmin, UserRole.admin):
-        return
-    assoc = (
-        db.query(PropertyUser)
-        .filter(PropertyUser.property_id == prop.id, PropertyUser.user_id == user.id)
-        .first()
-    )
-    if not assoc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-
-
-def _check_write(prop: Property, user: User, db: Session):
-    if user.role in (UserRole.superadmin, UserRole.admin):
-        return
-    assoc = (
-        db.query(PropertyUser)
-        .filter(
-            PropertyUser.property_id == prop.id,
-            PropertyUser.user_id == user.id,
-            PropertyUser.role.in_([PropertyUserRole.admin, PropertyUserRole.manager]),
-        )
-        .first()
-    )
-    if not assoc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
 
 @router.get("/", response_model=List[MeterResponse])
@@ -54,8 +20,8 @@ def list_meters(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _property_or_404(db, property_id)
-    _check_read(prop, current_user, db)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="read")
     q = db.query(Meter).filter(Meter.property_id == property_id)
     if not include_replaced:
         q = q.filter(Meter.replaced_at.is_(None))
@@ -69,8 +35,8 @@ def create_meter(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _property_or_404(db, property_id)
-    _check_write(prop, current_user, db)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="write")
     meter = Meter(id=uuid.uuid4(), property_id=property_id, **body.model_dump())
     db.add(meter)
     db.commit()
@@ -85,8 +51,8 @@ def get_meter(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _property_or_404(db, property_id)
-    _check_read(prop, current_user, db)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="read")
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.property_id == property_id).first()
     if not meter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -101,8 +67,8 @@ def update_meter(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _property_or_404(db, property_id)
-    _check_write(prop, current_user, db)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="write")
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.property_id == property_id).first()
     if not meter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
@@ -122,8 +88,8 @@ def delete_meter(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    prop = _property_or_404(db, property_id)
-    _check_write(prop, current_user, db)
+    get_property_or_404(db, property_id)
+    require_property_access(db, property_id, current_user, level="delete")
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.property_id == property_id).first()
     if not meter:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
