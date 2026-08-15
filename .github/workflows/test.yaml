@@ -39,7 +39,7 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: "sqlite://"
-          SECRET_KEY: "ci-test-secret-key-not-for-production"
+          JWT_SECRET_KEY: "ci-test-secret-key-not-for-production"
           UPLOAD_PATH: "/tmp/zaehl-o-mat-test-uploads"
         run: |
           python -m pytest tests/ \
@@ -77,3 +77,23 @@ jobs:
       - name: Type-check
         working-directory: frontend
         run: npx vue-tsc --noEmit
+
+      - name: Unit tests
+        working-directory: frontend
+        run: npm test
+
+  security-scan:
+    name: Dependency vulnerability scan (Trivy)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
