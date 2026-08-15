@@ -17,7 +17,7 @@ spec:
         {{- include "zaehl-o-mat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
     spec:
-      serviceAccountName: {{ include "zaehl-o-mat.fullname" . }}
+      serviceAccountName: {{ include "zaehl-o-mat.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -49,6 +49,13 @@ spec:
               value: {{ .Values.ollama.url | quote }}
             - name: OLLAMA_MODEL
               value: {{ .Values.ollama.model | quote }}
+            {{- if .Values.ollama.existingSecret }}
+            - name: OLLAMA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ollama.existingSecret }}
+                  key: {{ .Values.ollama.secretApiKeyKey }}
+            {{- end }}
             {{- end }}
           volumeMounts:
             - name: uploads

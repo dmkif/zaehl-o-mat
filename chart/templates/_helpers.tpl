@@ -58,3 +58,14 @@ PostgreSQL host (use subchart service when embedded).
 {{ .Values.externalDatabase.host }}
 {{- end }}
 {{- end }}
+
+{{/*
+ServiceAccount name to use.
+*/}}
+{{- define "zaehl-o-mat.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{ .Values.serviceAccount.name | default (include "zaehl-o-mat.fullname" .) }}
+{{- else -}}
+{{ .Values.serviceAccount.name | default "default" }}
+{{- end }}
+{{- end }}

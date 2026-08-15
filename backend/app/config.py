@@ -28,8 +28,10 @@ class Settings(BaseSettings):
     # OIDC / Authentik
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
-    oidc_discovery_url: str = ""  # e.g. https://auth.apps.schmulzer.de/application/o/zaehl-o-mat/.well-known/openid-configuration
-    oidc_redirect_uri: str = "https://zaehlomat.apps.schmulzer.de/auth/callback"
+    oidc_discovery_url: str = ""  # e.g. https://idp.example.com/application/o/zaehl-o-mat/.well-known/openid-configuration
+    # Must point at the backend callback endpoint (under /api), and must match
+    # the redirect URI registered with the identity provider.
+    oidc_redirect_uri: str = "https://zaehl-o-mat.example.com/api/auth/callback"
     oidc_groups_claim: str = "groups"
 
     # OIDC group → role mapping
@@ -48,6 +50,9 @@ class Settings(BaseSettings):
     # Ollama vision model (optional — leave ollama_url empty to disable)
     ollama_url: str = ""
     ollama_model: str = "gemma4:e4b"
+    # Bearer token for hosted/proxied Ollama-compatible endpoints. A local,
+    # unauthenticated Ollama instance doesn't need this.
+    ollama_api_key: Optional[str] = None
 
     # Oil price fetcher
     oil_price_source: str = "heizoel-aktuell"  # heizoel-aktuell | tankerkoenig | custom
@@ -55,7 +60,7 @@ class Settings(BaseSettings):
     oil_price_api_url: Optional[str] = None
 
     # App
-    app_base_url: str = "https://zaehlomat.apps.schmulzer.de"
+    app_base_url: str = "https://zaehl-o-mat.example.com"
     debug: bool = False
 
     @model_validator(mode="after")

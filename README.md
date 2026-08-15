@@ -47,11 +47,12 @@ All variables are set on the `backend` service.
 | `SUPERADMIN_USER` | `""` | Username for the built-in superadmin account |
 | `SUPERADMIN_PASSWORD` | `""` | Password for the built-in superadmin account |
 | `UPLOAD_PATH` | `/data/uploads` | Directory where meter images are stored |
-| `APP_BASE_URL` | `https://zaehlomat.apps.schmulzer.de` | Public base URL (used for CORS + OIDC) |
+| `APP_BASE_URL` | `https://zaehl-o-mat.example.com` | Public base URL (used for CORS + OIDC) |
 | `DEBUG` | `false` | Enable debug logging |
 | **Ollama** | | |
 | `OLLAMA_URL` | `""` | Ollama API base URL (e.g. `http://ollama:11434`). Leave empty to disable. |
 | `OLLAMA_MODEL` | `gemma4:e4b` | Vision model name |
+| `OLLAMA_API_KEY` | `""` | Bearer token for hosted/proxied Ollama endpoints. Not needed for a local, unauthenticated Ollama. |
 | **Oil price** | | |
 | `OIL_PRICE_SOURCE` | `heizoel-aktuell` | Price source: `heizoel-aktuell` \| `tankerkoenig` \| `custom` |
 | `OIL_PRICE_API_KEY` | `""` | API key for tankerkoenig or custom source |

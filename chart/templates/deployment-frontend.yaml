@@ -17,7 +17,7 @@ spec:
         {{- include "zaehl-o-mat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: frontend
     spec:
-      serviceAccountName: {{ include "zaehl-o-mat.fullname" . }}
+      serviceAccountName: {{ include "zaehl-o-mat.serviceAccountName" . }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534

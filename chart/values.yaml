@@ -1,40 +1,112 @@
-# NOTE: keep at 1 — the backend runs an in-process scheduler (retention,
-# oil-price cron) and an in-memory rate limiter; multiple replicas would run
-# the jobs multiple times.
+# Default values for the zaehl-o-mat chart.
+# Every key below is documented inline. Optional environment variables are
+# listed but commented out - uncomment the ones you need, no other change
+# required (they're plain map entries, not nested structure).
+
+# -- Override the chart's generated name / fully qualified app name.
+# Leave empty to use the defaults (fullname == Chart.Name).
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Number of backend+frontend replicas.
+# Keep at 1: the backend runs an in-process scheduler (retention cleanup,
+# oil-price cron) and an in-memory rate limiter. Running more than one
+# replica would duplicate scheduled jobs and fragment the rate limiter.
 replicaCount: 1
 
+serviceAccount:
+  # -- Whether to create a ServiceAccount for the backend/frontend pods.
+  create: true
+  # -- Name of the ServiceAccount to use. If not set and create is true, a
+  # name is generated from the chart's fullname.
+  name: ""
+  annotations: {}
+
+# =============================================================================
+# Backend (FastAPI application)
+# =============================================================================
 backend:
   image:
     repository: ghcr.io/dmkif/zaehl-o-mat-backend
     pullPolicy: IfNotPresent
-    tag: ""  # defaults to Chart.appVersion
+    # -- Image tag. Leave empty to default to the chart's appVersion.
+    tag: ""
+
   resources:
     requests:
       cpu: 100m
       memory: 512Mi
     limits:
       memory: 1Gi
+
+  # -- Non-secret backend configuration, passed through as plain
+  # environment variables. DEBUG/UPLOAD_PATH/OIL_PRICE_SOURCE are active by
+  # default; everything else is an optional feature - uncomment what you
+  # need and set a value.
   env:
     DEBUG: "false"
     UPLOAD_PATH: /data/uploads
+    # Where to fetch heating-oil market prices from.
+    # One of: heizoel-aktuell | tankerkoenig | custom
     OIL_PRICE_SOURCE: heizoel-aktuell
-  # Reference an existing secret with keys:
-  #   DATABASE_URL, JWT_SECRET_KEY,
-  #   OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_DISCOVERY_URL,
-  #   OIDC_REDIRECT_URI, SUPERADMIN_USER, SUPERADMIN_PASSWORD
+
+    # -- Public base URL of the deployment. Used for CORS and as the base
+    # for the OIDC redirect URI. Required for correct behavior once you're
+    # not just testing on localhost.
+    # APP_BASE_URL: "https://zaehl-o-mat.example.com"
+
+    # -- OIDC single sign-on (e.g. Authentik, Keycloak, Authelia). All three
+    # of CLIENT_ID/DISCOVERY_URL/REDIRECT_URI are required together to
+    # enable OIDC login; OIDC_CLIENT_SECRET is sensitive and goes in
+    # existingSecret below instead, never here.
+    # OIDC_CLIENT_ID: ""
+    # OIDC_DISCOVERY_URL: "https://idp.example.com/.well-known/openid-configuration"
+    # OIDC_REDIRECT_URI: "https://zaehl-o-mat.example.com/api/auth/callback"
+    # OIDC_GROUPS_CLAIM: "groups"
+
+    # -- OIDC group -> app role mapping. Only relevant if your identity
+    # provider issues a groups claim you want mapped to app permissions.
+    # OIDC_ADMIN_GROUP: "admin"
+    # OIDC_MANAGER_GROUP: "manager"
+    # OIDC_USER_GROUP: "user"
+    # OIDC_DEFAULT_MANAGER_GROUP: "manager"
+
+    # -- Third-party API for oil_price_source: tankerkoenig or custom.
+    # OIL_PRICE_API_URL is the endpoint to call; the API key (if the
+    # provider requires one) is sensitive and goes in existingSecret below.
+    # OIL_PRICE_API_URL: ""
+
+  # -- Name of a Secret (created outside this chart - via External Secrets
+  # Operator, Sealed Secrets, or plain `kubectl create secret generic`)
+  # holding the backend's sensitive configuration. All keys present in the
+  # Secret are exposed to the container as environment variables.
+  #
+  # Required key:   DATABASE_URL, JWT_SECRET_KEY
+  # Optional keys:  OIDC_CLIENT_SECRET (only if using OIDC)
+  #                 SUPERADMIN_USER, SUPERADMIN_PASSWORD (built-in admin
+  #                   account, bypasses OIDC)
+  #                 OIL_PRICE_API_KEY (only if oil_price_source needs one)
+  #
+  # Example:
+  #   kubectl create secret generic zaehl-o-mat-secret \
+  #     --from-literal=DATABASE_URL='postgresql://user:pass@host:5432/db' \
+  #     --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)"
+  #
+  # Leave empty to default to "<fullname>-secret".
   existingSecret: ""
-  # Mount an existing secret as files to /run/secrets/ (one key per file).
-  # pydantic-settings reads these automatically — env vars take precedence.
+
+  # -- Alternative/addition to existingSecret: mount a Secret as files
+  # under /run/secrets instead of environment variables (the app reads
+  # both; environment variables take precedence when both are set). Useful
+  # if your secret store only supports file-based delivery. One key per
+  # file, e.g. a key named "database_url" becomes /run/secrets/database_url.
   secretVolume:
     enabled: false
-    secretName: ""  # Name of k8s Secret to project as files
+    secretName: ""
 
-ollama:
-  enabled: false
-  # URL of an external Ollama instance (leave empty to disable LLM OCR)
-  url: ""
-  model: "gemma4:e4b"
-
+# =============================================================================
+# Frontend (static SPA, served by a lightweight static file server)
+# =============================================================================
 frontend:
   image:
     repository: ghcr.io/dmkif/zaehl-o-mat-frontend
@@ -47,26 +119,64 @@ frontend:
     limits:
       memory: 64Mi
 
+# =============================================================================
+# Ollama vision model (optional OCR fallback)
+# When EasyOCR can't confidently read a meter display, the backend can ask
+# an Ollama vision model to read it instead. This is entirely optional -
+# EasyOCR-only OCR works fine without it.
+# =============================================================================
+ollama:
+  enabled: false
+  # -- Base URL of an Ollama-compatible API, e.g.
+  # http://ollama.ollama.svc.cluster.local:11434 for an in-cluster instance,
+  # or a hosted endpoint. Required when enabled is true.
+  url: ""
+  # -- Vision-capable model name to request.
+  model: "gemma4:e4b"
+  # -- Name of a Secret holding a bearer token, for hosted/proxied
+  # Ollama-compatible endpoints that require authentication. Leave empty
+  # for a local, unauthenticated Ollama instance (the common case).
+  # Required key: value of secretApiKeyKey below (default OLLAMA_API_KEY).
+  existingSecret: ""
+  secretApiKeyKey: OLLAMA_API_KEY
+
+# =============================================================================
+# Ingress (Traefik IngressRoute - requires the Traefik ingress controller
+# and its CRDs; this chart does not support other ingress controllers)
+# =============================================================================
 ingress:
   enabled: true
   className: traefik
-  host: zaehlomat.apps.schmulzer.de
+  host: zaehl-o-mat.example.com
   tls: true
+  # -- cert-manager/Traefik certResolver name used to obtain the TLS
+  # certificate for `host`.
   certIssuer: letsencrypt-prod
-  # external-dns publish target (e.g. the cluster's own stable DNS name) -
-  # leave empty to skip DNS annotations entirely.
+  # -- external-dns publish target, e.g. a LoadBalancer's hostname or a
+  # cluster's own stable DNS name. Only external-dns' traefik-proxy source
+  # reads this. Leave empty to skip the annotation entirely - either DNS is
+  # managed manually, or external-dns isn't in use.
   externalDnsTarget: ""
 
+# =============================================================================
+# Persistent storage for uploaded meter images
+# =============================================================================
 persistence:
   enabled: true
-  storageClass: longhorn
+  # -- StorageClass for the uploads volume. Leave empty to use the
+  # cluster's default StorageClass.
+  storageClass: ""
   size: 5Gi
 
-# Own StatefulSet, not a bitnami/community chart dependency - avoids
-# fighting another chart's image/securityContext assumptions. Set
-# enabled: false and fill in externalDatabase.host to point at an
-# external Postgres instead.
+# =============================================================================
+# Bundled PostgreSQL
+# This chart ships its own single-instance PostgreSQL StatefulSet (not a
+# subchart dependency), running the official postgres image directly.
+# =============================================================================
 postgresql:
+  # -- Set to false to use an external PostgreSQL instance instead (also
+  # set externalDatabase.host below, and point backend's DATABASE_URL - in
+  # existingSecret - at that instance).
   enabled: true
   image:
     registry: docker.io
@@ -74,13 +184,21 @@ postgresql:
     tag: "18-trixie"
     pullPolicy: IfNotPresent
   auth:
+    # -- Database and role name. Not sensitive - the password is.
     database: zaehlwart
     username: zaehlwart
+    # -- Name of a Secret holding the postgres password.
+    # Required key: value of secretPasswordKey below.
+    #
+    #   kubectl create secret generic zaehl-o-mat-db-secret \
+    #     --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 24)"
     existingSecret: zaehl-o-mat-db-secret
     secretPasswordKey: POSTGRES_PASSWORD
   persistence:
     enabled: true
-    storageClass: longhorn
+    # -- StorageClass for the database volume. Leave empty to use the
+    # cluster's default StorageClass.
+    storageClass: ""
     size: 5Gi
   resources:
     requests:
@@ -89,15 +207,20 @@ postgresql:
     limits:
       memory: 1Gi
 
+# -- Used only when postgresql.enabled is false.
 externalDatabase:
   host: ""
 
+# =============================================================================
+# NetworkPolicy
+# Off by default: enabling this without first checking ingressFrom will
+# silently cut off all ingress traffic instead of protecting anything - the
+# selector must actually match your ingress controller's pods/namespace.
+# =============================================================================
 networkPolicy:
-  # Off by default: enabling this without checking ingressFrom first will
-  # silently cut off all ingress traffic instead of protecting anything -
-  # the selector must actually match your Traefik pods/namespace. Once
-  # enabled: postgresql only accepts traffic from this chart's own backend,
-  # and backend/frontend only accept traffic matching ingressFrom.
+  # -- Once enabled: postgresql only accepts traffic from this chart's own
+  # backend; backend/frontend only accept traffic matching ingressFrom
+  # (i.e. from your ingress controller).
   enabled: false
   ingressFrom:
     namespaceSelector: {}
