@@ -99,6 +99,8 @@ export default {
     engine_llm: 'Ollama only',
     error_failed: 'OCR failed',
     error_network: 'Connection error',
+    error_save: 'Save failed',
+    duplicate_exists: 'This image has already been saved (value: {value}, date: {date}). Duplicate import blocked.',
     detected_serial_label: 'Detected no.:',
     serial_crop_title: 'Step 2: Serial number (optional)',
     serial_crop_hint: 'Select the area showing the serial number or meter ID — or skip this step.',
@@ -140,6 +142,9 @@ export default {
     crop_rescan: 'Crop & rescan',
     crop_display_title: 'Step 1: Crop display area',
     crop_display_hint: 'Select the area showing the meter digits.',
+    duplicate_session: 'This image was already added in this import ({filename}).',
+    duplicate_db: 'This image was already imported (meter: {meter}, value: {value}, date: {date}).',
+    hint_rescanning: 'Checking format…',
   },
   status: {
     backend: 'Backend',

@@ -144,6 +144,24 @@
               <!-- Error -->
               <div v-if="item.error" class="text-xs text-red-500">{{ item.error }}</div>
 
+              <!-- Duplicate warning -->
+              <div
+                v-if="item.duplicate_reading"
+                class="text-xs px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700"
+              >
+                ⚠️
+                <template v-if="item.duplicate_reading.source === 'session'">
+                  {{ $t('bulk.duplicate_session', { filename: (item.duplicate_reading as any).original_filename }) }}
+                </template>
+                <template v-else>
+                  {{ $t('bulk.duplicate_db', {
+                    meter: (item.duplicate_reading as any).meter_name ?? '–',
+                    value: (item.duplicate_reading as any).value,
+                    date: new Date((item.duplicate_reading as any).read_at).toLocaleDateString('de-DE'),
+                  }) }}
+                </template>
+              </div>
+
               <!-- Serial + match badge -->
               <div v-else class="flex flex-wrap items-center gap-2">
                 <span class="text-xs text-gray-400">
@@ -172,11 +190,14 @@
               </div>
 
               <!-- Meter selector -->
-              <select
-                v-if="!item.error"
-                v-model="item.selected_meter_id"
-                class="text-xs rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5 w-full"
-              >
+              <div class="flex items-center gap-2">
+                <select
+                  v-if="!item.error"
+                  v-model="item.selected_meter_id"
+                  @change="triggerHintRescan(i)"
+                  :disabled="hintRescanning[i]"
+                  class="text-xs rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1.5 flex-1 disabled:opacity-60"
+                >
                 <option value="">— {{ $t('bulk.select_meter') }} —</option>
                 <optgroup v-if="item.matched_meter || item.candidate_meters.length" :label="$t('bulk.matches')">
                   <option v-if="item.matched_meter" :value="item.matched_meter.id">
@@ -188,18 +209,23 @@
                     <template v-if="c.serial_number"> ({{ c.serial_number }})</template>
                   </option>
                 </optgroup>
-                <optgroup :label="$t('bulk.all_meters')">
-                  <option
-                    v-for="m in allMeters"
-                    :key="m.id"
-                    :value="m.id"
-                    :disabled="m.id === item.matched_meter?.id || item.candidate_meters.some(c => c.id === m.id)"
-                  >
-                    {{ m.name }}
-                    <template v-if="m.serial_number"> ({{ m.serial_number }})</template>
-                  </option>
-                </optgroup>
-              </select>
+                  <optgroup :label="$t('bulk.all_meters')">
+                    <option
+                      v-for="m in allMeters"
+                      :key="m.id"
+                      :value="m.id"
+                      :disabled="m.id === item.matched_meter?.id || item.candidate_meters.some(c => c.id === m.id)"
+                    >
+                      {{ m.name }}
+                      <template v-if="m.serial_number"> ({{ m.serial_number }})</template>
+                    </option>
+                  </optgroup>
+                </select>
+                <span
+                  v-if="hintRescanning[i]"
+                  class="text-xs text-brand-500 dark:text-brand-400 animate-pulse whitespace-nowrap"
+                >{{ $t('bulk.hint_rescanning') }}</span>
+              </div>
 
               <!-- Value + date row -->
               <div v-if="!item.error" class="flex flex-col sm:flex-row gap-2">
@@ -328,6 +354,7 @@ import { Cropper } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
+import { buildBatches } from '@/utils/buildBatches'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -353,6 +380,21 @@ interface MeterSummary {
   unit: string
 }
 
+interface DuplicateReadingSession {
+  source: 'session'
+  original_filename: string
+}
+
+interface DuplicateReadingDb {
+  source: 'database'
+  reading_id: number
+  meter_name: string | null
+  value: string
+  read_at: string
+}
+
+type DuplicateReading = DuplicateReadingSession | DuplicateReadingDb
+
 interface ScanResult {
   original_filename: string
   temp_image_path: string | null
@@ -364,6 +406,8 @@ interface ScanResult {
   match_confidence: MatchConf
   candidate_meters: MeterSummary[]
   error: string | null
+  image_hash: string | null
+  duplicate_reading: DuplicateReading | null
 }
 
 interface ReviewItem extends ScanResult {
@@ -520,6 +564,45 @@ async function cropSubmit(withSerial: boolean) {
   }
 }
 
+// ── Hint-rescan (meter selected manually) ───────────────────────────────────
+
+// Record<index, true> — tracks which review items are currently running a hint-rescan
+const hintRescanning = ref<Record<number, boolean>>({})
+
+async function triggerHintRescan(index: number) {
+  const item = reviewItems.value[index]
+  if (!item.temp_image_path || !item.selected_meter_id) return
+  if (engine.value === 'ocr') return  // OCR has no hint support
+
+  hintRescanning.value = { ...hintRescanning.value, [index]: true }
+  try {
+    const form = new FormData()
+    form.append('image_path', item.temp_image_path)
+    form.append('meter_id', item.selected_meter_id)
+    if (item.detected_value) form.append('current_value', item.detected_value)
+    form.append('engine', engine.value)
+
+    const res = await apiFetch('/api/ocr/hint-rescan', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authStore.token}` },
+      body: form,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+
+    if (data.hint_applied && data.detected_value) {
+      item.confirmed_value = data.detected_value
+      if (data.detection_method) item.detection_method = data.detection_method
+    }
+  } catch (err) {
+    console.error('hint-rescan failed:', err)
+  } finally {
+    const updated = { ...hintRescanning.value }
+    delete updated[index]
+    hintRescanning.value = updated
+  }
+}
+
 const committing = ref(false)
 const commitDone = ref(0)
 const commitSaved = ref(0)
@@ -552,101 +635,107 @@ function onFilesSelected(e: Event) {
 
 // ── Scan ──────────────────────────────────────────────────────────────────────
 
+/** Process one batch of files through the SSE bulk-scan endpoint. */
+async function processBatch(batch: File[], today: string): Promise<void> {
+  const form = new FormData()
+  for (const f of batch) form.append('files', f)
+  if (props.propertyId) form.append('property_id', props.propertyId)
+  form.append('engine', engine.value)
+
+  const res = await fetch('/api/ocr/bulk-scan', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authStore.token}` },
+    body: form,
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.body) throw new Error('No response body')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+
+    // SSE messages are separated by double newlines
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() ?? ''
+
+    for (const part of parts) {
+      const lines = part.split('\n')
+      let eventName = ''
+      let dataLine = ''
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        else if (line.startsWith('data:')) dataLine = line.slice(5).trim()
+      }
+
+      if (!dataLine) continue
+
+      const parsed = JSON.parse(dataLine)
+
+      if (eventName === 'complete') {
+        // Final event — contains the full meter list (same across batches)
+        allMeters.value = parsed.meters ?? []
+      } else {
+        // Per-image result event
+        const item: ReviewItem = {
+          ...(parsed as ScanResult),
+          selected_meter_id: (parsed as ScanResult).matched_meter?.id ?? '',
+          confirmed_value: (parsed as ScanResult).detected_value ?? '',
+          read_at: (parsed as ScanResult).exif_date ?? today,
+        }
+        reviewItems.value.push(item)
+        scanDone.value++
+        if (item.temp_image_path) loadBlobUrl(item.temp_image_path)
+      }
+    }
+  }
+}
+
 async function startScan() {
   stage.value = 'scanning'
   scanDone.value = 0
   reviewItems.value = []
 
-  const form = new FormData()
-  for (const f of selectedFiles.value) form.append('files', f)
-  if (props.propertyId) form.append('property_id', props.propertyId)
-  form.append('engine', engine.value)
-
   const now = new Date()
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 
-  try {
-    const res = await fetch('/api/ocr/bulk-scan', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${authStore.token}` },
-      body: form,
-    })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    if (!res.body) throw new Error('No response body')
-
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-
-      // SSE messages are separated by double newlines
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() ?? ''
-
-      for (const part of parts) {
-        const lines = part.split('\n')
-        let eventName = ''
-        let dataLine = ''
-
-        for (const line of lines) {
-          if (line.startsWith('event:')) {
-            eventName = line.slice(6).trim()
-          } else if (line.startsWith('data:')) {
-            dataLine = line.slice(5).trim()
-          }
-        }
-
-        if (!dataLine) continue
-
-        const parsed = JSON.parse(dataLine)
-
-        if (eventName === 'complete') {
-          // Final event — contains the full meter list
-          allMeters.value = parsed.meters ?? []
-          stage.value = 'review'
-        } else {
-          // Per-image result event
-          const item = {
-            ...(parsed as ScanResult),
-            selected_meter_id: (parsed as ScanResult).matched_meter?.id ?? '',
-            confirmed_value: (parsed as ScanResult).detected_value ?? '',
-            read_at: (parsed as ScanResult).exif_date ?? today,
-          }
-          reviewItems.value.push(item)
-          scanDone.value++
-          if (item.temp_image_path) loadBlobUrl(item.temp_image_path)
-        }
+  // Split files into batches to stay within the nginx body-size limit.
+  // Each failed batch marks its files as errors without aborting the others.
+  for (const batch of buildBatches(selectedFiles.value)) {
+    try {
+      await processBatch(batch, today)
+    } catch (err) {
+      console.error('Bulk scan batch failed', err)
+      for (const f of batch) {
+        reviewItems.value.push({
+          original_filename: f.name,
+          temp_image_path: null,
+          detected_value: null,
+          detected_serial: null,
+          matched_meter: null,
+          match_confidence: 'none',
+          candidate_meters: [],
+          error: String(err),
+          selected_meter_id: '',
+          confirmed_value: '',
+          read_at: today,
+          exif_date: null,
+          detection_method: null,
+          image_hash: null,
+          duplicate_reading: null,
+        })
+        scanDone.value++
       }
-
-
     }
-  } catch (err) {
-    console.error('Bulk scan failed', err)
-    // Fall back to error display on each item
-    reviewItems.value = selectedFiles.value.map(f => ({
-      original_filename: f.name,
-      temp_image_path: null,
-      detected_value: null,
-      detected_serial: null,
-      matched_meter: null,
-      match_confidence: 'none',
-      candidate_meters: [],
-      error: String(err),
-      selected_meter_id: '',
-      confirmed_value: '',
-      read_at: today,
-      exif_date: null,
-      detection_method: null,
-    }))
-  } finally {
-    // Ensure we always land in review (e.g. on connection drop mid-stream)
-    if (stage.value === 'scanning') stage.value = 'review'
   }
+
+  stage.value = 'review'
 }
 
 // ── Global date helper ────────────────────────────────────────────────────────

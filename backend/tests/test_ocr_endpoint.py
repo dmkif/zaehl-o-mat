@@ -38,8 +38,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.models import MeterType, MeterUnit, UserRole
-from app.routers.ocr import _fix_seven_segment, _match_serial_to_meters, _normalize_serial
+from app.models import MeterType, MeterUnit, PropertyUser, PropertyUserRole, UserRole
+from app.routers.ocr import (
+    _fix_seven_segment,
+    _format_hint_text,
+    _match_serial_to_meters,
+    _matches_format,
+    _normalize_serial,
+)
 from tests.conftest import auth_headers, make_meter, make_property, make_reading, make_user
 
 # ── Minimal valid JPEG (1×1 pixel) ────────────────────────────────────────────
@@ -156,8 +162,7 @@ class TestOcrScanEndpoint:
         with patch(_OCR_PATCH, new_callable=AsyncMock, return_value=_MOCK_OCR_RESULT):
             r = client.post(
                 "/api/ocr/scan",
-                params={"meter_id": str(uuid.uuid4())},
-                data={"engine": "ocr"},
+                data={"engine": "ocr", "meter_id": str(uuid.uuid4())},
                 files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
                 headers=auth_headers(admin),
             )
@@ -171,8 +176,7 @@ class TestOcrScanEndpoint:
         with patch(_OCR_PATCH, new_callable=AsyncMock, return_value=_MOCK_OCR_RESULT):
             r = client.post(
                 "/api/ocr/scan",
-                params={"meter_id": str(meter.id)},
-                data={"engine": "ocr"},
+                data={"engine": "ocr", "meter_id": str(meter.id)},
                 files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
                 headers=auth_headers(user),
             )
@@ -186,8 +190,7 @@ class TestOcrScanEndpoint:
         with patch(_OCR_PATCH, new_callable=AsyncMock, return_value=_MOCK_OCR_RESULT):
             r = client.post(
                 "/api/ocr/scan",
-                params={"meter_id": str(meter.id)},
-                data={"engine": "ocr"},
+                data={"engine": "ocr", "meter_id": str(meter.id)},
                 files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
                 headers=auth_headers(admin),
             )
@@ -426,3 +429,409 @@ class TestMatchSerialToMeters:
         best, conf, _ = _match_serial_to_meters("ABC-123", [m])
         assert conf == "exact"
         assert best is m
+
+
+# ── _matches_format ────────────────────────────────────────────────────────────
+
+class TestMatchesFormat:
+    """Unit tests for _matches_format — validates decimal digit count per meter type."""
+
+    @pytest.mark.parametrize("value,meter_type,expected", [
+        # electricity: exactly 1 decimal digit
+        ("12345678.9",  "electricity", True),
+        ("12345678",    "electricity", False),   # no decimal → missing
+        ("1234567.89",  "electricity", False),   # 2 decimal digits → wrong
+        ("12345678.0",  "electricity", True),    # zero digit still counts as 1 decimal
+        # water: exactly 3 decimal digits
+        ("123.456",     "water", True),
+        ("123",         "water", False),         # no decimal
+        ("123.4",       "water", False),         # 1 decimal only
+        ("123.4567",    "water", False),         # 4 decimals
+        # oil: exactly 0 decimal digits (integer value)
+        ("1234",        "oil", True),
+        ("12.34",       "oil", False),           # unexpected decimal
+        # German comma notation treated as decimal
+        ("12345678,9",  "electricity", True),
+        ("123,456",     "water", True),
+        ("1234,0",      "oil", False),           # comma with digit counts as decimal
+        # Missing info → always True (cannot validate)
+        (None,          "water", True),
+        ("123.456",     None,    True),
+        ("123.456",     "unknown_type", True),
+    ])
+    def test_matches_format(self, value, meter_type, expected):
+        assert _matches_format(value, meter_type) == expected
+
+
+# ── _format_hint_text ──────────────────────────────────────────────────────────
+
+class TestFormatHintText:
+    """Unit tests for _format_hint_text — builds LLM CONTEXT block."""
+
+    def test_electricity_german_comma_notation(self):
+        text = _format_hint_text(12345678.9, "electricity")
+        assert "12345678,9" in text
+        assert "kWh" in text
+
+    def test_electricity_shows_pattern_and_digit_count(self):
+        text = _format_hint_text(12345678.9, "electricity")
+        assert "########,#" in text
+        assert "1" in text  # "The rightmost 1 digit(s)..."
+        assert "comma" in text.lower()
+
+    def test_water_german_comma_notation(self):
+        text = _format_hint_text(123.456, "water")
+        assert "123,456" in text
+        assert "m³" in text
+
+    def test_water_shows_pattern_and_digit_count(self):
+        text = _format_hint_text(123.456, "water")
+        assert "###,###" in text
+        assert "3" in text  # "The rightmost 3 digit(s)..."
+
+    def test_oil_no_decimal_separator(self):
+        text = _format_hint_text(1234.0, "oil")
+        assert "1234" in text
+        assert "L" in text
+        assert "no decimal" in text.lower()
+
+    def test_ge_constraint_always_present(self):
+        for meter_type in ("electricity", "water", "oil"):
+            text = _format_hint_text(100.0, meter_type)
+            assert "≥" in text or ">=" in text
+
+    def test_context_header_present(self):
+        text = _format_hint_text(100.0, "water")
+        assert "CONTEXT" in text
+
+    def test_unknown_meter_type_returns_string(self):
+        text = _format_hint_text(100.0, None)
+        assert isinstance(text, str)
+        # Displays value without specific unit/pattern info
+        assert "100" in text
+
+    def test_electricity_high_precision_rounded_to_one_decimal(self):
+        text = _format_hint_text(12345678.12345, "electricity")
+        # Should show exactly 1 decimal digit for electricity
+        assert "12345678,1" in text
+
+
+# ── _run_ocr_on_file hint-retry ───────────────────────────────────────────────
+
+class TestHintRetryRun:
+    """
+    Integration tests for the hint-retry logic inside _run_ocr_on_file.
+
+    _llm_fallback is mocked so no GPU or Ollama is needed.
+    asyncio.run() is used to drive the coroutine from sync test code.
+    """
+
+    def _run(self, coro):
+        import asyncio
+        return asyncio.run(coro)
+
+    def test_format_mismatch_triggers_second_llm_call(self, tmp_path):
+        """When the first-pass value has the wrong decimal count, LLM is called again with hint."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        calls = []
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            calls.append({"last_reading": last_reading, "meter_type": meter_type})
+            if last_reading is None:
+                return ("123456", None)   # wrong format for water (no decimal)
+            return ("123.456", None)      # correct on retry
+
+        with (
+            patch("app.routers.ocr._llm_fallback", mock_llm),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(
+                _run_ocr_on_file(filepath, engine="auto", last_reading=100.0, meter_type="water")
+            )
+
+        assert len(calls) == 2, "Expected exactly 2 LLM calls (first-pass + hint-retry)"
+        assert calls[0]["last_reading"] is None    # first pass: no hint injected
+        assert calls[1]["last_reading"] == 100.0   # retry: hint injected
+        assert calls[1]["meter_type"] == "water"
+        assert result["detected_value"] == "123.456"
+
+    def test_correct_format_skips_retry(self, tmp_path):
+        """When the first-pass value already has the right decimal count, no retry."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        calls = []
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            calls.append(last_reading)
+            return ("123.456", None)   # 3 decimals → correct for water
+
+        with (
+            patch("app.routers.ocr._llm_fallback", mock_llm),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(
+                _run_ocr_on_file(filepath, engine="auto", last_reading=100.0, meter_type="water")
+            )
+
+        assert len(calls) == 1, "No retry expected when format already matches"
+        assert result["detected_value"] == "123.456"
+
+    def test_no_retry_without_context(self, tmp_path):
+        """When last_reading is None, hint-retry must not be triggered regardless of format."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        calls = []
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            calls.append(last_reading)
+            return ("123456", None)   # wrong format for water, but no context → no retry
+
+        with (
+            patch("app.routers.ocr._llm_fallback", mock_llm),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(
+                _run_ocr_on_file(filepath, engine="auto", last_reading=None, meter_type="water")
+            )
+
+        assert len(calls) == 1, "No retry without last_reading context"
+        assert result["detected_value"] == "123456"
+
+    def test_retry_keeps_first_value_when_second_returns_none(self, tmp_path):
+        """When the retry LLM call returns None, the original first-pass value is preserved."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        calls = []
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            calls.append(last_reading)
+            if last_reading is None:
+                return ("123456", None)   # wrong format → triggers retry
+            return (None, None)           # retry also fails
+
+        with (
+            patch("app.routers.ocr._llm_fallback", mock_llm),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(
+                _run_ocr_on_file(filepath, engine="auto", last_reading=100.0, meter_type="water")
+            )
+
+        assert len(calls) == 2
+        assert result["detected_value"] == "123456", "First-pass value must survive failed retry"
+
+    def test_llm_engine_also_retries_on_mismatch(self, tmp_path):
+        """engine='llm' path also applies hint-retry logic."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        calls = []
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            calls.append(last_reading)
+            if last_reading is None:
+                return ("12345678", None)   # missing decimal for electricity
+            return ("12345678.9", None)
+
+        with (
+            patch("app.routers.ocr._llm_fallback", mock_llm),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(
+                _run_ocr_on_file(
+                    filepath, engine="llm",
+                    last_reading=12345678.8, meter_type="electricity",
+                )
+            )
+
+        assert len(calls) == 2
+        assert result["detected_value"] == "12345678.9"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /api/ocr/hint-rescan  —  manual meter selection hint-retry
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestHintRescanEndpoint:
+    """HTTP integration tests for POST /api/ocr/hint-rescan."""
+
+    def _post(self, client, headers, *, image_path, meter_id, current_value=None, engine="auto"):
+        data = {"image_path": image_path, "meter_id": str(meter_id), "engine": engine}
+        if current_value is not None:
+            data["current_value"] = current_value
+        return client.post("/api/ocr/hint-rescan", data=data, headers=headers)
+
+    def test_format_already_ok_returns_unchanged_no_llm(self, client, db, tmp_path, monkeypatch):
+        """When current_value already matches the meter format, return it without calling LLM."""
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+        monkeypatch.setattr("app.routers.ocr.settings.ollama_url", "http://ollama:11434")
+
+        img = tmp_path / "meter.jpg"
+        img.write_bytes(_JPEG)
+
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.electricity)
+        user = make_user(db)
+        db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+
+        llm_calls = []
+        with patch("app.routers.ocr._llm_fallback", side_effect=lambda *a, **kw: llm_calls.append(1) or ("99999.9", None)):
+            r = self._post(
+                client,
+                auth_headers(user),
+                image_path=f"{img.name}",
+                meter_id=meter.id,
+                current_value="12345.6",   # 1 decimal → electricity OK
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["detected_value"] == "12345.6"
+        assert body["hint_applied"] is False
+        assert len(llm_calls) == 0
+
+    def test_format_mismatch_triggers_llm_with_hint(self, client, db, tmp_path, monkeypatch):
+        """When current_value has wrong decimal count, LLM is called and result is returned."""
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+        monkeypatch.setattr("app.routers.ocr.settings.ollama_url", "http://ollama:11434")
+
+        img = tmp_path / "meter.jpg"
+        img.write_bytes(_JPEG)
+
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.electricity)
+        user = make_user(db)
+        db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+
+        make_reading(db, meter.id, 10000.5)
+
+        hint_args = {}
+
+        def mock_llm(fp, already_cropped, last_reading=None, meter_type=None):
+            hint_args.update(last_reading=last_reading, meter_type=meter_type)
+            return ("12345.7", None)
+
+        with patch("app.routers.ocr._llm_fallback", mock_llm):
+            r = self._post(
+                client,
+                auth_headers(user),
+                image_path=f"{img.name}",
+                meter_id=meter.id,
+                current_value="12345",   # missing decimal → electricity mismatch
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["detected_value"] == "12345.7"
+        assert body["detection_method"] == "llm"
+        assert body["hint_applied"] is True
+        # Hint was passed with the last reading value
+        assert hint_args["last_reading"] == pytest.approx(10000.5)
+        assert hint_args["meter_type"] == "electricity"
+
+    def test_engine_ocr_skips_llm_even_on_mismatch(self, client, db, tmp_path, monkeypatch):
+        """With engine=ocr, no LLM call is made regardless of format mismatch."""
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+        monkeypatch.setattr("app.routers.ocr.settings.ollama_url", "http://ollama:11434")
+
+        img = tmp_path / "meter.jpg"
+        img.write_bytes(_JPEG)
+
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.electricity)
+        user = make_user(db)
+        db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+
+        llm_calls = []
+        with patch("app.routers.ocr._llm_fallback", side_effect=lambda *a, **kw: llm_calls.append(1) or ("99999.9", None)):
+            r = self._post(
+                client,
+                auth_headers(user),
+                image_path=f"{img.name}",
+                meter_id=meter.id,
+                current_value="12345",   # mismatch but engine=ocr
+                engine="ocr",
+            )
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["detected_value"] == "12345"
+        assert body["hint_applied"] is False
+        assert len(llm_calls) == 0
+
+    def test_image_not_found_returns_404(self, client, db, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.water)
+        user = make_user(db, role=UserRole.admin)
+        db.commit()
+
+        r = self._post(
+            client,
+            auth_headers(user),
+            image_path="does-not-exist.jpg",
+            meter_id=meter.id,
+        )
+        assert r.status_code == 404
+
+    def test_meter_not_found_returns_404(self, client, db, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+
+        img = tmp_path / "meter.jpg"
+        img.write_bytes(_JPEG)
+
+        user = make_user(db, role=UserRole.admin)
+        db.commit()
+
+        r = self._post(
+            client,
+            auth_headers(user),
+            image_path=f"{img.name}",
+            meter_id=uuid.uuid4(),  # non-existent
+        )
+        assert r.status_code == 404
+
+    def test_unauthenticated_returns_401(self, client, db, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+
+        img = tmp_path / "meter.jpg"
+        img.write_bytes(_JPEG)
+
+        r = client.post(
+            "/api/ocr/hint-rescan",
+            data={"image_path": img.name, "meter_id": str(uuid.uuid4())},
+        )
+        assert r.status_code == 401
+
+    def test_path_traversal_rejected(self, client, db, tmp_path, monkeypatch):
+        """A path_traversal attempt (e.g. ../../etc/passwd) must return 404."""
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.water)
+        user = make_user(db, role=UserRole.admin)
+        db.commit()
+
+        r = self._post(
+            client,
+            auth_headers(user),
+            image_path="../../etc/passwd",
+            meter_id=meter.id,
+        )
+        # The traversal must not succeed — any non-200 response is acceptable
+        assert r.status_code in (403, 404)
+

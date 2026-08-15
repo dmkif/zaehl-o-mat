@@ -98,6 +98,8 @@ export default {
     engine_llm: 'Nur Ollama (LLM)',
     error_failed: 'OCR fehlgeschlagen',
     error_network: 'Verbindungsfehler',
+    error_save: 'Speichern fehlgeschlagen',
+    duplicate_exists: 'Dieses Bild wurde bereits gespeichert (Wert: {value}, Datum: {date}). Kein erneuter Import möglich.',
     detected_serial_label: 'Erkannte Nr.:',
     serial_crop_title: 'Schritt 2: Seriennummer (optional)',
     serial_crop_hint: 'Markiere den Bereich mit der Seriennummer oder Zähler-Nr. – oder überspringe diesen Schritt.',
@@ -139,6 +141,9 @@ export default {
     crop_rescan: 'Bereich markieren & neu scannen',
     crop_display_title: 'Schritt 1: Anzeige markieren',
     crop_display_hint: 'Markiere den Bereich mit den Zählerziffern.',
+    duplicate_session: 'Dieses Bild wurde in diesem Import bereits hochgeladen ({filename}).',
+    duplicate_db: 'Dieses Bild wurde bereits importiert (Zähler: {meter}, Wert: {value}, Datum: {date}).',
+    hint_rescanning: 'Prüfe Format…',
   },
   status: {
     backend: 'Backend',

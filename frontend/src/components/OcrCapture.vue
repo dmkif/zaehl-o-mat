@@ -182,6 +182,7 @@ const previewUrl = ref<string | null>(null)
 const serialPreviewUrl = ref<string | null>(null)
 const imagePath = ref<string | null>(null)
 const serialImagePath = ref<string | null>(null)
+const imageHash = ref<string | null>(null)
 const confirmedValue = ref('')
 const detectedSerial = ref<string | null>(null)
 const detectionMethod = ref<string | null>(null)
@@ -237,6 +238,7 @@ function cancelCrop() {
   detectionMethod.value = null
   imagePath.value = null
   serialImagePath.value = null
+  imageHash.value = null
   errorMsg.value = ''
   stage.value = 'idle'
 }
@@ -318,6 +320,7 @@ async function startScan(withSerial: boolean) {
       confirmedValue.value = data.detected_value ?? ''
       imagePath.value = data.image_path ?? null
       serialImagePath.value = data.serial_image_path ?? null
+      imageHash.value = data.image_hash ?? null
       detectedSerial.value = data.detected_serial ?? null
       detectionMethod.value = data.detection_method ?? null
     } else {
@@ -347,6 +350,7 @@ async function saveReading() {
           source: imagePath.value ? 'auto' : 'manual',
           image_path: imagePath.value,
           serial_image_path: serialImagePath.value,
+          image_hash: imageHash.value,
           note: note.value || null,
         }),
       },
@@ -359,10 +363,20 @@ async function saveReading() {
       if (originalUrl.value) { URL.revokeObjectURL(originalUrl.value); originalUrl.value = null }
       imagePath.value = null
       serialImagePath.value = null
+      imageHash.value = null
       stage.value = 'idle'
       emit('reading-added')
+    } else if (res.status === 409) {
+      const err = await res.json().catch(() => null)
+      const detail = err?.detail
+      if (detail?.code === 'duplicate_image') {
+        const date = detail.read_at ? new Date(detail.read_at).toLocaleDateString() : '?'
+        errorMsg.value = t('ocr.duplicate_exists', { value: detail.value, date })
+      } else {
+        errorMsg.value = t('ocr.error_save')
+      }
     } else {
-      errorMsg.value = 'Speichern fehlgeschlagen'
+      errorMsg.value = t('ocr.error_save')
     }
   } catch {
     errorMsg.value = t('ocr.error_network')

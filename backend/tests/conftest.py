@@ -31,6 +31,15 @@ from app.models import (
     User, UserRole,
 )
 from app.auth import create_access_token
+from app.limiter import limiter
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Rate-limit counters must not leak between tests."""
+    limiter.reset()
+    yield
+
 
 # ── SQLite in-memory engine ────────────────────────────────────────────────────
 
