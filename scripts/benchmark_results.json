@@ -1,0 +1,56 @@
+[
+  {
+    "file": "IMG_20260402_123222.jpg",
+    "no_think_reading": "0309.735",
+    "think_reading": "0309.735",
+    "no_think_s": 14.72,
+    "think_s": 2.97,
+    "same": true,
+    "thinking_chars": 0
+  },
+  {
+    "file": "IMG_20260402_123236.jpg",
+    "no_think_reading": "1374",
+    "think_reading": "1374",
+    "no_think_s": 2.43,
+    "think_s": 2.55,
+    "same": true,
+    "thinking_chars": 0
+  },
+  {
+    "file": "IMG_20260402_123256.jpg",
+    "no_think_reading": "165.539",
+    "think_reading": "165.539",
+    "no_think_s": 3.54,
+    "think_s": 2.57,
+    "same": true,
+    "thinking_chars": 0
+  },
+  {
+    "file": "IMG_20260404_232025.jpg",
+    "no_think_reading": "1365",
+    "think_reading": "1365",
+    "no_think_s": 2.35,
+    "think_s": 2.3,
+    "same": true,
+    "thinking_chars": 0
+  },
+  {
+    "file": "IMG_20260404_232126.jpg",
+    "no_think_reading": "03.1009.9",
+    "think_reading": "03.1009.9",
+    "no_think_s": 3.14,
+    "think_s": 3.1,
+    "same": true,
+    "thinking_chars": 0
+  },
+  {
+    "file": "IMG_20260404_233736.jpg",
+    "no_think_reading": "1664.71",
+    "think_reading": "1664.71",
+    "no_think_s": 3.41,
+    "think_s": 3.1,
+    "same": true,
+    "thinking_chars": 0
+  }
+]
