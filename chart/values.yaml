@@ -53,6 +53,9 @@ ingress:
   host: zaehlomat.apps.schmulzer.de
   tls: true
   certIssuer: letsencrypt-prod
+  # external-dns publish target (e.g. the cluster's own stable DNS name) -
+  # leave empty to skip DNS annotations entirely.
+  externalDnsTarget: ""
 
 persistence:
   enabled: true

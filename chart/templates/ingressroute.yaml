@@ -5,6 +5,15 @@ metadata:
   name: {{ include "zaehl-o-mat.fullname" . }}
   labels:
     {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+  {{- if .Values.ingress.externalDnsTarget }}
+  annotations:
+    # external-dns' traefik-proxy source only reads the target annotation
+    # on IngressRoute objects, not hostname - without this the record is
+    # never published even though the route works fine.
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.ingress.host }}
+    external-dns.alpha.kubernetes.io/target: {{ .Values.ingress.externalDnsTarget }}
+    external-dns.alpha.kubernetes.io/ttl: "300"
+  {{- end }}
 spec:
   entryPoints:
     - websecure
