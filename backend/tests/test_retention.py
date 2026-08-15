@@ -57,13 +57,18 @@ class TestDownsampleSqlStructure:
     """Verify that _downsample builds SQL with the expected clauses."""
 
     def test_source_auto_filter_always_present(self, db):
-        """Manual and archived readings must never be targeted."""
+        """Manual readings must never be targeted; the freshest tier also spares archived rows."""
         mock_db = MagicMock()
         _downsample(mock_db, older_than=None, newer_than=None, bucket_minutes=1)
         calls = mock_db.execute.call_args_list
-        # At least the CREATE TEMP TABLE call must contain "source = 'auto'"
         sql_statements = [str(c.args[0]) for c in calls]
-        assert any("source = 'auto'" in sql for sql in sql_statements)
+        # Freshest tier (1-min buckets): auto only
+        assert any("source IN ('auto')" in sql for sql in sql_statements)
+        # Coarser tiers re-bucket previously archived rows so data keeps aging
+        mock_db2 = MagicMock()
+        _downsample(mock_db2, older_than=None, newer_than=None, bucket_minutes=60)
+        sql_statements2 = [str(c.args[0]) for c in mock_db2.execute.call_args_list]
+        assert any("source IN ('auto', 'archived')" in sql for sql in sql_statements2)
 
     def test_older_than_condition_added(self, db):
         mock_db = MagicMock()
@@ -93,11 +98,12 @@ class TestManualReadingsProtected:
     """
 
     def test_auto_filter_is_exclusive(self):
-        """The SQL WHERE clause must contain `source = 'auto'`."""
+        """The freshest tier's WHERE clause must restrict to auto readings only."""
         mock_db = MagicMock()
         _downsample(mock_db, older_than=None, newer_than=None, bucket_minutes=1)
         create_call_sql = str(mock_db.execute.call_args_list[0].args[0])
-        assert "source = 'auto'" in create_call_sql
+        assert "source IN ('auto')" in create_call_sql
+        assert "'manual'" not in create_call_sql
 
         delete_call_sql = str(mock_db.execute.call_args_list[1].args[0])
-        assert "source = 'auto'" in delete_call_sql
+        assert "source IN ('auto')" in delete_call_sql

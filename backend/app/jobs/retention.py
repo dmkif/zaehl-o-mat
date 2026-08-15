@@ -8,14 +8,24 @@ Policy:
   - Read at 91 days – 2 years  → keep 1 average per 15 min
   - Read at ≤ 90 days          → keep 1 average per minute
   - Manual readings             → never touched
+
+Also removes uploaded image files that are no longer referenced by any
+reading (e.g. scans that were never confirmed) after a grace period.
 """
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
+
+# Uploaded files younger than this are kept even when unreferenced — they may
+# belong to an in-flight scan/bulk-import session awaiting user confirmation.
+_ORPHAN_GRACE = timedelta(hours=24)
 
 
 def run_retention(db: Session) -> None:
@@ -28,7 +38,38 @@ def run_retention(db: Session) -> None:
     _downsample(db, older_than=None, newer_than=cutoff_90d, bucket_minutes=1)
 
     db.commit()
+
+    cleanup_orphan_uploads(db)
     logger.info("Retention job completed at %s", now.isoformat())
+
+
+def cleanup_orphan_uploads(db: Session) -> None:
+    """Delete files in the upload directory that no reading references."""
+    upload_dir = Path(settings.upload_path)
+    if not upload_dir.is_dir():
+        return
+
+    rows = db.execute(
+        text("SELECT image_path, serial_image_path FROM readings")
+    ).fetchall()
+    referenced = {
+        Path(p).name
+        for row in rows
+        for p in row
+        if p
+    }
+
+    cutoff = datetime.now(timezone.utc) - _ORPHAN_GRACE
+    removed = 0
+    for f in upload_dir.iterdir():
+        if not f.is_file() or f.name in referenced:
+            continue
+        mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+        if mtime < cutoff:
+            f.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        logger.info("Removed %d orphaned upload file(s)", removed)
 
 
 def _downsample(
@@ -39,11 +80,17 @@ def _downsample(
 ) -> None:
     """
     For each meter and each time bucket, keep one averaged row and delete the rest.
-    Only touches source='auto' readings.
+
+    Touches source='auto' readings and — for the coarser tiers — previously
+    downsampled source='archived' rows, so that rows aging from one tier into
+    the next get re-bucketed (a 15-min archived row must still become hourly
+    once it is older than two years).  Re-running on already-downsampled data
+    is idempotent: one row per bucket stays one row.
+
     Uses raw SQL for performance (potentially millions of rows).
     """
-    # Build time range filter
-    conditions = ["r.source = 'auto'"]
+    sources = "('auto')" if bucket_minutes == 1 else "('auto', 'archived')"
+    conditions = [f"r.source IN {sources}"]
     params: dict = {"bucket": bucket_minutes}
 
     if older_than:
