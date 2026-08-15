@@ -2,6 +2,7 @@
 Tests for app/auth.py
 
 Covers:
+  - Password hashing & verification
   - JWT create / decode / expiry
   - get_or_create_user_from_oidc: new user, existing user, role promotion/demotion
   - require_role: allowed roles pass, forbidden roles raise 403
@@ -72,7 +73,9 @@ class TestOidcUserCreation:
             "sub": sub,
             "email": email,
             "preferred_username": "alice",
-            "groups": groups or [],
+            # Membership in a permitted group is mandatory since the
+            # no-group-no-access hardening; default to the plain user group.
+            "groups": [settings.oidc_user_group] if groups is None else groups,
         }
 
     def test_new_user_created_on_first_login(self, db):
@@ -107,13 +110,15 @@ class TestOidcUserCreation:
         )
         assert user.role == UserRole.admin
 
-    def test_no_group_defaults_to_user_role(self, db):
-        user = get_or_create_user_from_oidc(db, self._oidc_data(groups=[]))
-        assert user.role == UserRole.user
+    def test_no_group_is_rejected(self, db):
+        """An IdP account without any permitted group must not get access."""
+        with pytest.raises(HTTPException) as exc_info:
+            get_or_create_user_from_oidc(db, self._oidc_data(groups=[]))
+        assert exc_info.value.status_code == 403
 
     def test_role_update_on_subsequent_login(self, db):
         """If a user gains admin group, their role is updated on next login."""
-        get_or_create_user_from_oidc(db, self._oidc_data(groups=[]))
+        get_or_create_user_from_oidc(db, self._oidc_data())
         updated = get_or_create_user_from_oidc(
             db, self._oidc_data(groups=[settings.oidc_admin_group])
         )
@@ -124,11 +129,11 @@ class TestOidcUserCreation:
         get_or_create_user_from_oidc(
             db, self._oidc_data(groups=[settings.oidc_admin_group])
         )
-        downgraded = get_or_create_user_from_oidc(db, self._oidc_data(groups=[]))
+        downgraded = get_or_create_user_from_oidc(db, self._oidc_data())
         assert downgraded.role == UserRole.user
 
     def test_username_falls_back_to_email_prefix(self, db):
-        data = {"sub": "sub-xyz", "email": "bob@example.com", "groups": []}
+        data = {"sub": "sub-xyz", "email": "bob@example.com", "groups": [settings.oidc_user_group]}
         user = get_or_create_user_from_oidc(db, data)
         assert user.username == "bob"
 

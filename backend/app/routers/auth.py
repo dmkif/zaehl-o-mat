@@ -148,9 +148,10 @@ async def callback(
 
     user = get_or_create_user_from_oidc(db, userinfo)
     access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
-    # Redirect to frontend with token in query param (SPA picks it up and stores in memory)
-    frontend_url = settings.oidc_redirect_uri.replace("/auth/callback", "")
-    return RedirectResponse(url=f"{frontend_url}/#/auth/token?token={access_token}")
+    # Redirect to the SPA route /auth/token (history-mode router, no hash) which
+    # picks up the token from the query string and stores it client-side.
+    frontend_url = settings.app_base_url.rstrip("/")
+    return RedirectResponse(url=f"{frontend_url}/auth/token?token={access_token}")
 
 
 @router.post("/superadmin-login", response_model=TokenResponse)

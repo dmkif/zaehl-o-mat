@@ -38,12 +38,20 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     username = oidc_data.get("preferred_username") or email.split("@")[0]
     groups: list[str] = oidc_data.get(settings.oidc_groups_claim, [])
 
-    # Map OIDC groups → app role (highest privilege wins)
-    role = UserRole.user
+    # Map OIDC groups → app role (highest privilege wins).
+    # Users in none of the configured groups are rejected — an account at the
+    # IdP alone must not grant access to the app.
     if settings.oidc_admin_group in groups:
         role = UserRole.admin
     elif settings.oidc_manager_group in groups:
         role = UserRole.manager
+    elif settings.oidc_user_group in groups:
+        role = UserRole.user
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized: user is not a member of any permitted group",
+        )
 
     user = db.query(User).filter(User.oidc_sub == sub).first()
     if user:
