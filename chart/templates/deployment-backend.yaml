@@ -22,10 +22,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: backend
           image: {{ include "zaehl-o-mat.backendImage" . }}
           imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 8000
@@ -46,6 +53,8 @@ spec:
           volumeMounts:
             - name: uploads
               mountPath: /data/uploads
+            - name: tmp
+              mountPath: /tmp
             {{- if .Values.backend.secretVolume.enabled }}
             - name: secrets
               mountPath: /run/secrets
@@ -80,6 +89,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: tmp
+          emptyDir: {}
         {{- if .Values.backend.secretVolume.enabled }}
         - name: secrets
           secret:

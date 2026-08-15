@@ -88,3 +88,14 @@ postgresql:
 
 externalDatabase:
   host: ""
+
+networkPolicy:
+  # Off by default: enabling this without checking ingressFrom first will
+  # silently cut off all ingress traffic instead of protecting anything -
+  # the selector must actually match your Traefik pods/namespace. Once
+  # enabled: postgresql only accepts traffic from this chart's own backend,
+  # and backend/frontend only accept traffic matching ingressFrom.
+  enabled: false
+  ingressFrom:
+    namespaceSelector: {}
+    podSelector: {}

@@ -9,10 +9,18 @@ metadata:
     {{- include "zaehl-o-mat.labels" . | nindent 4 }}
 spec:
   headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+    forceSTSHeader: true
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: "same-origin"
     customResponseHeaders:
-      X-Frame-Options: "SAMEORIGIN"
-      X-Content-Type-Options: "nosniff"
-      Referrer-Policy: "same-origin"
+      X-Permitted-Cross-Domain-Policies: "none"
+      Cross-Origin-Opener-Policy: "same-origin"
+      Cross-Origin-Resource-Policy: "same-origin"
+      Permissions-Policy: "camera=(), microphone=(), geolocation=(), payment=()"
       Content-Security-Policy: >-
         default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
         img-src 'self' data: blob:; connect-src 'self' blob:; font-src 'self';
