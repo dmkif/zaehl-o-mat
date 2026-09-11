@@ -54,7 +54,13 @@ setting (`ocr_api_key` / Helm `ocr.existingSecret`), mirroring
 by default for zero-config Compose/local use where both containers share a
 private Docker network, but operators are explicitly encouraged in
 documentation to set it, particularly in Kubernetes deployments where the
-OCR service and backend may not share full network isolation.
+OCR service and backend may not share full network isolation. Like
+`OLLAMA_API_KEY` today, the token is meaningful only when the operator
+fronts the OCR service with an authenticating reverse proxy — the OCR
+service itself implements no authentication (see `/speckit-analyze`
+finding N1, 2026-09-11: an earlier draft of `contracts/ocr-service-api.md`
+had the service checking the header itself, with no task ever wiring the
+secret into its container; corrected to match this decision).
 
 **Rationale**: Constitution Principle VIII (as amended 2026-09-11, MINOR
 v1.2.0) explicitly requires that outbound calls to self-hosted/operator-

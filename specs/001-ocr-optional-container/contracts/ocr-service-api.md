@@ -2,9 +2,13 @@
 
 Internal service-to-service API. Consumed only by the backend
 (`backend/app/services/ocr_pipeline.py`); not exposed to end users or the
-frontend directly. No authentication required by default (see
-`research.md` Decision 3); an optional `Authorization: Bearer <token>`
-header is accepted when the operator configures `OCR_API_KEY`.
+frontend directly. The OCR service itself implements no authentication —
+same as Ollama today. Operators who want to secure this link front the
+OCR service with an authenticating reverse proxy; the backend sends
+`Authorization: Bearer <token>` (`OCR_API_KEY`) with every request, which
+that proxy checks (see `research.md` Decision 3). The service is
+unauthenticated by default for zero-config local/Compose use where both
+containers share a private Docker network.
 
 Base URL: operator-configured, e.g. `http://ocr:8100` (Compose) or
 `http://<release>-ocr:8100` (Helm, in-cluster Service DNS).

@@ -39,13 +39,24 @@ the original version of this file. This revision resolves all four:
 
 All task IDs below reflect the post-revision numbering.
 
+**Second revision (2026-09-11)**: a follow-up `/speckit-analyze` pass found
+the C2 fix above had introduced its own inconsistency (N1): T026 described
+the OCR service checking an `Authorization` header itself, while
+`data-model.md` and `research.md` Decision 3 described the existing
+proxy-fronting model (matching `OLLAMA_API_KEY`) — neither was fully
+implemented (no `config.py` auth field, no task wiring the secret into the
+OCR-service container). Resolved by standardizing on the proxy-fronting
+model throughout (zero new code, matches the established Ollama pattern):
+T026 and T028 reworded, `contracts/ocr-service-api.md` corrected, and
+`config.py` added to T001's file list (N2).
+
 ---
 
 ## Phase 1: Setup
 
 **Purpose**: Scaffold the new `ocr-service/` container per `plan.md`'s Project Structure.
 
-- [ ] T001 Create `ocr-service/` skeleton: `ocr-service/app/__init__.py`, `ocr-service/tests/__init__.py`
+- [ ] T001 Create `ocr-service/` skeleton: `ocr-service/app/__init__.py`, `ocr-service/tests/__init__.py`, `ocr-service/app/config.py` (bind host/port, log level — no auth field; the service implements no authentication itself, see T026)
 - [ ] T002 [P] Write `ocr-service/requirements.txt` — pinned versions: `easyocr==1.7.2` (pulls in opencv/numpy/torch), `pillow`, `filetype`, `fastapi`, `uvicorn[standard]`, `python-multipart`, matching `backend/requirements.txt`'s exact-pin convention
 - [ ] T003 [P] Write `ocr-service/Dockerfile` — `python:3.12-slim` base, `apt` deps `libgomp1 libgl1 libglib2.0-0`, `pip install -r requirements.txt`, EasyOCR model pre-download `RUN` step (adapted from `backend/Dockerfile`)
 
@@ -113,9 +124,9 @@ All task IDs below reflect the post-revision numbering.
 ### Implementation for User Story 2
 
 - [ ] T025 [US2] Move the EasyOCR-only functions removed in T009 into `ocr-service/app/pipeline.py` verbatim (image preprocessing, 7-segment correction, numeric scoring, serial extraction, reader/lock) (depends on T009, T002)
-- [ ] T026 [US2] Create `ocr-service/app/main.py`: FastAPI app exposing `POST /scan`, `POST /serial`, `GET /health` per `contracts/ocr-service-api.md` (including the `400`/`422` error responses T020-T022 test for), optionally checking an `Authorization: Bearer` header when the service is configured to require one, calling into `app/pipeline.py` (depends on T025)
+- [ ] T026 [US2] Create `ocr-service/app/main.py`: FastAPI app exposing `POST /scan`, `POST /serial`, `GET /health` per `contracts/ocr-service-api.md` (including the `400`/`422` error responses T020-T022 test for), calling into `app/pipeline.py`. The service implements no authentication itself (matches the existing Ollama pattern — see T028); an operator who wants to secure this link fronts it with a reverse proxy, not application code. (depends on T025)
 - [ ] T027 [US2] Add an `ocr` service to `docker-compose.yaml` (`build: ./ocr-service`, no `depends_on` from `backend` — stays optional per FR-007) and an example (commented) `OCR_URL` on the `backend` service (depends on T026)
-- [ ] T028 [P] [US2] Update `README.md`: add `OCR_URL`/`OCR_API_KEY` rows to the environment-variable table, a short "OCR Service (Optional)" section, and an explicit recommendation to set `OCR_API_KEY` when the OCR service and backend don't share a fully trusted network segment (Constitution Principle V — Deployment Parity; Principle VIII outbound-call rule, v1.2.0)
+- [ ] T028 [P] [US2] Update `README.md`: add `OCR_URL`/`OCR_API_KEY` rows to the environment-variable table (mirroring the existing `OLLAMA_API_KEY` row's wording — "for hosted/proxied endpoints; not needed for a local, unauthenticated instance"), a short "OCR Service (Optional)" section, and an explicit recommendation to front the OCR service with an authenticating reverse proxy and set `OCR_API_KEY` when it and the backend don't share a fully trusted network segment (Constitution Principle V — Deployment Parity; Principle VIII outbound-call rule, v1.2.0)
 - [ ] T029 [US2] Add an `ocr-service-tests` job to `.github/workflows/test.yaml` running pytest against `ocr-service/`, mirroring the existing `backend-tests` job (depends on T026)
 - [ ] T030 [US2] Add an `ocr-service-sast` job to `.github/workflows/test.yaml` running `bandit -r app` inside `ocr-service/`, mirroring the existing `backend-sast` job (depends on T026)
 - [ ] T031 [P] [US2] Add an `ocr-service` image build step to `.github/workflows/build.yaml` (`ghcr.io/dmkif/zaehl-o-mat-ocr`, same pattern as the existing backend/frontend build steps) (depends on T026)
