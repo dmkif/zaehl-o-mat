@@ -1,18 +1,22 @@
 <!--
 Sync Impact Report
-Version change: 1.1.0 → 1.1.1
-Rationale: PATCH — status update, not new governance. The SAST/secret-
-scanning gaps that v1.1.0 flagged as MUST-close are now closed (bandit,
-eslint-plugin-security, gitleaks wired into test.yaml, all green); wording
-in Principle X updated from "gap, must add" to "wired in, required job".
-Development Workflow now documents that main is PR-protected with required
-status checks (branch protection enabled same day) — a clarification of
-existing Principle X/CI intent, not a new rule.
+Version change: 1.1.1 → 1.2.0
+Rationale: MINOR — Principle VIII materially expanded, not just reworded.
+/speckit-analyze on the OCR-optional-container feature found VIII's text
+ambiguous about outbound service-to-service calls (it said "every...
+service-to-service call MUST require authentication" with an exception
+list containing only inbound endpoints — plan.md was already resolving
+this via unstated reinterpretation for the backend→Ollama and
+backend→OCR-service calls). This amendment makes the scope explicit:
+Principle VIII governs inbound traffic; outbound calls to self-hosted/
+operator-controlled optional subsystems SHOULD offer and recommend auth
+(mechanism already exists: OLLAMA_API_KEY, and OCR_API_KEY being added by
+the in-flight feature); outbound calls to third-party SaaS use whatever
+that provider offers, since this project doesn't control it.
 Modified principles:
-  - X. Verifiable Security (CI Gates) — no rule change; status language
-    updated to reflect the gaps are now closed.
-Added sections: none (Development Workflow gained a bullet documenting the
-PR-required branch protection; not a new section).
+  - VIII. Authenticated Communication by Default — added an explicit
+    inbound/outbound scope split with concrete rules for both cases.
+Added sections: none
 Removed sections: none
 Deferred / TODO placeholders: none
 Templates requiring follow-up: none checked in this run — dependent
@@ -151,16 +155,38 @@ that this principle outranks convenience or speed when they conflict (see
 Governance).
 
 ### VIII. Authenticated Communication by Default
-Every backend endpoint and every service-to-service call MUST require
-authentication AND authorization. The ONLY exceptions, listed exhaustively
-here, are: `GET /api/health/live`, `GET /api/health`, `GET /auth/login`,
+Every backend endpoint — and every endpoint any project-operated service
+exposes — MUST require authentication AND authorization for **inbound**
+requests. The ONLY exceptions, listed exhaustively here, are:
+`GET /api/health/live`, `GET /api/health`, `GET /auth/login`,
 `GET /auth/callback`, `POST /auth/superadmin-login` (the credential-
 exchange endpoint itself), and static frontend assets served by the
 frontend/proxy containers. Any new unauthenticated endpoint MUST NOT be
 added without an amendment to this constitution adding it to this list.
+
+This principle governs inbound traffic only — requests arriving at a
+service this project operates. **Outbound** calls the backend makes to
+other services follow a separate rule, since this project does not always
+control the far end:
+- **Self-hosted / operator-controlled optional subsystems** (Ollama, the
+  OCR service, or any future optional subsystem under Principle II): an
+  authentication mechanism (a bearer-token setting, matching the existing
+  `OLLAMA_API_KEY` pattern) SHOULD be offered and its use SHOULD be
+  recommended to operators in documentation — because this project
+  controls both ends, it should make securing that link easy and point
+  operators at it, even though the default MAY stay unauthenticated for
+  zero-config local/trusted-network use.
+- **Third-party SaaS / internet-hosted services** outside this
+  deployment's control (a hosted OIDC provider, a paid oil-price API):
+  Principle VIII does not mandate an auth scheme this project doesn't own.
+  TLS and whatever authentication the provider itself offers (e.g. an API
+  key) MUST still be used when available.
 Rationale: an explicit, closed allowlist is auditable in a way that
 "endpoints should generally require auth" is not — a reviewer can check a
-new route against this exact list instead of reasoning about intent.
+new inbound route against this exact list instead of reasoning about
+intent. Outbound calls need a different rule because "MUST authenticate"
+is only meaningful where this project can actually implement and enforce
+it — its own self-hosted optional subsystems, not a third party's API.
 
 ### IX. Input Validation Is Server-Side Authoritative
 The backend MUST validate every input (type, length, format, range,
@@ -243,4 +269,4 @@ compliance or state the justified exception in the PR description —
 silent violations are not acceptable. There is no separate runtime
 guidance file at this time; this document is authoritative.
 
-**Version**: 1.1.1 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-09-11
+**Version**: 1.2.0 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-09-11
