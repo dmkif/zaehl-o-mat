@@ -204,9 +204,15 @@ by the backend.
 
 - Extracting OCR out-of-process means it becomes an HTTP-reachable service; the
   backend talks to it over the network the same way it already talks to the
-  optional Ollama LLM service (unauthenticated within the trusted deployment
-  network by default, configurable via an endpoint URL), consistent with
-  Constitution Principle II (Graceful Degradation for Optional Subsystems).
+  optional Ollama LLM service, consistent with Constitution Principle II
+  (Graceful Degradation for Optional Subsystems). Per Constitution Principle
+  VIII (outbound calls to self-hosted subsystems), an optional bearer-token
+  setting MUST be available for this call (matching the existing
+  `OLLAMA_API_KEY` pattern) and operators SHOULD be encouraged to configure
+  it, especially when the OCR service and backend do not share a fully
+  trusted network segment. It MAY remain unauthenticated by default for
+  zero-config local/Compose use where both containers share a private
+  Docker network.
 - The existing Docker Compose file and Helm chart already model optional
   components (e.g. the Ollama container); the new OCR service follows the same
   established pattern rather than introducing a new deployment paradigm.

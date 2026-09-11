@@ -46,25 +46,36 @@ response models. Team familiarity and consistent tooling (pytest +
 advantage over FastAPI here and would fragment the codebase's conventions
 for no gain.
 
-## Decision 3: Auth model — unauthenticated by default, optional bearer token
+## Decision 3: Auth model — bearer token available and recommended, off by default for zero-config use
 
-**Decision**: Backend → OCR-service calls are unauthenticated by default
-(trusted internal network, same as the current unauthenticated Ollama call),
-with an optional bearer-token setting (`ocr_api_key` / Helm
-`ocr.existingSecret`) for operators who expose the OCR service through
-something that needs it.
+**Decision**: Backend → OCR-service calls support an optional bearer-token
+setting (`ocr_api_key` / Helm `ocr.existingSecret`), mirroring
+`OLLAMA_API_KEY`/`ollama.existingSecret`. It stays unset (unauthenticated)
+by default for zero-config Compose/local use where both containers share a
+private Docker network, but operators are explicitly encouraged in
+documentation to set it, particularly in Kubernetes deployments where the
+OCR service and backend may not share full network isolation.
 
-**Rationale**: Exact mirror of the existing `OLLAMA_API_KEY` /
-`ollama.existingSecret` pattern already in `backend/app/config.py` and
-`chart/values.yaml` — Constitution Principle III requires secrets to flow
-through env vars/`/run/secrets`, not that every internal call be
-authenticated; the established precedent for this exact kind of call
-(backend → optional local AI/ML service) is unauthenticated-by-default.
+**Rationale**: Constitution Principle VIII (as amended 2026-09-11, MINOR
+v1.2.0) explicitly requires that outbound calls to self-hosted/operator-
+controlled optional subsystems — this is one, same as Ollama — SHOULD
+offer and recommend an auth mechanism, even though the default may stay
+unauthenticated for zero-config local use. This decision was updated from
+its original "unauthenticated by default, mentioned only as an option"
+framing after `/speckit-analyze` flagged that framing as resting on an
+unstated reinterpretation of Principle VIII rather than an explicit rule.
+The mechanism itself (`ocr_api_key`) was already designed this way; what
+changed is the documentation obligation (README, Assumptions) to actually
+recommend using it.
 
 **Alternatives considered**: mTLS between backend and OCR service — rejected
 as disproportionate for a same-trust-boundary internal call; no other
 service in the stack does this today (not even the DB connection, which
-relies on network isolation).
+relies on network isolation). Making the bearer token mandatory (no
+unauthenticated default) — rejected: would break the zero-config Compose
+quickstart's "clone and `docker compose up`" promise for a same-host,
+private-network call; Principle VIII's amended text explicitly allows
+"MAY remain unauthenticated... for zero-config local/trusted-network use."
 
 ## Decision 4: Chart deployment model — chart deploys the OCR service itself
 
