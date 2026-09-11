@@ -52,12 +52,17 @@ stall backend request handling (FR-011).
 - Backend image build MUST drop the EasyOCR model pre-download step and its
   `apt` deps (`libgl1`, `libglib2.0-0` are OCR-only; `libpq5`/`libgomp1`
   stay as they're needed for psycopg2/other native deps — verify per
-  dependency at implementation time) — net effect: smaller, faster backend
-  builds (SC-001).
-- Outbound backend → OCR-service HTTP calls MUST use an explicit timeout
-  (mirrors the existing `_llm_fallback` pattern, which already sets
-  `timeout=180.0` for Ollama calls) so the request-handling path stays
-  bounded (FR-011).
+  dependency at implementation time) — target: backend image at least 30%
+  smaller than today (SC-001, clarified 2026-09-11).
+- Outbound backend → OCR-service HTTP calls MUST use a hard 30-second
+  timeout (clarified 2026-09-11; tighter than the existing `_llm_fallback`
+  pattern's `timeout=180.0` for Ollama, since OCR itself normally completes
+  in 1-3s) so the request-handling path stays bounded (FR-011).
+- When a caller explicitly requests `engine=ocr` and the OCR service is
+  unreachable, the backend MUST return a clear error for that request — no
+  silent fallback to the LLM path (clarified 2026-09-11; FR-005, US2/AC2).
+  The `auto` engine's existing LLM-first/OCR-fallback behavior is
+  unaffected.
 - The existing `/api/ocr/*` HTTP contract (request/response shape presented
   to the frontend) MUST NOT change — only what's *behind* `engine="ocr"`
   changes, from an in-process call to a network call.
@@ -68,6 +73,7 @@ deployment scale; existing rate limits on `/ocr/scan` etc. are untouched.
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*Checked against Constitution v1.1.1 (10 principles).*
 
 | Principle | Check | Result |
 |---|---|---|
@@ -76,6 +82,26 @@ deployment scale; existing rate limits on `/ocr/scan` etc. are untouched.
 | III. Secure-by-Default Secrets & Access | No new secret is *required*; an optional bearer-token setting is added for parity with `OLLAMA_API_KEY`/`ollama.existingSecret`, for operators who front the OCR service with an authenticating proxy. No RBAC changes — OCR is called on the backend's behalf, same trust boundary as the Ollama call today. | **PASS** |
 | IV. Schema Changes via Migrations | No database schema touched. | **PASS (N/A)** |
 | V. Deployment Parity (Compose ⇄ Helm) | New service + its config var(s) MUST land in `docker-compose.yaml`, `chart/` (new optional Deployment/Service + `values.yaml` block), and the README env-var table in the same change. | **PASS** (explicitly scoped into Phase 1 design below) |
+| VI. Brownfield Respect | Relocation of existing, already-tested logic into a new service — not a rewrite. `/api/ocr/*`'s contract to the frontend is unchanged (FR-010, data-model.md). Backend router/service split convention followed for the new service too. | **PASS** |
+| VII. Security by OWASP Top 10 (NON-NEGOTIABLE) | See OWASP mapping table below — every relevant category has a concrete control. | **PASS** |
+| VIII. Authenticated Communication by Default | No new *backend* (FastAPI) endpoint is added — `/api/ocr/*` is unchanged, so Principle VIII's exhaustive exception list is untouched. The new OCR-service's own endpoints (`/scan`, `/serial`, `/health`) are a separate internal service, not a backend endpoint, and are unauthenticated-by-default only within the trusted deployment network (research.md Decision 3) — same trust boundary as the existing Ollama call, not a new exposure. | **PASS** |
+| IX. Input Validation Is Server-Side Authoritative | Backend already validates uploads (magic-bytes MIME, 10 MB cap) before forwarding to the OCR service (data-model.md "OCR Scan Request" — file already validated by caller). OCR service itself validates decodability and returns 400/422 on bad input (contracts/ocr-service-api.md). | **PASS** |
+| X. Verifiable Security (CI Gates) | No new endpoint touching auth/access-control is added, so no new negative-test obligation beyond what Principle I already requires for the new HTTP client code. Existing CI gates (bandit, eslint-plugin-security, gitleaks, Trivy) apply automatically to the new `ocr-service/` code — no exemption needed or requested. | **PASS** |
+
+### OWASP Top 10 Mapping (Principle VII)
+
+| Category | Applicable? | Control |
+|---|---|---|
+| A01 Broken Access Control | Yes | The `ocr_url`/`OCR_URL` setting is operator-configured (env var/Helm value), never user-supplied per-request — no SSRF surface from end-user input. Backend-to-OCR-service call carries no cross-tenant data; OCR service is stateless and has no concept of properties/meters/RBAC, so there is nothing to authorize *within* it. |
+| A02 Security Misconfiguration | Yes | `ocr_url` empty by default (secure default = disabled, Principle II). No default credentials introduced. |
+| A03 Software Supply Chain | Yes | New `ocr-service/requirements.txt` pins exact versions (existing backend convention); Trivy scan (CI) covers it like every other dependency file. |
+| A04 Cryptographic Failures | No new surface | No new crypto/secret material introduced beyond the existing, optional `OLLAMA_API_KEY`-style bearer token pattern (research.md Decision 3). |
+| A05 Injection | Yes | OCR service receives raw image bytes only, never interpolates request data into a query, shell command, or template. |
+| A06 Insecure Design | Yes | Documented explicitly: FR-011 bounds the call (30s), FR-005 defines the unreachable-service behavior, US2's edge cases cover misconfigured endpoint and rolling-upgrade ordering. |
+| A07 Authentication Failures | N/A | No new backend endpoint, no new auth mechanism (Principle VIII check above). |
+| A08 Software/Data Integrity | Yes | OCR-service JSON responses are parsed defensively by the backend client the same way `_llm_fallback` already parses Ollama responses (FR-010: contract preserved, not blindly trusted). |
+| A09 Logging & Alerting | Yes | OCR-service call failures are logged (mirrors existing `logger.warning` pattern in `ocr_pipeline.py`); no image bytes or secrets logged. |
+| A10 Exceptional Conditions | Yes | FR-005/FR-011: unreachable/timeout is a defined, handled state (health check + clear per-request error), not an unhandled exception path. |
 
 No violations — **Complexity Tracking is not needed.**
 

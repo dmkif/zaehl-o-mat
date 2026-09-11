@@ -41,10 +41,10 @@ Extract a meter reading from a (typically pre-cropped) display photo.
 | `422` | Missing `file` part. |
 | `500` | Unexpected OCR pipeline failure (logged server-side; message MUST NOT leak internal paths). |
 
-Timeout expectation for callers: the backend MUST apply its own client-side
-timeout (Technical Context / FR-011) — this endpoint does not artificially
-delay responses, but callers must not wait indefinitely on a slow/stuck
-container.
+Timeout expectation for callers: the backend MUST apply a 30-second
+client-side timeout (FR-011, clarified 2026-09-11) — this endpoint does not
+artificially delay responses, but callers must not wait indefinitely on a
+slow/stuck container.
 
 ---
 
