@@ -22,5 +22,13 @@ node_modules/
 Beispielzähler/
 chart/charts/*.tgz
 
-# Claude Code skill/agent scaffolding — local tooling, not project source
-.claude/
+# Claude Code skill/agent scaffolding — local tooling, not project source.
+# Exception: the speckit-git-branch skill backs the before_specify hook in
+# .specify/extensions.yml and must be shared so the hook fires for everyone.
+# (A plain ".claude/" rule would prune the whole tree from traversal before
+# any "!" negation below is ever evaluated — must ignore one level at a
+# time instead.)
+.claude/*
+!.claude/skills
+.claude/skills/*
+!.claude/skills/speckit-git-branch

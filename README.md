@@ -186,6 +186,29 @@ npm run dev
 
 The frontend dev server runs on port 5173 and proxies `/api` to the backend on port 8000.
 
+### Pre-commit checks
+
+Local security checks mirroring the CI gates (bandit, gitleaks,
+eslint-plugin-security) — catches findings before push instead of only in
+CI:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Requires a Go toolchain on `PATH` (the gitleaks hook builds itself) and
+`npm ci` already run under `frontend/`. Run against the whole repo any time
+with `pre-commit run --all-files`.
+
+## Contributing
+
+Changes land via pull request against `main` — direct pushes are blocked
+by branch protection. All required CI checks (backend tests, bandit,
+frontend type-check + eslint-plugin-security, Trivy, gitleaks, image build)
+must pass before a PR can merge; see the [project constitution](.specify/memory/constitution.md)
+for the full rationale and requirements.
+
 ## License
 
 MIT
