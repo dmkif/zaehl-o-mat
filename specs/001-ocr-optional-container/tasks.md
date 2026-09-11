@@ -50,6 +50,16 @@ model throughout (zero new code, matches the established Ollama pattern):
 T026 and T028 reworded, `contracts/ocr-service-api.md` corrected, and
 `config.py` added to T001's file list (N2).
 
+**Third revision (2026-09-11)**: a third `/speckit-analyze` pass found T032
+defined `ocr.existingSecret`/`ocr.secretApiKeyKey` in `chart/values.yaml`
+but no task actually wired `OCR_API_KEY` from that secret into the backend
+Deployment (T036 only handled `OCR_URL`) — a Principle V (Deployment
+Parity) violation, since Compose could reach the auth feature but Helm
+never could (N3). T036 extended to add the `secretKeyRef` block, mirroring
+the existing, confirmed-real `ollama.existingSecret` pattern in
+`deployment-backend.yaml` lines 52-58. `data-model.md`'s Helm values table
+was also missing the two fields T032 already referenced (N4) — added.
+
 ---
 
 ## Phase 1: Setup
@@ -147,7 +157,7 @@ T026 and T028 reworded, `contracts/ocr-service-api.md` corrected, and
 - [ ] T033 [US3] Create `chart/templates/deployment-ocr.yaml`, guarded by `{{- if .Values.ocr.enabled }}`, referencing `.Values.ocr.image.*` / `.Values.ocr.resources` (depends on T032)
 - [ ] T034 [P] [US3] Add an `ocr` Service entry to `chart/templates/services.yaml`, guarded the same way as T033 (depends on T033)
 - [ ] T035 [P] [US3] Add an `ocr` NetworkPolicy block to `chart/templates/networkpolicy.yaml` — ingress only from backend pods (Constitution Principle VII, OWASP A01) (depends on T033)
-- [ ] T036 [P] [US3] Wire the backend Deployment's `OCR_URL` env var in `chart/templates/deployment-backend.yaml` to the in-cluster `ocr` Service DNS name when `.Values.ocr.enabled` is true (depends on T033)
+- [ ] T036 [P] [US3] Wire the backend Deployment's `OCR_URL` env var in `chart/templates/deployment-backend.yaml` to the in-cluster `ocr` Service DNS name when `.Values.ocr.enabled` is true; also add an `OCR_API_KEY` `secretKeyRef` block guarded by `{{- if .Values.ocr.existingSecret }}`, mirroring the existing `ollama.existingSecret` → `OLLAMA_API_KEY` block immediately above it (lines 52-58) exactly — this is what makes the Helm path capable of the same auth as Compose (Constitution Principle V) (depends on T033)
 
 **Checkpoint**: All three user stories independently functional and testable.
 
