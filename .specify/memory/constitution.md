@@ -1,30 +1,20 @@
 <!--
 Sync Impact Report
-Version change: 1.0.0 → 1.1.0
-Rationale: MINOR — five new principles added (Brownfield Respect; Security by
-OWASP Top 10; Authenticated Communication by Default; Input Validation Is
-Server-Side Authoritative; Verifiable Security / CI Gates) and one existing
-principle materially expanded (Secure-by-Default Secrets & Access gains a
-CI secret-scanning requirement). No principle was removed or redefined
-incompatibly, so this is not a MAJOR bump.
+Version change: 1.1.0 → 1.1.1
+Rationale: PATCH — status update, not new governance. The SAST/secret-
+scanning gaps that v1.1.0 flagged as MUST-close are now closed (bandit,
+eslint-plugin-security, gitleaks wired into test.yaml, all green); wording
+in Principle X updated from "gap, must add" to "wired in, required job".
+Development Workflow now documents that main is PR-protected with required
+status checks (branch protection enabled same day) — a clarification of
+existing Principle X/CI intent, not a new rule.
 Modified principles:
-  - III. Secure-by-Default Secrets & Access — expanded with a CI
-    secret-scanning requirement (gap identified, not yet implemented).
-Added sections:
-  - Core Principles: VI. Brownfield Respect, VII. Security by OWASP Top 10
-    (2025) (NON-NEGOTIABLE, highest priority), VIII. Authenticated
-    Communication by Default, IX. Input Validation Is Server-Side
-    Authoritative, X. Verifiable Security (CI Gates)
-  - Governance: explicit conflict-priority ordering
+  - X. Verifiable Security (CI Gates) — no rule change; status language
+    updated to reflect the gaps are now closed.
+Added sections: none (Development Workflow gained a bullet documenting the
+PR-required branch protection; not a new section).
 Removed sections: none
-Consolidation note: the source request proposed a standalone "Secrets"
-principle; its content (env-var/`/run/secrets` injection, CI secret
-scanning) was merged into the existing Principle III instead of creating a
-near-duplicate principle, to keep principles non-redundant per the drafting
-rules in this command's Outline.
-Deferred / TODO placeholders: none — CI gaps (SAST, secret scanning) are
-recorded as explicit MUST-close gaps in Principle X and Development
-Workflow, not deferred as unknowns.
+Deferred / TODO placeholders: none
 Templates requiring follow-up: none checked in this run — dependent
 templates/commands read this file at runtime and were not modified here per
 scope guard.
@@ -189,9 +179,9 @@ explicit, non-negotiable rule rather than an incidental one.
 CI MUST run SAST, dependency scanning, and secret scanning; merges MUST be
 blocked on high/critical findings from any of them. Dependency scanning
 already exists (Trivy filesystem scan in `test.yaml`) and MUST stay green.
-SAST (e.g. `bandit` for the Python backend, an ESLint security plugin for
-the TypeScript frontend) and secret scanning (Principle III) are currently
-gaps and MUST be added to close out this principle. Every feature touching
+SAST (`bandit` for the Python backend, `eslint-plugin-security` for the
+TypeScript frontend) and secret scanning (`gitleaks`, Principle III) are
+wired into `test.yaml` as required jobs. Every feature touching
 auth, access control, or input handling MUST include negative tests
 (unauthenticated request, unauthorized request, malformed input) alongside
 the pytest/vitest coverage already required by Principle I.
@@ -213,10 +203,13 @@ mandatory and machine-checked rather than reviewer-dependent.
 
 ## Development Workflow
 
-- CI gates (`test.yaml` for backend/frontend tests, `build.yaml` for image
-  build + Trivy scan) MUST be green before merge to `main`. Once SAST and
-  secret scanning are added (Principle X), they join this required gate
-  set.
+- Changes land via pull request. Direct pushes to `main` are blocked by
+  GitHub branch protection; this applies to every contributor, including
+  repo admins.
+- CI gates (`test.yaml`: backend/frontend tests, bandit, eslint-plugin-
+  security, Trivy, gitleaks; `build.yaml`: image build) MUST be green
+  before a PR can merge. Branch protection enforces this as a required-
+  checks list, not just a convention.
 - PRs that add or change an environment variable MUST update: README env
   table, `docker-compose.yaml`, and `chart/values.yaml` (Principle V).
 - PRs that change DB models MUST include the corresponding Alembic
@@ -250,4 +243,4 @@ compliance or state the justified exception in the PR description —
 silent violations are not acceptable. There is no separate runtime
 guidance file at this time; this document is authoritative.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-09-11
+**Version**: 1.1.1 | **Ratified**: 2026-09-11 | **Last Amended**: 2026-09-11
