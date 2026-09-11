@@ -21,3 +21,6 @@ htmlcov/
 node_modules/
 Beispielzähler/
 chart/charts/*.tgz
+
+# Claude Code skill/agent scaffolding — local tooling, not project source
+.claude/

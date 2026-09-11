@@ -106,7 +106,7 @@ def _extract_exif_datetime(filepath: Path) -> str | None:
                 if len(_val) >= 19:
                     return _val[:10].replace(':', '-') + 'T' + _val[11:16]
                 return _val[:10].replace(':', '-')
-    except Exception:
+    except Exception:  # nosec B110 - best-effort EXIF read; absence of a date must not fail the upload
         pass
     return None
 

@@ -69,7 +69,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DATABASE_URL must be overridden — default credentials are insecure"
             )
-        if self.jwt_secret_key == "change-me-in-production":
+        if self.jwt_secret_key == "change-me-in-production":  # nosec B105 - sentinel default, not a real credential
             raise ValueError(
                 "JWT_SECRET_KEY must be set to a strong random secret"
             )

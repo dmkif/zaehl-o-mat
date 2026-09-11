@@ -134,7 +134,7 @@ def health(response: Response):
         db.execute(text("SELECT 1"))
         db.close()
         db_ok = True
-    except Exception:
+    except Exception:  # nosec B110 - Constitution Principle II: any DB failure means "not ready", never a crash
         pass
 
     scheduler_ok = scheduler.running
@@ -151,7 +151,7 @@ def health(response: Response):
         try:
             r = _httpx.get(f"{settings.ollama_url}/api/tags", timeout=3.0)
             llm_ok = r.status_code == 200
-        except Exception:
+        except Exception:  # nosec B110 - Constitution Principle II: optional subsystem, absence must not crash health check
             pass
 
     # Core services (DB + scheduler) determine overall health.

@@ -103,6 +103,8 @@ def _downsample(
     where = " AND ".join(conditions)
 
     # Step 1: Create averaged rows (one per bucket) into a temp table
+    # `where`/`sources` are built only from the static clause strings above;
+    # all actual values are bound via `params`, never interpolated.
     db.execute(
         text(f"""
         CREATE TEMP TABLE _retention_keep AS
@@ -114,7 +116,7 @@ def _downsample(
         FROM readings r
         WHERE {where}
         GROUP BY meter_id, bucket_start
-        """),
+        """),  # nosec B608
         params,
     )
 
@@ -123,7 +125,7 @@ def _downsample(
         text(f"""
         DELETE FROM readings r
         WHERE {where}
-        """),
+        """),  # nosec B608
         params,
     )
 

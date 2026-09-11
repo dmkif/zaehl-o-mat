@@ -182,7 +182,7 @@ async def superadmin_login(
         db.refresh(user)
 
     token = create_access_token({"sub": str(user.id), "role": user.role.value})
-    return TokenResponse(access_token=token, token_type="bearer")
+    return TokenResponse(access_token=token, token_type="bearer")  # nosec B106 - OAuth2 spec literal, not a credential
 
 
 @router.get("/me")

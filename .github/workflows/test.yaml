@@ -56,6 +56,24 @@ jobs:
           path: backend/coverage.xml
           retention-days: 14
 
+  backend-sast:
+    name: Backend SAST (bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run bandit
+        working-directory: backend
+        run: |
+          pip install bandit==1.9.4
+          bandit -r app
+
   frontend-types:
     name: Frontend type-check
     runs-on: ubuntu-latest
@@ -78,6 +96,10 @@ jobs:
         working-directory: frontend
         run: npx vue-tsc --noEmit
 
+      - name: Security lint (eslint-plugin-security)
+        working-directory: frontend
+        run: npm run lint:security
+
       - name: Unit tests
         working-directory: frontend
         run: npm test
@@ -97,3 +119,17 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
