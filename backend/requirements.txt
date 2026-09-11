@@ -6,8 +6,8 @@ alembic==1.18.4
 psycopg2-binary==2.9.11
 pydantic==2.12.5
 pydantic-settings==2.13.1
-python-multipart==0.0.22
-pillow==11.2.1
+python-multipart==0.0.32
+pillow==12.3.0
 easyocr==1.7.2
 authlib==1.6.9
 httpx==0.28.1
