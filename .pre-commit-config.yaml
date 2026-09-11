@@ -13,7 +13,7 @@ repos:
     rev: "1.9.4"
     hooks:
       - id: bandit
-        files: ^backend/app/
+        files: ^(backend|ocr-service)/app/
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
