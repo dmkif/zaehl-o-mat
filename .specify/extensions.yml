@@ -1,0 +1,12 @@
+# Spec Kit extension hooks. Read by each speckit-* skill's Pre/Post-
+# Execution Checks section at the start of its run.
+hooks:
+  before_specify:
+    - extension: "git"
+      command: "speckit.git.branch"
+      description: >-
+        Create and check out a feature branch before authoring a new spec,
+        matching this project's PR-required workflow (see the constitution's
+        Development Workflow section).
+      optional: false
+      enabled: true
