@@ -120,10 +120,10 @@ frontend:
       memory: 64Mi
 
 # =============================================================================
-# Ollama vision model (optional OCR fallback)
-# When EasyOCR can't confidently read a meter display, the backend can ask
-# an Ollama vision model to read it instead. This is entirely optional -
-# EasyOCR-only OCR works fine without it.
+# Ollama vision model (primary, recommended reading extraction)
+# The backend asks an Ollama vision model to read the meter display. This is
+# entirely optional - the app runs fine without it (falls back to the ocr
+# service below, if enabled).
 # =============================================================================
 ollama:
   enabled: false
@@ -139,6 +139,34 @@ ollama:
   # Required key: value of secretApiKeyKey below (default OLLAMA_API_KEY).
   existingSecret: ""
   secretApiKeyKey: OLLAMA_API_KEY
+
+# =============================================================================
+# OCR service (optional fallback to the Ollama vision model above)
+# A standalone, chart-deployed container providing EasyOCR-based extraction.
+# Unlike ollama above (bring-your-own), this chart deploys the OCR service
+# itself - it's this project's own image, the same way backend/frontend are.
+# Off by default; the app runs fine on the Ollama path alone.
+# =============================================================================
+ocr:
+  enabled: false
+  image:
+    repository: ghcr.io/dmkif/zaehl-o-mat-ocr
+    pullPolicy: IfNotPresent
+    # -- Image tag. Leave empty to default to the chart's appVersion.
+    tag: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+  # -- Name of a Secret holding a bearer token for the OCR service. The OCR
+  # service itself implements no authentication (same as Ollama) - this
+  # token is only meaningful if you front it with an authenticating reverse
+  # proxy. Leave empty for a local, unauthenticated OCR service (the common
+  # case). Required key: value of secretApiKeyKey below (default OCR_API_KEY).
+  existingSecret: ""
+  secretApiKeyKey: OCR_API_KEY
 
 # =============================================================================
 # Ingress (Traefik IngressRoute - requires the Traefik ingress controller

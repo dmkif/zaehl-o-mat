@@ -1,0 +1,7 @@
+filetype==1.2.0
+fastapi==0.135.3
+uvicorn[standard]==0.42.0
+pydantic-settings==2.13.1
+python-multipart==0.0.32
+pillow==12.3.0
+easyocr==1.7.2

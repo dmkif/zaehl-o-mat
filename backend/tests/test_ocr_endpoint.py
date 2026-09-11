@@ -25,9 +25,14 @@ Covers:
   - invalid MIME in batch appears as error item in stream
 
   Unit-level:
-  - _fix_seven_segment: known substitutions
   - _normalize_serial: whitespace/dash/dot/slash stripped and uppercased
   - _match_serial_to_meters: exact, partial, none, ambiguous
+
+  Engine-selection regressions (OCR-optional-container feature):
+  - engine=llm still works after EasyOCR removal
+  - engine=auto prefers LLM over a configured-but-unused OCR service
+  - engine=ocr calls the OCR-service client and returns its result
+  - engine=ocr unreachable → clear 503, no silent LLM fallback, 30s timeout
 """
 import io
 import json
@@ -36,11 +41,12 @@ import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.models import MeterType, MeterUnit, PropertyUser, PropertyUserRole, UserRole
 from app.routers.ocr import (
-    _fix_seven_segment,
     _format_hint_text,
     _match_serial_to_meters,
     _matches_format,
@@ -136,6 +142,18 @@ class TestOcrScanEndpoint:
         r = client.post(
             "/api/ocr/scan",
             data={"engine": "llm"},
+            files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
+            headers=auth_headers(user),
+        )
+        assert r.status_code == 503
+
+    def test_engine_ocr_without_ocr_url_returns_503(self, client, db, tmp_path, monkeypatch):
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+        monkeypatch.delenv("OCR_URL", raising=False)
+        user = make_user(db)
+        r = client.post(
+            "/api/ocr/scan",
+            data={"engine": "ocr"},
             files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
             headers=auth_headers(user),
         )
@@ -351,20 +369,6 @@ class TestBulkScanEndpoint:
 # ──────────────────────────────────────────────────────────────────────────────
 # Unit tests — helper functions (no HTTP / no GPU)
 # ──────────────────────────────────────────────────────────────────────────────
-
-class TestFixSevenSegment:
-    # _SEG7_SUBS maps: J→0  O→0  D→0  I→1  l→1  B→8  G→6  T→7
-    @pytest.mark.parametrize("raw,expected", [
-        ("J309735", "0309735"),       # J → 0
-        ("0305 735", "0305735"),      # intra-digit space between digits stripped
-        ("OOI", "001"),               # O→0, O→0, I→1
-        ("BBBGGT", "888667"),         # B→8, B→8, B→8, G→6, G→6, T→7
-        ("1234.5", "1234.5"),         # dot preserved (decimal reading)
-        ("no digits", "no digits"),   # non-mapped chars pass through unchanged
-    ])
-    def test_substitutions(self, raw, expected):
-        assert _fix_seven_segment(raw) == expected
-
 
 class TestNormalizeSerial:
     @pytest.mark.parametrize("raw,expected", [
@@ -656,6 +660,106 @@ class TestHintRetryRun:
 
         assert len(calls) == 2
         assert result["detected_value"] == "12345678.9"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Engine-selection regression guards (OCR-optional-container feature)
+#
+# _llm_fallback is mocked so no live Ollama is needed; the OCR-service HTTP
+# client (_ocr_service_scan) is mocked/spied so no live OCR container is
+# needed either. These guard the engine dispatch logic in
+# app.routers.ocr._run_ocr_on_file survives the EasyOCR-removal refactor.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestEngineSelectionRegressions:
+    def _run(self, coro):
+        import asyncio
+        return asyncio.run(coro)
+
+    def test_engine_llm_still_returns_reading_after_easyocr_removal(self, tmp_path):
+        """FR-006 baseline: the LLM path must keep working once EasyOCR is gone
+        from the backend — this is a plain import-time/dispatch regression guard."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        with (
+            patch("app.routers.ocr._llm_fallback", return_value=("12345.6", None)),
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(_run_ocr_on_file(filepath, engine="llm"))
+
+        assert result["detected_value"] == "12345.6"
+        assert result["detection_method"] == "llm"
+
+    def test_engine_auto_prefers_llm_over_configured_ocr_service(self, tmp_path):
+        """FR-006: engine=auto must try the LLM first and skip the OCR service
+        entirely when the LLM already produced a value — even when an OCR
+        service is configured and available."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        with (
+            patch("app.routers.ocr._llm_fallback", return_value=("12345.6", None)),
+            patch("app.routers.ocr._ocr_service_scan") as mock_ocr_scan,
+            patch("app.routers.ocr.settings.ollama_url", "http://ollama:11434"),
+            patch("app.routers.ocr.settings.ocr_url", "http://ocr:8100"),
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            result = self._run(_run_ocr_on_file(filepath, engine="auto"))
+
+        assert result["detected_value"] == "12345.6"
+        assert result["detection_method"] == "llm"
+        mock_ocr_scan.assert_not_called()
+
+    def test_engine_ocr_configured_returns_ocr_service_result(self, client, db, tmp_path, monkeypatch):
+        """FR-004: engine=ocr with OCR_URL configured calls the OCR-service
+        client and returns its result unchanged."""
+        monkeypatch.setattr("app.routers.ocr.settings.upload_path", str(tmp_path))
+        monkeypatch.setattr("app.routers.ocr.settings.ocr_url", "http://ocr:8100")
+        user = make_user(db)
+        mock_result = {
+            "raw_texts": [{"text": "54321", "conf": 0.9}],
+            "detected_value": "54321",
+            "detected_serial": None,
+            "detection_method": "ocr",
+        }
+        with patch("app.routers.ocr._ocr_service_scan", return_value=mock_result):
+            r = client.post(
+                "/api/ocr/scan",
+                data={"engine": "ocr"},
+                files={"file": ("meter.jpg", _JPEG, "image/jpeg")},
+                headers=auth_headers(user),
+            )
+        assert r.status_code == 200
+        assert r.json()["detected_value"] == "54321"
+
+    def test_engine_ocr_unreachable_returns_clear_error_no_fallback(self, tmp_path):
+        """FR-005/US2-AC2: an unreachable OCR service must produce a clear
+        per-request error, never a silent substitution of the LLM path.
+        Also asserts the exact 30s timeout (FR-011) is what gets configured
+        on the outbound call — not just "some" timeout."""
+        filepath = tmp_path / "meter.jpg"
+        filepath.write_bytes(_JPEG)
+
+        captured_kwargs = {}
+
+        def _raise_connect_error(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            raise httpx.ConnectError("connection refused")
+
+        with (
+            patch("app.services.ocr_pipeline.httpx.post", side_effect=_raise_connect_error),
+            patch("app.routers.ocr.settings.ocr_url", "http://ocr:8100"),
+            patch("app.routers.ocr._llm_fallback") as mock_llm,
+        ):
+            from app.routers.ocr import _run_ocr_on_file
+            with pytest.raises(HTTPException) as exc_info:
+                self._run(_run_ocr_on_file(filepath, engine="ocr"))
+
+        assert exc_info.value.status_code == 503
+        assert captured_kwargs.get("timeout") == 30.0
+        mock_llm.assert_not_called()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

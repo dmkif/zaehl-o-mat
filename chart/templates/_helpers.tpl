@@ -49,6 +49,13 @@ Frontend image tag (fallback to appVersion)
 {{- end }}
 
 {{/*
+OCR service image tag (fallback to appVersion)
+*/}}
+{{- define "zaehl-o-mat.ocrImage" -}}
+{{ .Values.ocr.image.repository }}:{{ .Values.ocr.image.tag | default .Chart.AppVersion }}
+{{- end }}
+
+{{/*
 PostgreSQL host (use subchart service when embedded).
 */}}
 {{- define "zaehl-o-mat.postgresHost" -}}

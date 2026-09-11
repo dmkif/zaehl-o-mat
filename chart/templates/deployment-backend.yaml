@@ -57,6 +57,17 @@ spec:
                   key: {{ .Values.ollama.secretApiKeyKey }}
             {{- end }}
             {{- end }}
+            {{- if .Values.ocr.enabled }}
+            - name: OCR_URL
+              value: {{ printf "http://%s-ocr:8100" (include "zaehl-o-mat.fullname" .) | quote }}
+            {{- if .Values.ocr.existingSecret }}
+            - name: OCR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ocr.existingSecret }}
+                  key: {{ .Values.ocr.secretApiKeyKey }}
+            {{- end }}
+            {{- end }}
           volumeMounts:
             - name: uploads
               mountPath: /data/uploads
