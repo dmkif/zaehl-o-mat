@@ -66,6 +66,8 @@ New top-level key in `chart/values.yaml`, analogous in shape to the existing
 | `ocr.image.repository` | string | `ghcr.io/dmkif/zaehl-o-mat-ocr` | Same registry convention as `backend.image.repository` / `frontend.image.repository`. |
 | `ocr.image.tag` | string | `""` | Empty → chart `appVersion`, same convention as backend/frontend. |
 | `ocr.resources` | object | requests/limits sized for EasyOCR's CPU/memory footprint | Determined during implementation from the relocated container's observed footprint. |
+| `ocr.existingSecret` | string | `""` | Name of a Secret holding `OCR_API_KEY`, mirroring `ollama.existingSecret`. When set, injected into the backend Deployment's env via `secretKeyRef` (see `chart/templates/deployment-backend.yaml`'s existing `ollama.existingSecret` block, lines 52-58, for the pattern to mirror). |
+| `ocr.secretApiKeyKey` | string | `"OCR_API_KEY"` | Key within `ocr.existingSecret` holding the token, mirroring `ollama.secretApiKeyKey`. |
 
 ## State / Lifecycle Notes
 
