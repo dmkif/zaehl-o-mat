@@ -139,9 +139,14 @@ def health(response: Response):
 
     scheduler_ok = scheduler.running
 
-    # EasyOCR availability (cached import check)
-    from app.routers.ocr import _is_easyocr_available
-    ocr_ok = _is_easyocr_available()
+    # OCR-service reachability (optional subsystem, same pattern as Ollama below)
+    ocr_ok = False
+    if settings.ocr_url:
+        try:
+            r = _httpx.get(f"{settings.ocr_url}/health", timeout=3.0)
+            ocr_ok = r.status_code == 200
+        except Exception:  # nosec B110 - Constitution Principle II: optional subsystem, absence must not crash health check
+            pass
 
     # Ollama / LLM reachability
     llm_ok = False

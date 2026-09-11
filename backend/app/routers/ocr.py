@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 import filetype
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -29,18 +30,14 @@ from app.services.ocr_pipeline import (  # noqa: F401
     _MAX_UPLOAD_BYTES,
     _MIME_TO_EXT,
     _extract_exif_datetime,
-    _extract_numeric,
-    _extract_serial_sync,
-    _fix_seven_segment,
     _format_hint_text,
-    _is_easyocr_available,
     _llm_fallback,
     _llm_serial_zoom,
     _match_serial_to_meters,
     _matches_format,
     _normalize_serial,
-    _reader_lock,
-    _run_ocr_on_file_sync,
+    _ocr_service_scan,
+    _ocr_service_serial,
 )
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
@@ -59,6 +56,24 @@ def _meter_to_dict(meter) -> dict:
     }
 
 
+async def _try_ocr_service_serial(filepath: Path) -> str | None:
+    """
+    Best-effort dedicated serial-crop OCR via the optional OCR service.
+
+    Returns None on any failure (not configured, unreachable, timeout) —
+    this is always a secondary lookup on top of an already-returned
+    reading, never the primary flow, so failures here must not fail the
+    whole request.
+    """
+    if not settings.ocr_url:
+        return None
+    try:
+        return await asyncio.to_thread(_ocr_service_serial, filepath)
+    except httpx.HTTPError:
+        logger.warning("OCR-service serial lookup failed for %s", filepath)
+        return None
+
+
 async def _run_ocr_on_file(
     filepath: Path,
     engine: str = "auto",
@@ -70,12 +85,15 @@ async def _run_ocr_on_file(
     Run OCR/LLM pipeline on an existing image file.
 
     engine:
-      "auto"  — try LLM first (if OLLAMA_URL is set), fall back to EasyOCR
-      "ocr"   — EasyOCR only, skip LLM entirely
+      "auto"  — try LLM first (if OLLAMA_URL is set), fall back to the
+                optional OCR service (if OCR_URL is set)
+      "ocr"   — OCR service only, skip LLM entirely; raises HTTP 503 when
+                OCR_URL is not configured or the service is unreachable
+                (no silent fallback to another engine — FR-005)
       "llm"   — Ollama only; raises HTTP 503 when OLLAMA_URL is not configured
     already_cropped:
-      When True, skips the auto-strip-detection step in _preprocess_image
-      (the user already isolated the display area via the crop UI).
+      When True, tells the OCR service to skip its auto-strip-detection
+      step (the user already isolated the display area via the crop UI).
     last_reading / meter_type:
       When provided, the previous known reading value and meter type are used for
       format validation and, on mismatch, injected into a second LLM call as a hint.
@@ -119,18 +137,21 @@ async def _run_ocr_on_file(
         return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial, "detection_method": "llm"}
 
     if engine == "ocr":
-        if not _is_easyocr_available():
+        if not settings.ocr_url:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="EasyOCR engine requested but easyocr is not installed",
+                detail="OCR engine requested but OCR_URL is not configured",
             )
-        async with _reader_lock:
-            try:
-                return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)
-            except RuntimeError as exc:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        try:
+            return await asyncio.to_thread(_ocr_service_scan, filepath, already_cropped)
+        except httpx.HTTPError as exc:
+            # FR-005: explicit engine=ocr never silently falls back to another engine.
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OCR service is unreachable",
+            ) from exc
 
-    # engine == "auto": LLM first (if available), fall back to EasyOCR
+    # engine == "auto": LLM first (if available), fall back to the optional OCR service
     detected = None
     detected_serial = None
     if settings.ollama_url:
@@ -138,12 +159,14 @@ async def _run_ocr_on_file(
         if _hint_retry_needed(detected):
             detected, detected_serial = await _retry_with_hint(detected, detected_serial)
 
-    if detected is None and _is_easyocr_available():
-        async with _reader_lock:
-            try:
-                return await asyncio.to_thread(_run_ocr_on_file_sync, filepath, already_cropped)
-            except RuntimeError as exc:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+    if detected is None and settings.ocr_url:
+        try:
+            return await asyncio.to_thread(_ocr_service_scan, filepath, already_cropped)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="OCR service is unreachable",
+            ) from exc
 
     return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial, "detection_method": "llm" if detected else None}
 
@@ -199,9 +222,7 @@ async def rescan_reading(
     if result.get("detected_serial") is None and reading.serial_image_path and engine in ("ocr", "auto"):
         serial_filepath = Path(settings.upload_path) / Path(reading.serial_image_path).name
         if serial_filepath.exists():
-            async with _reader_lock:
-                detected_serial = await asyncio.to_thread(_extract_serial_sync, serial_filepath)
-            result["detected_serial"] = detected_serial
+            result["detected_serial"] = await _try_ocr_service_serial(serial_filepath)
 
     return {"image_path": reading.image_path, **result}
 
@@ -291,9 +312,7 @@ async def scan_meter(
         serial_filepath = upload_dir / serial_filename
         serial_filepath.write_bytes(serial_contents)
         serial_image_path = f"uploads/{serial_filename}"
-        async with _reader_lock:
-            detected_serial = await asyncio.to_thread(_extract_serial_sync, serial_filepath)
-        result["detected_serial"] = detected_serial
+        result["detected_serial"] = await _try_ocr_service_serial(serial_filepath)
     elif serial_contents is not None:
         # LLM already found serial — still save the crop for future rescan
         serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"

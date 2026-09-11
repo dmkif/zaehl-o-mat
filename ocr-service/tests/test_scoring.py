@@ -1,5 +1,10 @@
 """
-Tests for _extract_numeric() in app.routers.ocr.
+Tests for _extract_numeric() and _fix_seven_segment() in app.pipeline.
+
+Moved from backend/tests/test_ocr_scoring.py (and the TestFixSevenSegment
+class formerly in backend/tests/test_ocr_endpoint.py) as part of the
+OCR-optional-container feature — assertions unchanged (FR-010: relocation,
+not a rewrite).
 
 Scoring rules under test:
   - 4-8 digits  → +0.3 bonus (typical meter display range)
@@ -10,7 +15,7 @@ Scoring rules under test:
 """
 import pytest
 
-from app.routers.ocr import _extract_numeric
+from app.pipeline import _extract_numeric, _fix_seven_segment
 
 
 def _r(text: str, conf: float = 0.9, bbox=None):
@@ -104,3 +109,17 @@ class TestMinimumDigitFilter:
         # 3 digits → score = conf - 0.2; result is still returned if it's the only candidate
         result = _extract_numeric([_r("123", conf=0.9)])
         assert result == "123"
+
+
+class TestFixSevenSegment:
+    # _SEG7_SUBS maps: J→0  O→0  D→0  I→1  l→1  B→8  G→6  T→7
+    @pytest.mark.parametrize("raw,expected", [
+        ("J309735", "0309735"),       # J → 0
+        ("0305 735", "0305735"),      # intra-digit space between digits stripped
+        ("OOI", "001"),               # O→0, O→0, I→1
+        ("BBBGGT", "888667"),         # B→8, B→8, B→8, G→6, G→6, T→7
+        ("1234.5", "1234.5"),         # dot preserved (decimal reading)
+        ("no digits", "no digits"),   # non-mapped chars pass through unchanged
+    ])
+    def test_substitutions(self, raw, expected):
+        assert _fix_seven_segment(raw) == expected

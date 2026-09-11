@@ -1,0 +1,67 @@
+{{- if .Values.ocr.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-ocr
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ocr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "zaehl-o-mat.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ocr
+  template:
+    metadata:
+      labels:
+        {{- include "zaehl-o-mat.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ocr
+    spec:
+      serviceAccountName: {{ include "zaehl-o-mat.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ocr
+          image: {{ include "zaehl-o-mat.ocrImage" . }}
+          imagePullPolicy: {{ .Values.ocr.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8100
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          # No auth check here by design - the service implements none
+          # itself (see contracts/ocr-service-api.md); front it with an
+          # authenticating reverse proxy if it needs to be secured.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ocr.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

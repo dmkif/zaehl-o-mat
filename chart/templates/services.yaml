@@ -33,3 +33,23 @@ spec:
   selector:
     {{- include "zaehl-o-mat.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: frontend
+{{- if .Values.ocr.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-ocr
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ocr
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8100
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "zaehl-o-mat.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ocr
+{{- end }}

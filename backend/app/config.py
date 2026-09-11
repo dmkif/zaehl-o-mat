@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # unauthenticated Ollama instance doesn't need this.
     ollama_api_key: Optional[str] = None
 
+    # OCR service (optional — leave ocr_url empty to disable)
+    ocr_url: str = ""
+    # Bearer token for an OCR service fronted by an authenticating proxy. A
+    # local, unauthenticated OCR service doesn't need this.
+    ocr_api_key: Optional[str] = None
+
     # Oil price fetcher
     oil_price_source: str = "heizoel-aktuell"  # heizoel-aktuell | tankerkoenig | custom
     oil_price_api_key: Optional[str] = None

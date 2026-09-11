@@ -31,11 +31,18 @@ services:
     devices:
       - nvidia.com/gpu=all
 
-  backend:
-    build: ./backend
+  # Optional — EasyOCR fallback. LLM (Ollama, above) is the primary and
+  # recommended extraction method; OCR is not required for the app to work.
+  # Comment this whole service out (and OCR_URL below) to run without it.
+  ocr:
+    build: ./ocr-service
     restart: unless-stopped
     devices:
       - nvidia.com/gpu=all
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +63,8 @@ services:
       DEBUG: "true"
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: "qwen3-vl:8b"
+      # Optional — leave empty (or remove) to run without the `ocr` service above.
+      OCR_URL: http://ocr:8100
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""

@@ -1,11 +1,11 @@
 # Zähl-O-Mat
 
-A self-hosted utility meter management application. Take a photo of any meter (electricity, water, gas, oil), and the app extracts the reading via OCR or a local Ollama vision model. Readings are stored per property, visualized in charts, and the oil heating price is fetched daily for cost calculations.
+A self-hosted utility meter management application. Take a photo of any meter (electricity, water, gas, oil), and the app extracts the reading via a local Ollama vision model or an optional OCR service. Readings are stored per property, visualized in charts, and the oil heating price is fetched daily for cost calculations.
 
 ## Features
 
 - Multi-tenant: properties → meters → readings hierarchy
-- OCR pipeline: EasyOCR + optional Ollama vision model (GPU-accelerated)
+- Reading extraction: Ollama vision model (primary, GPU-accelerated) with an optional, separately-deployed EasyOCR service as a fallback
 - Serial number detection — warns when the photo doesn't match the registered meter
 - Oil heating price tracking (daily cronjob, heizoel-aktuell source)
 - Dashboard with consumption overview, daily averages per meter, meter type aggregates, and heating oil buy signal
@@ -30,10 +30,12 @@ docker compose up -d
 The app is available at **http://localhost:8080**.  
 Default superadmin credentials: `admin` / `admin123` (change via env vars).
 
-> **Note:** The stack includes an Ollama container that expects an NVIDIA GPU.  
-> Without a GPU, remove the `devices:` block from `docker-compose.yaml` and set  
-> `OLLAMA_MODEL` to a small CPU-capable model, or leave `OLLAMA_URL` empty to use  
-> EasyOCR only.
+> **Note:** The stack includes an Ollama container (and the optional `ocr`
+> container) that expect an NVIDIA GPU. Without a GPU, remove the
+> `devices:` block from the relevant service in `docker-compose.yaml` and
+> set `OLLAMA_MODEL` to a small CPU-capable model. The `ocr` service and
+> its `OCR_URL` line are entirely optional — comment both out if you only
+> want the LLM path (see "OCR Service" below).
 
 ## Environment Variables
 
@@ -53,6 +55,9 @@ All variables are set on the `backend` service.
 | `OLLAMA_URL` | `""` | Ollama API base URL (e.g. `http://ollama:11434`). Leave empty to disable. |
 | `OLLAMA_MODEL` | `gemma4:e4b` | Vision model name |
 | `OLLAMA_API_KEY` | `""` | Bearer token for hosted/proxied Ollama endpoints. Not needed for a local, unauthenticated Ollama. |
+| **OCR (optional)** | | |
+| `OCR_URL` | `""` | OCR service base URL (e.g. `http://ocr:8100`). Leave empty to disable — the app runs fine on the LLM path alone. |
+| `OCR_API_KEY` | `""` | Bearer token for a hosted/proxied OCR endpoint. Not needed for a local, unauthenticated OCR service. |
 | **Oil price** | | |
 | `OIL_PRICE_SOURCE` | `heizoel-aktuell` | Price source: `heizoel-aktuell` \| `tankerkoenig` \| `custom` |
 | `OIL_PRICE_API_KEY` | `""` | API key for tankerkoenig or custom source |
@@ -93,12 +98,13 @@ backend:
 
 When `OIDC_CLIENT_ID` is set, the login page shows a **"Login with SSO"** button in addition to the local superadmin login.
 
-## Ollama Vision Model (Optional)
+## Ollama Vision Model (Optional, Recommended)
 
-The OCR pipeline is fully optional.  If `OLLAMA_URL` is empty the LLM path is
-skipped; if `easyocr` is not installed the classical OCR path is skipped.  The
-app starts and operates normally without either — OCR endpoints will return
-appropriate errors when a specific engine is requested but unavailable.
+Reading extraction is fully optional — the app starts and operates
+normally with the LLM path, the OCR service, both, or neither configured.
+Ollama is the primary, recommended extraction method; OCR (below) is a
+secondary fallback. OCR endpoints return a clear error when a specific
+engine is requested but unavailable, rather than crashing.
 
 When `OLLAMA_URL` is configured, the model is asked for a structured JSON response containing the meter reading and serial number:
 
@@ -106,13 +112,33 @@ When `OLLAMA_URL` is configured, the model is asked for a structured JSON respon
 {"reading": "12345.6", "serial": "0012345678"}
 ```
 
-If Ollama is unavailable or returns nothing, EasyOCR with custom preprocessing (CLAHE, unsharp mask, weighted grayscale) is used as fallback.
+If Ollama is unavailable or returns nothing, the OCR service (if configured) is used as fallback.
 
 Recommended model: [`gemma4:e4b`](https://ollama.com/library/gemma4) — best accuracy on mechanical and digital meter displays, runs on 6–8 GB VRAM. Uses `think: false` and `temperature: 0` for deterministic output.
 
 ```bash
 ollama pull gemma4:e4b
 ```
+
+## OCR Service (Optional)
+
+A standalone, separately-built container (`ocr-service/`) providing
+EasyOCR-based extraction with custom preprocessing (CLAHE, unsharp mask,
+weighted grayscale) as a fallback to the LLM path. It is not bundled into
+the backend image — the backend carries no OCR-engine weight at all when
+`OCR_URL` is left empty.
+
+- Enable it by running the `ocr` service in `docker-compose.yaml` (on by
+  default in the quickstart) or setting `ocr.enabled: true` in the Helm
+  chart's `values.yaml`, and pointing `OCR_URL` at it.
+- The OCR service implements no authentication itself — same as Ollama.
+  If you front it with an authenticating reverse proxy (recommended once
+  it and the backend no longer share a fully trusted private network,
+  e.g. across Kubernetes namespaces), set `OCR_API_KEY` so the backend
+  sends the token with every request.
+- Disable it entirely by not running the container / leaving `OCR_URL`
+  empty — the app works the same as with any other optional subsystem
+  turned off (see Health Check below).
 
 ## Health Check
 
