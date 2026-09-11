@@ -101,3 +101,25 @@ second optional subsystem.
 
 **Alternatives considered**: None seriously — this is a direct port of
 already-established, already-correct backend behavior.
+
+## Decision 6: Explicit-engine failure mode — hard error, no silent fallback
+
+**Decision**: When a caller explicitly requests `engine=ocr` and the OCR
+service is unreachable, the backend returns a clear per-request error
+rather than silently substituting the LLM path. The `auto` engine's
+existing LLM-first/OCR-fallback behavior is unchanged — this decision only
+affects an *explicit* `engine=ocr` request. Resolved via `/speckit-clarify`
+on 2026-09-11 (see spec.md Clarifications).
+
+**Rationale**: `engine` is a per-request choice made by the client/UI, not
+a fixed deployment setting — a caller who explicitly asks for OCR has a
+reason to (e.g. comparing engines, or the LLM already failed for this
+image). Silently substituting a different engine would hide that failure
+and could return a materially different reading without the caller
+knowing which engine produced it.
+
+**Alternatives considered**: Auto-fallback to LLM on OCR failure even for
+explicit `engine=ocr` requests — rejected: would make `engine=ocr` a
+non-deterministic request (sometimes OCR, sometimes silently LLM), and
+masks OCR-service outages behind an apparently-successful response instead
+of surfacing them via the error path (and `/api/health`).
