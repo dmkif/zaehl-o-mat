@@ -117,10 +117,15 @@ pgmigrate::validate_choice() {
 
 # The podman/docker network a running container is attached to (its first
 # one, by iteration order — this project's containers are only ever
-# attached to a single user-defined network).
+# attached to a single user-defined network). Networks are newline-separated
+# and only the first is returned: concatenating them with no separator would
+# silently produce a garbled, invalid --network value if a container were
+# ever attached to more than one.
 pgmigrate::discover_network_for_container() {
   local container="$1" runtime="$2"
-  "$runtime" inspect "$container" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}'
+  "$runtime" inspect "$container" \
+    --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\n"}}{{end}}' \
+    | head -n1
 }
 
 # Finds the running Docker Compose 'db' service container regardless of
@@ -166,11 +171,24 @@ pgmigrate::wait_for_postgres_ready() {
 # SQLAlchemy + the app package baked in, so no new external image
 # dependency is introduced (Constitution Principle VII A03) just to reach
 # an unpublished compose-network service like 'db'.
-PGMIGRATE_VERIFY_IMAGE="${PGMIGRATE_VERIFY_IMAGE:-localhost/zaehl-o-mat_backend:latest}"
+#
+# The image tag depends on which compose tool built it: podman-compose and
+# docker-compose v1 tag it "<project>_backend" (underscore), docker compose
+# v2 tags it "<project>-backend" (hyphen) — resolved dynamically so both
+# work, rather than hardcoding one. PGMIGRATE_VERIFY_IMAGE, if set,
+# overrides this entirely (used by the integration tests).
+pgmigrate::resolve_verify_image() {
+  local runtime="$1" image
+  image=$("$runtime" images --format '{{.Repository}}:{{.Tag}}' \
+    | grep -E '(^|/)zaehl-o-mat[_-]backend:latest$' | head -n1)
+  [[ -n "$image" ]] || pgmigrate::die "could not find a locally built backend image (zaehl-o-mat_backend:latest or zaehl-o-mat-backend:latest) — build the stack first (podman-compose build / docker compose build)"
+  echo "$image"
+}
 
 pgmigrate::run_verify() {
   local network="$1"; shift
   local runtime; runtime=$(pgmigrate::container_runtime)
+  local image="${PGMIGRATE_VERIFY_IMAGE:-$(pgmigrate::resolve_verify_image "$runtime")}"
   local net_args=(--network host)
   [[ -n "$network" ]] && net_args=(--network "$network")
   "$runtime" run --rm "${net_args[@]}" \
@@ -178,6 +196,6 @@ pgmigrate::run_verify() {
     -e PYTHONPATH=/app \
     -e DATABASE_URL="postgresql://placeholder:placeholder@localhost/placeholder" \
     -e JWT_SECRET_KEY="pg-migrate-verify-placeholder-not-a-real-secret" \
-    "$PGMIGRATE_VERIFY_IMAGE" \
+    "$image" \
     python3 /tmp/verify.py "$@"
 }

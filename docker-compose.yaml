@@ -12,6 +12,27 @@ services:
       # under the mount avoids that check. Matches the existing Helm
       # chart's statefulset-postgresql.yaml PGDATA convention.
       PGDATA: /var/lib/postgresql/data/pgdata
+    # Guards the PGDATA change above: without this, an operator with an
+    # existing pre-18 db-data volume who just runs `up -d --build` (instead
+    # of scripts/pg-migrate/migrate.sh) would get a *silent*, empty new
+    # database at the new pgdata/ subdirectory — their real data is still
+    # physically on the volume, untouched, but the app would look
+    # completely empty. Refuse loudly instead, the same way postgres:18
+    # already refuses loudly when PGDATA is left at the old default.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ -f /var/lib/postgresql/data/PG_VERSION ] && [ ! -d /var/lib/postgresql/data/pgdata ]; then
+          echo "ERROR: found an existing PostgreSQL data directory at the old," >&2
+          echo "pre-18 layout (/var/lib/postgresql/data/PG_VERSION) but no" >&2
+          echo "migrated pgdata/ subdirectory yet. Refusing to silently" >&2
+          echo "initialize a new, empty database over your existing data." >&2
+          echo "Run scripts/pg-migrate/migrate.sh --target=compose first --" >&2
+          echo "see specs/002-postgres-18-migration/quickstart.md." >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh postgres
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:

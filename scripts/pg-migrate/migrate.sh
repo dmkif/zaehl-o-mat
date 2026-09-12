@@ -162,9 +162,14 @@ run_target_compose() {
   local target_dsn="postgresql://zaehlwart:zaehlwart@${TARGET_CONTAINER_NAME}:5432/zaehlwart"
 
   pgmigrate::log "Checking target is empty (FR-009)..."
-  if ! pgmigrate::run_verify "$network" --check-target-empty --target="$target_dsn"; then
+  local check_status=0
+  pgmigrate::run_verify "$network" --check-target-empty --target="$target_dsn" || check_status=$?
+  if [[ "$check_status" -eq 1 ]]; then
     "$runtime" rm -f "$TARGET_CONTAINER_NAME" >/dev/null 2>&1 || true
     pgmigrate::die "target already contains application data — refusing to restore"
+  elif [[ "$check_status" -ne 0 ]]; then
+    "$runtime" rm -f "$TARGET_CONTAINER_NAME" >/dev/null 2>&1 || true
+    pgmigrate::die "could not verify target is empty (connection/setup error, exit $check_status) — not the same as the target already having data"
   fi
 
   pgmigrate::log "Step 3/4: restoring into target..."
@@ -199,9 +204,16 @@ EOF
 
 _k8s_pod_for_component() {
   local namespace="$1" release="$2" component="$3"
+  # `[*]` (wildcard), not `[0]` (explicit index): indexing an empty
+  # `.items` array is a jsonpath evaluation error, which would abort the
+  # whole script via `set -e` before the caller's own
+  # `[[ -n "$pg_pod" ]] || pgmigrate::die ...` check gets to run. Wildcard
+  # iteration over an empty array just yields no output — no error to
+  # suppress, so a real kubectl error (bad context, RBAC denial, API
+  # server unreachable) still propagates instead of being swallowed.
   kubectl -n "$namespace" get pod \
     -l "app.kubernetes.io/instance=${release},app.kubernetes.io/component=${component}" \
-    -o jsonpath='{.items[0].metadata.name}'
+    -o jsonpath='{.items[*].metadata.name}' | awk '{print $1}'
 }
 
 run_target_k8s() {
@@ -213,6 +225,7 @@ run_target_k8s() {
   local db_container; db_container=$(pgmigrate::find_db_container "$runtime")
   [[ -n "$db_container" ]] || pgmigrate::die "no running compose 'db' container found — the source is always the local Compose instance (data-model.md)"
   local network; network=$(pgmigrate::discover_network_for_container "$db_container" "$runtime")
+  [[ -n "$network" ]] || pgmigrate::die "could not determine the compose network for $db_container"
 
   local pg_pod; pg_pod=$(_k8s_pod_for_component "$namespace" "$release" postgresql)
   [[ -n "$pg_pod" ]] || pgmigrate::die "could not find the postgresql pod for release '$release' in namespace '$namespace'"
@@ -234,24 +247,53 @@ run_target_k8s() {
   local pf_pid pf_local_port=15432
   kubectl -n "$namespace" port-forward --address=0.0.0.0 "pod/${pg_pod}" "${pf_local_port}:5432" >/dev/null 2>&1 &
   pf_pid=$!
-  trap '[[ -n "${pf_pid:-}" ]] && kill "$pf_pid" 2>/dev/null || true' RETURN
-  sleep 2
+  # EXIT, not RETURN: a RETURN trap never fires when `set -e` aborts the
+  # function via errexit (e.g. a failed pg_restore below) — only on a
+  # normal `return` — which would leak this background port-forward.
+  trap '[[ -n "${pf_pid:-}" ]] && kill "$pf_pid" 2>/dev/null || true' EXIT
+  # Poll for the tunnel to accept connections instead of a fixed sleep: on
+  # a loaded cluster/API server, port-forward can take longer than a fixed
+  # delay to come up, and a connect against a not-yet-ready tunnel would
+  # otherwise be misread as the target-empty check's own EXIT_ERROR below.
+  local pf_ready="" i
+  for ((i = 0; i < 30; i++)); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/${pf_local_port}") 2>/dev/null; then
+      exec 3>&- 3<&- 2>/dev/null || true
+      pf_ready=1
+      break
+    fi
+    sleep 0.5
+  done
+  [[ -n "$pf_ready" ]] || { kill "$pf_pid" 2>/dev/null || true; pgmigrate::die "port-forward to $pg_pod did not become ready in time"; }
   local k8s_target_dsn_local="postgresql://zaehlwart:zaehlwart@localhost:${pf_local_port}/zaehlwart"
   local k8s_target_dsn_from_container="postgresql://zaehlwart:zaehlwart@host.containers.internal:${pf_local_port}/zaehlwart"
-  if ! "$PYTHON_BIN" "$VERIFY_PY" --check-target-empty --target="$k8s_target_dsn_local"; then
+  local check_status=0
+  "$PYTHON_BIN" "$VERIFY_PY" --check-target-empty --target="$k8s_target_dsn_local" || check_status=$?
+  if [[ "$check_status" -eq 1 ]]; then
     kill "$pf_pid" 2>/dev/null || true
     pgmigrate::die "target release '$release' already contains application data — refusing to restore"
+  elif [[ "$check_status" -ne 0 ]]; then
+    kill "$pf_pid" 2>/dev/null || true
+    pgmigrate::die "could not verify target release '$release' is empty (connection/setup error, exit $check_status) — not the same as the target already having data; check the port-forward/kubectl connectivity and retry"
   fi
 
   pgmigrate::log "Step 3/5: decrypting locally and restoring inside $pg_pod (its own pg_restore, per Decision 8)..."
   local plain_dump_tmp; plain_dump_tmp=$(mktemp)
   # Decrypted locally, then streamed in via exec stdin — the pod itself
-  # never sees the encrypted file or needs a gpg passphrase prompt
-  # (Constitution Principle III: the passphrase is only ever entered by
-  # the operator, into their own local gpg invocation).
+  # never sees the encrypted (or even the plaintext, as a file) dump, and
+  # never needs a gpg passphrase prompt (Constitution Principle III: the
+  # passphrase is only ever entered by the operator, into their own local
+  # gpg invocation).
   pgmigrate::decrypt_from_file "$dump_file" "$plain_dump_tmp"
-  kubectl -n "$namespace" exec -i "$pg_pod" -- \
-    pg_restore --no-owner --no-privileges --clean --if-exists -U zaehlwart -d zaehlwart < "$plain_dump_tmp"
+  if ! kubectl -n "$namespace" exec -i "$pg_pod" -- \
+      pg_restore --no-owner --no-privileges --clean --if-exists -U zaehlwart -d zaehlwart < "$plain_dump_tmp"; then
+    # Only the decrypted temp file is scrap; $dump_file is the encrypted
+    # source dump and stays — the failure is in restoring it, not in the
+    # dump itself, so the operator can retry without re-dumping the
+    # (now maintenance-windowed) source.
+    pgmigrate::secure_delete "$plain_dump_tmp"
+    pgmigrate::die "pg_restore failed inside $pg_pod. Dump NOT deleted: $dump_file"
+  fi
   pgmigrate::secure_delete "$plain_dump_tmp"
 
   pgmigrate::log "Step 4/5: transferring the uploads volume into the backend pod's PVC ($backend_pod)..."
@@ -260,11 +302,21 @@ run_target_k8s() {
   tar -C "$uploads_mount" -cf "$uploads_plain" .
   pgmigrate::encrypt_to_file "$uploads_plain" "$uploads_archive"
   pgmigrate::secure_delete "$uploads_plain"
-  kubectl -n "$namespace" cp "$uploads_archive" "${backend_pod}:/tmp/pg-migrate-uploads.gpg"
-  local uploads_remote_plain=/tmp/pg-migrate-uploads.tar
-  kubectl -n "$namespace" exec "$backend_pod" -- sh -c \
-    "gpg --batch --yes --output ${uploads_remote_plain} --decrypt /tmp/pg-migrate-uploads.gpg && tar -C /data/uploads -xf ${uploads_remote_plain} && rm -f ${uploads_remote_plain} /tmp/pg-migrate-uploads.gpg"
-  pgmigrate::secure_delete "$uploads_archive"
+  # Decrypted locally (same as the dump above) and streamed straight into
+  # the pod's own `tar -x` via stdin — the backend image needs no `gpg`
+  # installed, and no encrypted or plaintext archive ever touches the
+  # pod's filesystem as a file.
+  local uploads_plain_restore; uploads_plain_restore=$(mktemp)
+  pgmigrate::decrypt_from_file "$uploads_archive" "$uploads_plain_restore"
+  if ! kubectl -n "$namespace" exec -i "$backend_pod" -- tar -C /data/uploads -xf - < "$uploads_plain_restore"; then
+    # $dump_file stays: the database restore in Step 3/5 already succeeded,
+    # this failure is unrelated to it, and deleting it would force a full
+    # re-dump of the (now maintenance-windowed) source to retry just the
+    # uploads transfer.
+    pgmigrate::secure_delete "$uploads_plain_restore" "$uploads_archive"
+    pgmigrate::die "uploads extraction failed inside $backend_pod. Dump NOT deleted: $dump_file"
+  fi
+  pgmigrate::secure_delete "$uploads_plain_restore" "$uploads_archive"
 
   pgmigrate::log "Step 5/5: verifying (source reached over the compose network, target over the same port-forward)..."
   # Runs inside the backend image on the compose network (to reach 'db')
@@ -274,13 +326,12 @@ run_target_k8s() {
   # empty-check separately; only this final comparison needs both at once).
   local verify_status=0
   pgmigrate::run_verify "$network" --source="$COMPOSE_DB_DSN" --target="$k8s_target_dsn_from_container" || verify_status=$?
-  kill "$pf_pid" 2>/dev/null || true
-  pgmigrate::secure_delete "$dump_file"
 
   if [[ "$verify_status" -eq 0 ]]; then
+    pgmigrate::secure_delete "$dump_file"
     pgmigrate::log "PASS — dump and uploads archive securely deleted from every staged location."
   else
-    pgmigrate::log "FAIL (exit $verify_status) — target left in place for inspection."
+    pgmigrate::log "FAIL (exit $verify_status) — target left in place for inspection. Dump NOT deleted: $dump_file"
     return 1
   fi
 }
