@@ -209,7 +209,7 @@ postgresql:
   image:
     registry: docker.io
     repository: library/postgres
-    tag: "18-trixie"
+    tag: "18-alpine"
     pullPolicy: IfNotPresent
   auth:
     # -- Database and role name. Not sensitive - the password is.
