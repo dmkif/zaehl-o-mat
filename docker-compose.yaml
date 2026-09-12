@@ -6,6 +6,12 @@ services:
       POSTGRES_DB: zaehlwart
       POSTGRES_USER: zaehlwart
       POSTGRES_PASSWORD: zaehlwart
+      # postgres:18+ images refuse to start with data directly at the
+      # volume mount root ("unused mount/volume" check, since they now
+      # expect a pg_ctlcluster-style versioned layout) — a subdirectory
+      # under the mount avoids that check. Matches the existing Helm
+      # chart's statefulset-postgresql.yaml PGDATA convention.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:

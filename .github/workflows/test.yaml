@@ -116,6 +116,47 @@ jobs:
           pip install bandit==1.9.4
           bandit -r app
 
+  pg-migrate-tests:
+    name: Postgres migration script tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install Python dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run pg-migrate tests
+        run: python -m pytest scripts/pg-migrate/tests/ -v
+
+  pg-migrate-sast:
+    name: pg-migrate SAST (bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run bandit
+        run: |
+          pip install bandit==1.9.4
+          bandit -r scripts/pg-migrate --exclude scripts/pg-migrate/tests
+
   frontend-types:
     name: Frontend type-check
     runs-on: ubuntu-latest

@@ -183,6 +183,20 @@ SUPERADMIN_PASSWORD
 
 See [`chart/values.yaml`](chart/values.yaml) for all available values.
 
+### Migrating existing data to Kubernetes
+
+Moving an existing local Docker/Podman Compose instance's data (properties,
+meters, readings, accounts, and uploaded meter photos) into a Kubernetes
+deployment — including the PostgreSQL 16→18 upgrade that follows from this
+project's Compose/Helm images now being `postgres:18-alpine` — is handled
+by [`scripts/pg-migrate/`](scripts/pg-migrate/), not by hand-editing data.
+It never writes to the source, refuses to restore into a target that
+already has data, and encrypts the dump/uploads archive for every leg of
+the transfer. See
+[`specs/002-postgres-18-migration/quickstart.md`](specs/002-postgres-18-migration/quickstart.md)
+for the full walkthrough (local upgrade, cluster migration, and
+verification/rollback scenarios).
+
 ## Role-Based Access
 
 | Role | Permissions |
