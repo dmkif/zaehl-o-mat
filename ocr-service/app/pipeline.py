@@ -249,13 +249,15 @@ def _extract_serial_sync(filepath: Path) -> str | None:
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
     enhanced = clahe.apply(gray)
 
+    # No unsharp-mask here (unlike the meter-value pipeline above): on
+    # already-3x-upscaled printed serial labels the sharpen kernel's ringing
+    # artifacts reliably corrupt digit shapes (observed: dropped digits,
+    # 8 misread as 5, "0" misread as "O") without measurably helping EasyOCR.
     h, w = enhanced.shape[:2]
     upscaled = cv2.resize(enhanced, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
-    k = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-    sharpened = cv2.filter2D(upscaled, -1, k)
 
     proc_path = filepath.with_suffix(".serial_proc.jpg")
-    Image.fromarray(sharpened).save(proc_path, quality=95)
+    Image.fromarray(upscaled).save(proc_path, quality=95)
 
     try:
         reader = _get_reader()
