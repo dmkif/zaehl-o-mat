@@ -39,7 +39,9 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--dir", type=Path, default=ROOT / "Beispielzähler")
     ap.add_argument("--model-profile", default="", help="Modellprofil (Standard: qwen3.5-9b)")
-    ap.add_argument("--hint", action="store_true", help="Meter-Typ mitgeben (Hint-Pfad mit Separator-Korrektur)")
+    ap.add_argument("--meter-type", action="store_true",
+                    help="Zählertyp mitgeben wie die Pipeline nach dem Seriennummern-Abgleich "
+                         "(deterministische Separator-Korrektur, ohne Last-Reading-Hint im Prompt)")
     ap.add_argument("--json", type=Path, help="Rohergebnisse als JSON speichern (ohne Key)")
     args = ap.parse_args()
 
@@ -81,8 +83,7 @@ def main() -> int:
             try:
                 reading, serial = ocr_pipeline._llm_fallback(
                     path,
-                    last_reading=0.0 if args.hint else None,
-                    meter_type=gt["meter_type"] if args.hint else None,
+                    meter_type=gt["meter_type"] if args.meter_type else None,
                 )
                 err = None
             except llm_client.LLMError as exc:
