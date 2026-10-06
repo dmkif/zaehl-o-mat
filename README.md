@@ -51,6 +51,14 @@ All variables are set on the `backend` service.
 | `UPLOAD_PATH` | `/data/uploads` | Directory where meter images are stored |
 | `APP_BASE_URL` | `https://zaehl-o-mat.example.com` | Public base URL (used for CORS + OIDC) |
 | `DEBUG` | `false` | Enable debug logging |
+| **KI-Gateway** (alternative to Ollama) | | |
+| `OCR_BACKEND` | `ollama` | `ollama` (direct Ollama API) or `gateway` (OpenAI-compatible KI-Gateway). |
+| `GATEWAY_BASE_URL` | `""` | Required for `gateway`, e.g. `http://ai-gateway.ai-gateway.svc:20128/v1`. |
+| `GATEWAY_API_KEY` | – | Required for `gateway`. Bearer key (secret store only, never logged). |
+| `GATEWAY_PROFILE` | `local-only` | Sent as `model`. Use a local-only profile; a key without cloud connection keeps images local. |
+| `GATEWAY_TIMEOUT_S` | `300` | Client timeout. Values below 300 abort start-up (cold start / GPU wake-up takes up to ~2 min). |
+| `MODEL_PROFILE` | per backend | `qwen3.5-9b` (gateway default), `qwen3-vl-8b`, `gemma4-e4b` (Ollama default): image edge, thinking mode, prompt. |
+| `PROMPT_DIR` | `""` | Directory with `<profile>.txt` prompt files overriding the packaged ones in `backend/app/prompts/`. |
 | **Ollama** | | |
 | `OLLAMA_URL` | `""` | Ollama API base URL (e.g. `http://ollama:11434`). Leave empty to disable. |
 | `OLLAMA_MODEL` | `gemma4:e4b` | Vision model name |
@@ -97,6 +105,16 @@ backend:
 4. Create groups matching `OIDC_ADMIN_GROUP` / `OIDC_MANAGER_GROUP` / `OIDC_USER_GROUP` and assign users.
 
 When `OIDC_CLIENT_ID` is set, the login page shows a **"Login with SSO"** button in addition to the local superadmin login.
+
+## KI-Gateway (local models only)
+
+With `OCR_BACKEND=gateway` the backend calls an OpenAI-compatible gateway (`POST {GATEWAY_BASE_URL}/chat/completions`,
+image first, `temperature 0`, `enable_thinking: false`, no `response_format`; the answer text is parsed as JSON).
+There is never a cloud fallback: if no local model answers, the scan fails with HTTP 503
+"Lokales Modell nicht erreichbar, bitte später erneut versuchen" and can be repeated; HTTP 401/403/4xx from the
+gateway become HTTP 502 "Konfigurationsfehler beim KI-Gateway". Bulk scans stop sending images after the first such error.
+Per-model prompts and image sizes are in `backend/app/prompts/` and `MODEL_PROFILE`. Measure with
+`scripts/ocr_gateway_eval.py` (ground truth: `Beispielzähler/ground-truth.json`).
 
 ## Ollama Vision Model (Optional, Recommended)
 
