@@ -324,7 +324,13 @@ async function startScan(withSerial: boolean) {
       detectedSerial.value = data.detected_serial ?? null
       detectionMethod.value = data.detection_method ?? null
     } else {
-      errorMsg.value = t('ocr.error_failed')
+      // 503 (local model unreachable, retry later) / 502 (gateway config error)
+      // carry a fixed, user-safe text in `detail`; the re-crop button retries the scan.
+      const err = await res.json().catch(() => null)
+      errorMsg.value =
+        (res.status === 503 || res.status === 502) && typeof err?.detail === 'string'
+          ? err.detail
+          : t('ocr.error_failed')
     }
   } catch {
     errorMsg.value = t('ocr.error_network')

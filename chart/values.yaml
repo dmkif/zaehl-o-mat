@@ -32,6 +32,10 @@ backend:
     # -- Image tag. Leave empty to default to the chart's appVersion.
     tag: ""
 
+  # -- Extra labels for the backend pod, e.g. `ai-gateway-client: "true"` to opt
+  # in to a NetworkPolicy that guards the KI-Gateway.
+  podLabels: {}
+
   resources:
     requests:
       cpu: 100m
@@ -139,6 +143,25 @@ ollama:
   # Required key: value of secretApiKeyKey below (default OLLAMA_API_KEY).
   existingSecret: ""
   secretApiKeyKey: OLLAMA_API_KEY
+
+# =============================================================================
+# KI-Gateway (OpenAI-compatible, local models only) — alternative to ollama
+# When enabled, the backend reads meters through the gateway instead of a
+# direct Ollama connection (ollama.enabled should then be false). The gateway
+# key `zaehl-o-mat` carries no cloud connection, so images never leave the
+# local models. The key itself is NOT a chart value: put GATEWAY_API_KEY into
+# the backend secret (backend.existingSecret) — all its keys become env vars.
+# =============================================================================
+gateway:
+  enabled: false
+  # -- OpenAI-compatible base URL, e.g. http://ai-gateway.ai-gateway.svc:20128/v1
+  baseUrl: ""
+  # -- Gateway profile (combo) sent as `model`. Use a local-only profile.
+  profile: local-only
+  # -- Client timeout in seconds. Minimum 300 (local cold start / GPU host wake-up).
+  timeoutSeconds: 300
+  # -- Model profile (image edge, thinking, prompt): qwen3.5-9b, qwen3-vl-8b, gemma4-e4b.
+  modelProfile: qwen3.5-9b
 
 # =============================================================================
 # OCR service (optional fallback to the Ollama vision model above)
