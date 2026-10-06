@@ -21,6 +21,13 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
+from app.services.llm_client import (
+    GatewayConfigError,
+    LLMError,
+    LocalModelUnavailable,
+    llm_enabled,
+    using_gateway,
+)
 from app.models import User, Meter, Reading
 from app.permissions import accessible_property_ids, is_global_admin, require_property_access
 # Re-exported pipeline internals: tests and app.main import these names from
@@ -41,6 +48,20 @@ from app.services.ocr_pipeline import (  # noqa: F401
 )
 
 router = APIRouter(prefix="/ocr", tags=["ocr"])
+
+# Gateway path: "model unavailable" / "bad gateway config" are reported to the
+# caller with fixed, user-safe texts (never str(exc) of an HTTP error).
+_LLM_ERROR_STATUS = {
+    LocalModelUnavailable: status.HTTP_503_SERVICE_UNAVAILABLE,
+    GatewayConfigError: status.HTTP_502_BAD_GATEWAY,
+}
+
+
+def _llm_http_error(exc: LLMError) -> HTTPException:
+    return HTTPException(
+        status_code=_LLM_ERROR_STATUS.get(type(exc), status.HTTP_503_SERVICE_UNAVAILABLE),
+        detail=str(exc),
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +147,14 @@ async def _run_ocr_on_file(
         )
 
     if engine == "llm":
-        if not settings.ollama_url:
+        if not llm_enabled():
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Ollama engine requested but OLLAMA_URL is not configured",
+                detail=(
+                    "LLM engine requested but GATEWAY_BASE_URL is not configured"
+                    if using_gateway()
+                    else "Ollama engine requested but OLLAMA_URL is not configured"
+                ),
             )
         detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
         if _hint_retry_needed(detected):
@@ -154,7 +179,7 @@ async def _run_ocr_on_file(
     # engine == "auto": LLM first (if available), fall back to the optional OCR service
     detected = None
     detected_serial = None
-    if settings.ollama_url:
+    if llm_enabled():
         detected, detected_serial = await asyncio.to_thread(_llm_fallback, filepath, already_cropped)
         if _hint_retry_needed(detected):
             detected, detected_serial = await _retry_with_hint(detected, detected_serial)
@@ -216,7 +241,10 @@ async def rescan_reading(
     if last_reading_obj is not None:
         last_reading_value = float(last_reading_obj.value)
 
-    result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=True, last_reading=last_reading_value, meter_type=meter.meter_type.value)
+    try:
+        result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=True, last_reading=last_reading_value, meter_type=meter.meter_type.value)
+    except LLMError as exc:
+        raise _llm_http_error(exc) from None
 
     # If a serial crop is stored and OCR mode is used, also detect the serial number
     if result.get("detected_serial") is None and reading.serial_image_path and engine in ("ocr", "auto"):
@@ -303,7 +331,10 @@ async def scan_meter(
     # Compute SHA-256 so the client can pass it to create_reading for duplicate detection
     image_hash = hashlib.sha256(contents).hexdigest()
 
-    result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=already_cropped, last_reading=last_reading_value, meter_type=meter_type_str)
+    try:
+        result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=already_cropped, last_reading=last_reading_value, meter_type=meter_type_str)
+    except LLMError as exc:
+        raise _llm_http_error(exc) from None
 
     # If serial file provided and OCR didn't already detect serial (LLM may have), run dedicated serial OCR
     serial_image_path: str | None = None
@@ -368,7 +399,7 @@ async def hint_rescan_for_meter(
         return {"detected_value": current_value, "detection_method": None, "hint_applied": False}
 
     # Step 2: format mismatch — hint-retry via LLM
-    if engine == "ocr" or not settings.ollama_url:
+    if engine == "ocr" or not llm_enabled():
         logger.debug(
             "hint-rescan: meter=%s meter_type=%s value=%r → format mismatch but no LLM available",
             meter.id, meter_type, current_value,
@@ -387,9 +418,12 @@ async def hint_rescan_for_meter(
         "hint-rescan: meter=%s meter_type=%s current_value=%r last_reading=%s → calling LLM with hint",
         meter.id, meter_type, current_value, last_reading_value,
     )
-    detected, _ = await asyncio.to_thread(
-        _llm_fallback, filepath, False, last_reading_value, meter_type
-    )
+    try:
+        detected, _ = await asyncio.to_thread(
+            _llm_fallback, filepath, False, last_reading_value, meter_type
+        )
+    except LLMError as exc:
+        raise _llm_http_error(exc) from None
     logger.info("hint-rescan result: detected=%r (was %r)", detected, current_value)
 
     return {
@@ -458,6 +492,9 @@ async def bulk_scan_meters(
     async def generate():
         # Track hashes seen within this batch to catch in-session duplicates
         seen_hashes: dict[str, str] = {}  # hash → original_filename
+        # Set once the local model is unreachable / misconfigured: the remaining
+        # images are not sent (each would wait up to the full client timeout).
+        llm_abort: str | None = None
 
         for original_filename, contents in file_payloads:
             item: dict = {
@@ -474,6 +511,10 @@ async def bulk_scan_meters(
                 "image_hash": None,
                 "duplicate_reading": None,
             }
+            if llm_abort is not None and engine != "ocr":
+                item["error"] = llm_abort
+                yield f"data: {json.dumps(item)}\n\n"
+                continue
             try:
                 if len(contents) > _MAX_UPLOAD_BYTES:
                     item["error"] = "File too large (max 10 MB)"
@@ -547,7 +588,7 @@ async def bulk_scan_meters(
                 # A zoom candidate is only accepted when it matches a known
                 # meter (bands without a label hallucinate approval numbers
                 # or handwritten notes — never store those blindly).
-                if matched is None and engine != "ocr" and settings.ollama_url:
+                if matched is None and engine != "ocr" and llm_enabled():
                     zoom_candidates = await asyncio.to_thread(_llm_serial_zoom, filepath)
                     logger.info(
                         "zoom-serial pass: file=%s first-pass serial=%r candidates=%r",
@@ -584,7 +625,7 @@ async def bulk_scan_meters(
                     (item["detected_value"] is None or not _fmt_ok)
                     and matched is not None
                     and engine != "ocr"
-                    and settings.ollama_url
+                    and llm_enabled()
                 ):
                     last_reading_obj = (
                         db.query(Reading)
@@ -608,6 +649,10 @@ async def bulk_scan_meters(
                         if serial2 and not item["detected_serial"]:
                             item["detected_serial"] = serial2
 
+            except LLMError as exc:
+                logger.warning("Bulk scan: %s (%s) — skipping remaining images", type(exc).__name__, original_filename)
+                llm_abort = str(exc)
+                item["error"] = llm_abort
             except Exception as exc:
                 logger.error("Bulk scan error for %s: %s", original_filename, exc)
                 item["error"] = "OCR processing failed"

@@ -1,12 +1,16 @@
+import logging
 from pathlib import Path
 from typing import Optional
 
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Secrets directory: pydantic-settings reads files like /run/secrets/database_url
 # as values for their matching settings fields.  Environment variables take precedence.
 _secrets_dir = Path("/run/secrets")
+
+# Minimum client timeout for the gateway path (spec 012 FR-006).
+MIN_GATEWAY_TIMEOUT_S = 300.0
 
 
 class Settings(BaseSettings):
@@ -54,6 +58,22 @@ class Settings(BaseSettings):
     # unauthenticated Ollama instance doesn't need this.
     ollama_api_key: Optional[str] = None
 
+    # Vision-LLM transport. "ollama" = direct Ollama API (above); "gateway" =
+    # OpenAI-compatible KI-Gateway (local models only, never cloud — the
+    # gateway key itself carries no cloud connection).
+    ocr_backend: str = "ollama"
+    gateway_base_url: str = ""  # e.g. http://ai-gateway.ai-gateway.svc:20128/v1
+    gateway_profile: str = "local-only"  # sent as OpenAI `model` (gateway combo)
+    gateway_api_key: Optional[SecretStr] = None
+    # Local cold start / GPU host wake-up takes up to ~2 min; the gateway
+    # combo times out at 280 s, so the client must wait at least 300 s.
+    gateway_timeout_s: float = 300.0
+    # Model profile (image edge, thinking, prompt). Empty = default for the
+    # selected backend (gateway: qwen3.5-9b, ollama: gemma4-e4b).
+    model_profile: str = ""
+    # Directory with per-profile prompt files (<profile>.txt); empty = package prompts.
+    prompt_dir: str = ""
+
     # OCR service (optional — leave ocr_url empty to disable)
     ocr_url: str = ""
     # Bearer token for an OCR service fronted by an authenticating proxy. A
@@ -79,6 +99,24 @@ class Settings(BaseSettings):
             raise ValueError(
                 "JWT_SECRET_KEY must be set to a strong random secret"
             )
+        self.ocr_backend = self.ocr_backend.strip().lower()
+        if self.ocr_backend not in ("ollama", "gateway"):
+            raise ValueError("OCR_BACKEND must be 'ollama' or 'gateway'")
+        if self.ocr_backend == "gateway":
+            if not self.gateway_base_url:
+                raise ValueError("GATEWAY_BASE_URL is required when OCR_BACKEND=gateway")
+            if self.gateway_api_key is None or not self.gateway_api_key.get_secret_value():
+                raise ValueError("GATEWAY_API_KEY is required when OCR_BACKEND=gateway")
+            if self.gateway_timeout_s < MIN_GATEWAY_TIMEOUT_S:
+                raise ValueError(
+                    f"GATEWAY_TIMEOUT_S must be at least {MIN_GATEWAY_TIMEOUT_S:g} s "
+                    "(local cold start / GPU host wake-up takes up to ~2 min)"
+                )
+            if self.gateway_profile != "local-only":
+                logging.getLogger(__name__).warning(
+                    "GATEWAY_PROFILE is not 'local-only' — only the gateway key keeps "
+                    "meter images off cloud providers"
+                )
         return self
 
 

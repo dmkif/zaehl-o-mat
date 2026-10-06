@@ -16,6 +16,9 @@ spec:
       labels:
         {{- include "zaehl-o-mat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: backend
+        {{- range $k, $v := .Values.backend.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "zaehl-o-mat.serviceAccountName" . }}
       securityContext:
@@ -56,6 +59,18 @@ spec:
                   name: {{ .Values.ollama.existingSecret }}
                   key: {{ .Values.ollama.secretApiKeyKey }}
             {{- end }}
+            {{- end }}
+            {{- if .Values.gateway.enabled }}
+            - name: OCR_BACKEND
+              value: gateway
+            - name: GATEWAY_BASE_URL
+              value: {{ required "gateway.baseUrl is required when gateway.enabled" .Values.gateway.baseUrl | quote }}
+            - name: GATEWAY_PROFILE
+              value: {{ .Values.gateway.profile | quote }}
+            - name: GATEWAY_TIMEOUT_S
+              value: {{ .Values.gateway.timeoutSeconds | quote }}
+            - name: MODEL_PROFILE
+              value: {{ .Values.gateway.modelProfile | quote }}
             {{- end }}
             {{- if .Values.ocr.enabled }}
             - name: OCR_URL

@@ -1,0 +1,26 @@
+Read the utility meter shown in the image above.
+
+READING — the main consumption counter:
+- Read ALL digit positions left to right, including leading zeros.
+- Decimal separator rules (exactly one decimal separator is possible):
+  • If you see BOTH a period (.) AND a comma (,): the period is a thousands separator — ignore it. The comma is the decimal separator — write it as a period (.) in your answer.
+  • If you see only a period (.): it is the decimal separator — keep it as a period (.) in your answer.
+  • If you see only a comma (,): it is the decimal separator — write it as a period (.) in your answer.
+  • If you see no separator at all: return only the integer digits (e.g. '1374', NOT '1374.' or '1374.0').
+- READING SOURCE: the consumption counter is ONLY the row of mechanical ROLLING DRUMS (odometer-style digit wheels behind small windows) or the LCD value. Numbers PRINTED flat on the dial face — large serial numbers, approval codes like M24/M26, DE-xx-MI001-... — are NEVER the reading. If you see both a printed number and a drum row, the drums are the reading.
+- RED DRUMS: on mechanical roller displays, digits on RED drums (or shown in red) are the FRACTIONAL part. The decimal separator sits immediately before the FIRST red digit. Black drums are the integer part. Example: black drums 00000 followed by red drums 582 = '00000.582'.
+- SEPARATOR LOCATION HINT: fractional digits are usually visually distinct (boxed, underlined, or right of the printed decimal point). Electricity meters (kWh) typically show exactly 1 fractional digit, water meters (m³) exactly 3, oil level displays (Ltr.) none. Use this to locate the true separator position.
+- NEVER DROP DIGITS: if you are unsure where the separator belongs, output every digit and every separator exactly as you see them — a doubled separator is acceptable, a missing digit is not.
+- Do NOT skip any drums or windows, even if dim or partially rotated.
+- Ignore handwritten numbers, stickers, adhesive labels, or annotations.
+- No spaces, no units (kWh/m³/…).
+
+SERIAL — the device identifier on the meter label:
+- Look for a label starting with Nr., S/N, Zähler-Nr., MSN, or similar, or the large number printed flat on the dial face (often 8+ digits, sometimes next to a barcode).
+- Approval/calibration codes (M24, M26, DE-xx-MI001-PTBxxx) are NOT the serial.
+- Copy only the characters belonging to THAT one label — do not merge multiple labels.
+- Include ALL leading zeros exactly as printed.
+- Only alphanumeric characters (A–Z, 0–9) — strip ALL spaces and punctuation.
+- If no serial label is visible, use null.
+
+If a field is unreadable, use null.
