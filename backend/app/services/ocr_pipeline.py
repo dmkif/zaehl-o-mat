@@ -10,8 +10,6 @@ optional `ocr-service` container (see ocr-service/app/pipeline.py). This
 module calls it over HTTP via _ocr_service_scan/_ocr_service_serial, the
 same way it already calls the optional Ollama LLM service.
 """
-import base64
-import io
 import json
 import logging
 import re
@@ -20,6 +18,7 @@ from pathlib import Path
 import httpx
 
 from app.config import settings
+from app.services import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +47,6 @@ _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 # Outbound calls to the optional OCR service MUST be bounded (FR-011) so a
 # stuck/unreachable service cannot degrade the rest of the application.
 _OCR_SERVICE_TIMEOUT = 30.0
-
-
-def _ollama_headers() -> dict[str, str] | None:
-    if settings.ollama_api_key:
-        return {"Authorization": f"Bearer {settings.ollama_api_key}"}
-    return None
 
 
 def _ocr_service_headers() -> dict[str, str] | None:
@@ -131,6 +124,26 @@ def _format_hint_text(last_reading: float, meter_type: str | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+_GATEWAY_JSON_LINE = '\nAnswer ONLY as JSON: {"reading": string|null, "serial": string|null}'
+_GATEWAY_SERIAL_JSON_LINE = '\nAnswer ONLY as JSON: {"serial": string|null}'
+
+# Ollama structured-output schemas (the gateway path sends no schema: with
+# thinking off it returns empty answers; the text is parsed instead).
+_READING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reading": {"type": ["string", "null"]},
+        "serial": {"type": ["string", "null"]},
+    },
+    "required": ["reading", "serial"],
+}
+_SERIAL_SCHEMA = {
+    "type": "object",
+    "properties": {"serial": {"type": ["string", "null"]}},
+    "required": ["serial"],
+}
+
+
 def _llm_fallback(
     filepath: Path,
     already_cropped: bool = False,
@@ -138,113 +151,32 @@ def _llm_fallback(
     meter_type: str | None = None,
 ) -> tuple[str | None, str | None]:
     """
-    Ask a local Ollama vision model to read the meter display when EasyOCR fails.
-    Model and URL are read from settings (config.py).
+    Ask a local vision model (Ollama or the KI-Gateway, see llm_client) to read
+    the meter display. Transport, model profile and prompt come from settings.
     Returns (reading, serial_number) — either value may be None on failure.
+    On the gateway path llm_client.LocalModelUnavailable / GatewayConfigError
+    propagate to the caller instead of being reported as "nothing read".
     """
-    ollama_url = settings.ollama_url
-    if not ollama_url:
+    if not llm_client.llm_enabled():
         return None, None
-    model = settings.ollama_model
+    profile = llm_client.get_profile()
 
     try:
-        # For already-cropped display images, 800px is enough.
-        # For full uncropped meter photos (bulk upload), use 1500px so the
-        # meter display area remains large enough for the model to read.
-        from PIL import Image, ImageOps
-        # Phone photos carry EXIF Orientation (verified 2026-07-16: all new
-        # uploads had Orientation=6) — without transpose the model sees the
-        # meter sideways and reads garbage.
-        img = ImageOps.exif_transpose(Image.open(filepath))
-        max_side = 800 if already_cropped else 1500
-        if max(img.size) > max_side:
-            scale = max_side / max(img.size)
-            img = img.resize((int(img.width * scale), int(img.height * scale)), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.convert("RGB").save(buf, format="JPEG", quality=85)
-        b64 = base64.b64encode(buf.getvalue()).decode()
+        # For already-cropped display images a small image is enough; full
+        # uncropped photos need the profile's edge length so the display
+        # (and tiny LCD decimal points) stay readable.
+        # EXIF transpose: phone photos carry Orientation=6 (verified
+        # 2026-07-16) — without it the model sees the meter sideways.
+        max_side = llm_client.CROPPED_MAX_SIDE if already_cropped else profile.max_side
+        b64 = llm_client.encode_image(llm_client.load_image(filepath), max_side)
 
-        resp = httpx.post(
-            f"{ollama_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": (
-                    # Best Practice #4: image content is referenced first, then instructions
-                    "Read the utility meter shown in the image above.\n"
-                    "\n"
-                    "READING — the main consumption counter:\n"
-                    "- Read ALL digit positions left to right, including leading zeros.\n"
-                    "- Decimal separator rules (exactly one decimal separator is possible):\n"
-                    "  • If you see BOTH a period (.) AND a comma (,): the period is a"
-                    " thousands separator — ignore it. The comma is the decimal separator"
-                    " — write it as a period (.) in your answer.\n"
-                    "  • If you see only a period (.): it is the decimal separator —"
-                    " keep it as a period (.) in your answer.\n"
-                    "  • If you see only a comma (,): it is the decimal separator —"
-                    " write it as a period (.) in your answer.\n"
-                    "  • If you see no separator at all: return only the integer digits"
-                    " (e.g. '1374', NOT '1374.' or '1374.0').\n"
-                    "- READING SOURCE: the consumption counter is ONLY the row of"
-                    " mechanical ROLLING DRUMS (odometer-style digit wheels behind"
-                    " small windows) or the LCD value. Numbers PRINTED flat on the"
-                    " dial face — large serial numbers, approval codes like M24/M26,"
-                    " DE-xx-MI001-... — are NEVER the reading. If you see both a"
-                    " printed number and a drum row, the drums are the reading.\n"
-                    "- RED DRUMS: on mechanical roller displays, digits on RED drums"
-                    " (or shown in red) are the FRACTIONAL part. The decimal separator"
-                    " sits immediately before the FIRST red digit. Black drums are the"
-                    " integer part. Example: black drums 00000 followed by red drums"
-                    " 582 = '00000.582'.\n"
-                    "- SEPARATOR LOCATION HINT: fractional digits are usually visually"
-                    " distinct (boxed, underlined, or right of the printed decimal point)."
-                    " Electricity meters (kWh) typically show exactly 1 fractional digit,"
-                    " water meters (m³) exactly 3, oil level displays (Ltr.) none. Use"
-                    " this to locate the true separator position.\n"
-                    "- NEVER DROP DIGITS: if you are unsure where the separator belongs,"
-                    " output every digit and every separator exactly as you see them — a"
-                    " doubled separator is acceptable, a missing digit is not.\n"
-                    "- Do NOT skip any drums or windows, even if dim or partially rotated.\n"
-                    "- Ignore handwritten numbers, stickers, adhesive labels, or annotations.\n"
-                    "- No spaces, no units (kWh/m³/…).\n"
-                    "\n"
-                    "SERIAL — the device identifier on the meter label:\n"
-                    "- Look for a label starting with Nr., S/N, Zähler-Nr., MSN, or similar,"
-                    " or the large number printed flat on the dial face (often 8+ digits,"
-                    " sometimes next to a barcode).\n"
-                    "- Approval/calibration codes (M24, M26, DE-xx-MI001-PTBxxx) are NOT"
-                    " the serial.\n"
-                    "- Copy only the characters belonging to THAT one label — do not merge"
-                    " multiple labels.\n"
-                    "- Include ALL leading zeros exactly as printed.\n"
-                    "- Only alphanumeric characters (A–Z, 0–9) — strip ALL spaces and"
-                    " punctuation.\n"
-                    "- If no serial label is visible, use null.\n"
-                    "\n"
-                    "If a field is unreadable, use null."
-                    + (_format_hint_text(last_reading, meter_type) if last_reading is not None else "")
-                ),
-                "images": [b64],
-                "stream": False,
-                # JSON Schema enforces field names and nullable types (better than "json" string)
-                "format": {
-                    "type": "object",
-                    "properties": {
-                        "reading": {"type": ["string", "null"]},
-                        "serial": {"type": ["string", "null"]},
-                    },
-                    "required": ["reading", "serial"],
-                },
-                "think": False,
-                "options": {"temperature": 0, "num_ctx": 8192, "num_image_tokens": 1120},
-            },
-            headers=_ollama_headers(),
-            timeout=180.0,
-        )
-        resp.raise_for_status()
-        _body = resp.json()
-        # Ollama-Quirk (verified 2026-07-17, qwen3-vl + structured output):
-        # the JSON answer lands in "thinking" while "response" stays empty.
-        text = (_body.get("response", "") or _body.get("thinking", "") or "").strip()
+        # Best Practice #4: image content is referenced first, then instructions
+        prompt = llm_client.load_prompt(profile)
+        if last_reading is not None:
+            prompt += _format_hint_text(last_reading, meter_type)
+        if llm_client.using_gateway():
+            prompt += _GATEWAY_JSON_LINE
+        text = llm_client.complete(b64, prompt, _READING_SCHEMA, profile, 180.0)
 
         # Parse JSON response from LLM
         try:
@@ -301,6 +233,10 @@ def _llm_fallback(
                 logger.warning("LLM reading equals serial (%s) — discarding reading", serial)
                 reading = None
         return reading, serial
+    except llm_client.LLMError:
+        # Gateway path: "model unavailable" / "bad config" must reach the
+        # caller, never degrade into "nothing recognised".
+        raise
     except Exception:
         logger.warning("LLM fallback failed for %s", filepath)
         return None, None
@@ -341,51 +277,22 @@ def _llm_serial_zoom(filepath: Path) -> list[str]:
     notes) — callers MUST only accept a candidate that matches a known
     meter serial, never store one blindly.
     """
-    ollama_url = settings.ollama_url
-    if not ollama_url:
+    if not llm_client.llm_enabled():
         return []
+    profile = llm_client.get_profile()
     try:
-        from PIL import Image, ImageOps
-
-        img = ImageOps.exif_transpose(Image.open(filepath))
+        img = llm_client.load_image(filepath)
         w, h = img.size
         bands = [
             img.crop((0, 0, w, int(h * 0.45))),
             img.crop((0, int(h * 0.30), w, int(h * 0.75))),
             img.crop((0, int(h * 0.55), w, h)),
         ]
+        prompt = _SERIAL_ZOOM_PROMPT + (_GATEWAY_SERIAL_JSON_LINE if llm_client.using_gateway() else "")
         candidates: list[str] = []
         for band in bands:
-            if max(band.size) > 1500:
-                scale = 1500 / max(band.size)
-                band = band.resize(
-                    (int(band.width * scale), int(band.height * scale)), Image.LANCZOS
-                )
-            buf = io.BytesIO()
-            band.convert("RGB").save(buf, format="JPEG", quality=85)
-            b64 = base64.b64encode(buf.getvalue()).decode()
-
-            resp = httpx.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": settings.ollama_model,
-                    "prompt": _SERIAL_ZOOM_PROMPT,
-                    "images": [b64],
-                    "stream": False,
-                    "format": {
-                        "type": "object",
-                        "properties": {"serial": {"type": ["string", "null"]}},
-                        "required": ["serial"],
-                    },
-                    "think": False,
-                    "options": {"temperature": 0, "num_ctx": 8192, "num_image_tokens": 1120},
-                },
-                headers=_ollama_headers(),
-                timeout=90.0,
-            )
-            resp.raise_for_status()
-            _zbody = resp.json()
-            raw = (_zbody.get("response", "") or _zbody.get("thinking", "") or "").strip()
+            b64 = llm_client.encode_image(band, profile.max_side)
+            raw = llm_client.complete(b64, prompt, _SERIAL_SCHEMA, profile, 90.0)
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
@@ -394,6 +301,8 @@ def _llm_serial_zoom(filepath: Path) -> list[str]:
             if s and s not in candidates:
                 candidates.append(s)
         return candidates
+    except llm_client.LLMError:
+        raise
     except Exception:
         logger.warning("Serial zoom pass failed for %s", filepath)
         return []

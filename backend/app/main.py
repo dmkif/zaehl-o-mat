@@ -18,6 +18,9 @@ from app.limiter import limiter
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
 logger = logging.getLogger(__name__)
+# httpx logs every request line at INFO; keep request details out of the logs.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 scheduler = AsyncIOScheduler()
 
@@ -113,6 +116,7 @@ from fastapi import Response  # noqa: E402
 from app.database import get_db  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 import httpx as _httpx  # noqa: E402
+from app.services import llm_client as _llm_client  # noqa: E402
 
 
 @app.get("/api/health/live", tags=["health"])
@@ -148,10 +152,13 @@ def health(response: Response):
         except Exception:  # nosec B110 - Constitution Principle II: optional subsystem, absence must not crash health check
             pass
 
-    # Ollama / LLM reachability
+    # LLM reachability (KI-Gateway or Ollama)
     llm_ok = False
     llm_model: str | None = None
-    if settings.ollama_url:
+    if _llm_client.using_gateway():
+        llm_model = _llm_client.get_profile().name
+        llm_ok = _llm_client.gateway_healthy()
+    elif settings.ollama_url:
         llm_model = settings.ollama_model
         try:
             r = _httpx.get(f"{settings.ollama_url}/api/tags", timeout=3.0)
