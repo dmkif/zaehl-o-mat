@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     superadmin_user: str = ""
     superadmin_password: str = ""
 
+    # Reverse proxies whose X-Forwarded-For is believed (comma-separated CIDRs).
+    # Only the rightmost entry that is NOT in this list is used as the client
+    # address for rate limiting. '*' is rejected. Default: loopback + RFC1918
+    # (compose network / k3s pod CIDR); narrow it to the real proxy range.
+    trusted_proxies: str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
     # File storage
     upload_path: str = "/data/uploads"
 
