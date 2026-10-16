@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 from decimal import Decimal
@@ -13,19 +14,19 @@ from app.models import (
     Meter, OilDelivery, OilMarketPrice, PriceEntry, Property,
     PropertyUser, Reading, User, UserRole, MeterType,
 )
+from app.routers.oil_deliveries import open_probable_deliveries
+from app.schemas.oil_deliveries import ProbableDeliveryResponse
 from app.services.buy_signal import compute_oil_buy_signal
+from app.services.oil_loader import load_oil_results
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-def _avg_daily_consumption_365d(
-    meter_id: uuid.UUID, db: Session, invert: bool = False
-) -> Optional[float]:
+def _avg_daily_consumption_365d(meter_id: uuid.UUID, db: Session) -> Optional[float]:
     """Compute average daily consumption over the last 365 days using consecutive reading pairs.
 
-    For meters where the value increases over time (gas, water, electricity) use the default
-    ``invert=False`` which sums positive deltas.  For oil tanks where the level *decreases* as
-    fuel is consumed set ``invert=True`` to sum the absolute values of negative deltas instead.
+    Sums positive deltas, so it only fits meters whose value increases over time (water,
+    electricity). Oil tanks use app.services.oil_consumption instead.
     """
     since = datetime.now(timezone.utc) - timedelta(days=365)
     readings = (
@@ -41,16 +42,10 @@ def _avg_daily_consumption_365d(
     total_days = 0.0
     for i in range(1, len(readings)):
         delta = float(readings[i].value) - float(readings[i - 1].value)
-        if invert:
-            qualifies = delta < 0
-            amount = abs(delta)
-        else:
-            qualifies = delta > 0
-            amount = delta
-        if qualifies:
+        if delta > 0:
             days = (readings[i].read_at - readings[i - 1].read_at).total_seconds() / 86400
             if days > 0:
-                total_consumption += amount
+                total_consumption += delta
                 total_days += days
 
     if total_days == 0:
@@ -97,10 +92,18 @@ def dashboard_summary(
     else:
         latest_map = {}
 
+    # Oil: one shared calculation for tile, range and forecast (app.services.oil_consumption)
+    now = datetime.now(timezone.utc)
+    oil_meters = [m for m in meters if m.meter_type == MeterType.oil]
+    oil_results = load_oil_results(db, oil_meters, now)
+
     meter_summaries = []
     for m in meters:
         latest = latest_map.get(m.id)
-        avg_daily = _avg_daily_consumption_365d(m.id, db)
+        if m.meter_type == MeterType.oil:
+            avg_daily = oil_results[m.id].liters_per_day
+        else:
+            avg_daily = _avg_daily_consumption_365d(m.id, db)
         meter_summaries.append(
             {
                 "meter_id": str(m.id),
@@ -116,16 +119,16 @@ def dashboard_summary(
 
     # Oil Reichweite per property (oil meter = direct tank level reading)
     oil_reichweite: dict[str, Optional[int]] = {}
-    for m in meters:
-        if m.meter_type != MeterType.oil:
-            continue
+    for m in oil_meters:
         latest = latest_map.get(m.id)  # reuse already-fetched latest reading
-        avg_daily = _avg_daily_consumption_365d(m.id, db, invert=True)
+        avg_daily = oil_results[m.id].liters_per_day
         if latest and avg_daily and avg_daily > 0:
-            days = int(float(latest.value) / avg_daily)
+            days = math.floor(float(latest.value) / avg_daily)
             oil_reichweite[str(m.property_id)] = days
         else:
             oil_reichweite.setdefault(str(m.property_id), None)
+
+    oil_probable = open_probable_deliveries(db, prop_ids, now)
 
     # Latest oil market price + buy signal
     oil_price = (
@@ -140,6 +143,7 @@ def dashboard_summary(
         "active_meter_count": len(meters),
         "meters": meter_summaries,
         "oil_reichweite": oil_reichweite,
+        "oil_probable_deliveries": [ProbableDeliveryResponse(**p).model_dump(mode="json") for p in oil_probable],
         "oil_market_price": {
             "price_per_100l": str(oil_price.price_per_100l) if oil_price else None,
             "date": oil_price.price_date.isoformat() if oil_price else None,
@@ -213,21 +217,27 @@ def cost_forecast(
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
-    # Use last 90 days of readings for trend
-    since = datetime.now(timezone.utc) - timedelta(days=90)
-    readings = (
-        db.query(Reading)
-        .filter(Reading.meter_id == meter_id, Reading.read_at >= since)
-        .order_by(Reading.read_at.asc())
-        .all()
-    )
+    if meter.meter_type == MeterType.oil:
+        # A tank level falls with use and jumps on refills: same rate as the dashboard tile
+        daily_consumption = load_oil_results(db, [meter], datetime.now(timezone.utc))[meter.id].liters_per_day
+        if daily_consumption is None:
+            return {"meter_id": str(meter_id), "forecast": [], "insufficient_data": True}
+    else:
+        # Use last 90 days of readings for trend
+        since = datetime.now(timezone.utc) - timedelta(days=90)
+        readings = (
+            db.query(Reading)
+            .filter(Reading.meter_id == meter_id, Reading.read_at >= since)
+            .order_by(Reading.read_at.asc())
+            .all()
+        )
 
-    if len(readings) < 2:
-        return {"meter_id": str(meter_id), "forecast": [], "insufficient_data": True}
+        if len(readings) < 2:
+            return {"meter_id": str(meter_id), "forecast": [], "insufficient_data": True}
 
-    total_consumption = readings[-1].value - readings[0].value
-    days_span = (readings[-1].read_at - readings[0].read_at).days or 1
-    daily_consumption = float(total_consumption) / days_span
+        total_consumption = readings[-1].value - readings[0].value
+        days_span = (readings[-1].read_at - readings[0].read_at).days or 1
+        daily_consumption = float(total_consumption) / days_span
 
     # Latest price per unit
     price_entry = (
@@ -278,7 +288,9 @@ def property_type_aggregates(
         .all()
     )
 
-    since = datetime.now(timezone.utc) - timedelta(days=365)
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=365)
+    oil_results = load_oil_results(db, [m for m in meters if m.meter_type == MeterType.oil], now)
 
     # Unit mapping per meter type
     type_unit = {
@@ -290,28 +302,21 @@ def property_type_aggregates(
     # Aggregate per type
     type_data: dict[MeterType, dict] = {}
     for m in meters:
-        readings = (
-            db.query(Reading)
-            .filter(Reading.meter_id == m.id, Reading.read_at >= since)
-            .order_by(Reading.read_at.asc())
-            .all()
-        )
-        if len(readings) < 2:
-            consumption = 0.0
+        if m.meter_type == MeterType.oil:
+            # Tank level: net balance of the known intervals (refills are not consumption)
+            consumption = oil_results[m.id].consumed_liters
         else:
-            # Oil tanks decrease as fuel is consumed → sum absolute negative deltas.
-            # All other meter types (electricity, water) increase → sum positive deltas.
-            invert = m.meter_type == MeterType.oil
-            if invert:
-                consumption = sum(
-                    abs(min(0.0, float(readings[i].value) - float(readings[i - 1].value)))
-                    for i in range(1, len(readings))
-                )
-            else:
-                consumption = sum(
-                    max(0.0, float(readings[i].value) - float(readings[i - 1].value))
-                    for i in range(1, len(readings))
-                )
+            readings = (
+                db.query(Reading)
+                .filter(Reading.meter_id == m.id, Reading.read_at >= since)
+                .order_by(Reading.read_at.asc())
+                .all()
+            )
+            # Electricity and water increase over time → sum positive deltas.
+            consumption = sum(
+                max(0.0, float(readings[i].value) - float(readings[i - 1].value))
+                for i in range(1, len(readings))
+            )
 
         if m.meter_type not in type_data:
             type_data[m.meter_type] = {
