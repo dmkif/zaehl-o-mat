@@ -1,0 +1,27 @@
+diff -ruN a/backend/app/auth.py b/backend/app/auth.py
+--- a/backend/app/auth.py	2026-10-09 10:24:02.066643634 +0200
++++ b/backend/app/auth.py	2026-10-09 10:24:02.066764250 +0200
+@@ -71,20 +71,9 @@
+         is_active=True,
+     )
+     db.add(user)
+-    try:
+-        db.commit()
+-        db.refresh(user)
+-        return user
+-    except IntegrityError:
+-        db.rollback()
+-        user = db.query(User).filter(User.oidc_sub == sub).first()
+-        if not user:
+-            raise
+-        user.role = role
+-        user.email = email
+-        db.commit()
+-        db.refresh(user)
+-        return user
++    db.commit()
++    db.refresh(user)
++    return user
+ 
+ 
+ def get_current_user(
