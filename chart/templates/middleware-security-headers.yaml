@@ -1,6 +1,6 @@
 {{- if .Values.ingress.enabled }}
-# Same security headers the docker-compose nginx proxy sets — the Kubernetes
-# path must not be weaker than the compose path.
+# Same security headers the docker-compose nginx proxy sets (nginx.conf), plus
+# HSTS (only meaningful over TLS). Keep both header sets in sync (F-041).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -9,9 +9,11 @@ metadata:
     {{- include "zaehl-o-mat.labels" . | nindent 4 }}
 spec:
   headers:
-    stsSeconds: 31536000
-    stsIncludeSubdomains: true
-    stsPreload: true
+    {{- with .Values.ingress.hsts }}
+    stsSeconds: {{ int64 .seconds }}
+    stsIncludeSubdomains: {{ .includeSubdomains }}
+    stsPreload: {{ .preload }}
+    {{- end }}
     forceSTSHeader: true
     contentTypeNosniff: true
     frameDeny: true
@@ -24,5 +26,5 @@ spec:
       Content-Security-Policy: >-
         default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
         img-src 'self' data: blob:; connect-src 'self' blob:; font-src 'self';
-        frame-ancestors 'none';
+        object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';
 {{- end }}

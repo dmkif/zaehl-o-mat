@@ -5,6 +5,7 @@ Runs meter recognition test on both endpoints and compares performance.
 """
 import base64
 import json
+import os
 import sys
 import time
 import subprocess
@@ -147,13 +148,15 @@ def run_inference(url: str, img_path: Path, model: str, prompt: str, options: Di
         return duration, False, {"error": str(e)}
 
 
-def get_gpu_stats(cluster_host: str = "172.16.50.98") -> Dict:
+def get_gpu_stats(cluster_host: str) -> Dict:
     """Get GPU stats from cluster via SSH."""
+    if not cluster_host:
+        return {}
     try:
         cmd = [
             "ssh", "-o", "GSSAPIAuthentication=no", "-o", "ProxyCommand=none",
-            "-o", "StrictHostKeyChecking=no",
-            f"root@{cluster_host}",
+            "-o", "StrictHostKeyChecking=accept-new",
+            f"{os.environ.get('BENCH_SSH_USER', 'root')}@{cluster_host}",
             "nvidia-smi --query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total --format=csv,nounits,noheader"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -698,7 +701,10 @@ def print_comparison(local_result: BenchmarkResult, cluster_result: BenchmarkRes
 def main():
     parser = argparse.ArgumentParser(description="Ollama benchmark tool")
     parser.add_argument("--mode", choices=["compare", "heat-parallel", "sweep", "pdf-sweep"], default="compare")
-    parser.add_argument("--endpoint", default="http://172.16.50.98:11434/api/generate")
+    parser.add_argument("--endpoint", default=os.environ.get("BENCH_CLUSTER_ENDPOINT"),
+                        help="Remote Ollama /api/generate URL (env BENCH_CLUSTER_ENDPOINT)")
+    parser.add_argument("--cluster-host", default=os.environ.get("BENCH_CLUSTER_HOST"),
+                        help="SSH host for nvidia-smi stats (env BENCH_CLUSTER_HOST; user via BENCH_SSH_USER)")
     parser.add_argument("--warmup-count", type=int, default=20)
     parser.add_argument("--cooldown-sec", type=int, default=15)
     parser.add_argument("--parallel-count", type=int, default=10)
@@ -728,7 +734,12 @@ def main():
         options["top_p"] = args.top_p
 
     # Find test images
-    img_dir = Path("/home/dmkif/zaehl-o-mat/Beispielzähler")
+    photo_dir = os.environ.get("PHOTO_DIR")
+    if not photo_dir:
+        parser.error("set PHOTO_DIR to a directory with meter photos (*.jpg)")
+    if not args.endpoint:
+        parser.error("set --endpoint or BENCH_CLUSTER_ENDPOINT (remote Ollama /api/generate URL)")
+    img_dir = Path(photo_dir)
     images = sorted(img_dir.glob("*.jpg"))
     
     if not images:
@@ -788,9 +799,9 @@ def main():
     )
     
     cluster_result = benchmark_endpoint(
-        "http://172.16.50.98:11434/api/generate",
+        args.endpoint,
         images,
-        cluster_host="172.16.50.98",
+        cluster_host=args.cluster_host,
         model=args.model,
         prompt=PROMPT,
         options=options,

@@ -99,18 +99,18 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-036 | low | A01 | backend | Unattached scan uploads are readable by every authenticated user | confirmed by experiment E-A01-002 | proposed |
 | F-037 | low | A01 | backend | `replaced_by_id` may reference another tenant's meter; `integration_config` stored in plaintext | confirmed by experiment E-A01-005 | proposed |
 | F-038 | low | A03 | images, compose, backend, ocr-service | Container build hygiene: floating tags, no hash-pinned dependencies, no .dockerignore, shell-form CMD, EasyOCR models without checksum | confirmed by reading | proposed |
-| F-039 | low | A03 | ci | GitHub Actions pinned to mutable tags; `test.yaml` has no `permissions:` block; no Dependabot/Renovate | confirmed by reading | proposed |
-| F-040 | low | A08 | ci, images, chart | Built images are mutable and unsigned; no SBOM/provenance; CI does not scan images or chart misconfiguration | confirmed by reading | proposed |
-| F-041 | low | A02 | frontend, compose, chart | CSP lacks `object-src`/`base-uri`/`form-action`; header sets differ between Compose proxy and chart; static server sets none | confirmed by reading | proposed |
-| F-042 | low | A04 | frontend | JWT kept in `sessionStorage` | confirmed by reading | proposed |
-| F-043 | low | A07 | scripts | Operational scripts contain hard-coded default credentials, internal addresses and disabled SSH host-key checking | confirmed by reading | proposed |
-| F-044 | low | A03 | backend, ocr-service, images | Dependency advisories without a reachable path: authlib 1.6.9, pydantic-settings 2.13.1, Mako, pip | confirmed by reading | proposed |
+| F-039 | low | A03 | ci | GitHub Actions pinned to mutable tags; `test.yaml` has no `permissions:` block; no Dependabot/Renovate | confirmed by reading | fixed (pinning/permissions: 004b/009; Dependabot: feature 012) |
+| F-040 | low | A08 | ci, images, chart | Built images are mutable and unsigned; no SBOM/provenance; CI does not scan images or chart misconfiguration | confirmed by reading | partly fixed (feature 012: image + chart scan, pip/npm audit in CI; digests, cosign, SBOM open) |
+| F-041 | low | A02 | frontend, compose, chart | CSP lacks `object-src`/`base-uri`/`form-action`; header sets differ between Compose proxy and chart; static server sets none | confirmed by reading | fixed (feature 012) |
+| F-042 | low | A04 | frontend | JWT kept in `sessionStorage` | confirmed by reading | accepted, documented (feature 012; logout/401 clear it, tested) |
+| F-043 | low | A07 | scripts | Operational scripts contain hard-coded default credentials, internal addresses and disabled SSH host-key checking | confirmed by reading | fixed (feature 012) |
+| F-044 | low | A03 | backend, ocr-service, images | Dependency advisories without a reachable path: authlib 1.6.9, pydantic-settings 2.13.1, Mako, pip | confirmed by reading | partly fixed (feature 012: authlib 1.6.12, pydantic-settings 2.14.2; Mako/pip in image open) |
 | F-050 | low | A02 | images, compose, migrations | Frontend image runs as root outside the chart; images have no HEALTHCHECK; migrations run at container start with the application DB role | confirmed by reading | proposed |
 | F-045 | informational | A01 | backend | 404-before-403 ordering leaks existence of properties, meters and readings | confirmed by reading | proposed |
 | F-046 | informational | A05 | backend | `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines | confirmed by experiment E-A02-002 | proposed |
-| F-047 | informational | A02 | compose, scripts | Documentation does not match the implementation (ports, redirect URI, routing mode, default login) | confirmed by reading | proposed |
-| F-048 | informational | A02 | chart | Chart: secrets injected as env via `envFrom`; HSTS preload and includeSubdomains set unconditionally | confirmed by reading | proposed |
-| F-049 | informational | A03 | frontend, ci, backend | Frontend and test-tooling hygiene: dev-only npm advisories, unused axios, python-jose in test requirements, error detail rendering | confirmed by reading | proposed |
+| F-047 | informational | A02 | compose, scripts | Documentation does not match the implementation (ports, redirect URI, routing mode, default login) | confirmed by reading | fixed (feature 012) |
+| F-048 | informational | A02 | chart | Chart: secrets injected as env via `envFrom`; HSTS preload and includeSubdomains set unconditionally | confirmed by reading | fixed (feature 012: HSTS configurable, envFrom documented; default unchanged) |
+| F-049 | informational | A03 | frontend, ci, backend | Frontend and test-tooling hygiene: dev-only npm advisories, unused axios, python-jose in test requirements, error detail rendering | confirmed by reading | partly fixed (feature 012: axios removed, audit in CI; python-jose already test-only) |
 
 ### F-001 OIDC group match is a substring/dict-key test when the IdP claim is not a list
 
@@ -1028,6 +1028,7 @@ Accepted risks and operator decisions are recorded here with reason and owner. A
 | F-004, F-005, F-006, F-009, F-010, F-011 | fixed (feature 006, spec `specs/006-security-medium-fixes/`) | small, well understood, protect tenant isolation, privileges, secrets and availability; verified by the experiments named in section 3 (rerun-2) | repository owner | 2026-10-17 | feature 006 |
 | F-007, F-008, F-012, F-013, F-014, F-015, F-016 | fixed (features 007, 008, 009, release 0.6.0) | the last open medium findings; verified by E-A07-005 to E-A07-007, E-A10-003, E-A10-004, E-A02-003 (rig) and by reading/`helm template` for the Compose and chart parts (F-015, F-016, Traefik middleware of F-012) | repository owner | 2026-10-17 | features 007, 008, 009 |
 | F-028 (orphan files), F-029 | fixed (feature 008, release 0.6.0) | verified by E-A08-001, E-A10-002, E-UP-001; the per-user quota part of F-028 stays proposed | repository owner | 2026-10-17 | feature 008 |
+| F-039, F-040, F-041, F-042, F-043, F-044, F-047, F-048, F-049 | fixed / accepted in part (feature 012, `specs/012-low-hygiene/`) | hygiene batch; F-042 accepted (sessionStorage kept, documented in README, cleared on logout and 401, vitest `stores/__tests__/auth.test.ts`); F-039 pinning and permissions were already done by 004b/009; F-040 digests, signing, SBOM and F-044 Mako/pip stay open | repository owner | 2026-10-17 | feature 012 |
 | F-017 to F-050 except F-028, F-029 (low / informational) | operator decides | candidates for accepted risk: F-042 (sessionStorage), F-045, F-046, F-047, F-048, F-049 | repository owner | - | - |
 
 Review limits: the rig runs the backend on a loopback address against synthetic stand-ins (IdP, gateway, OCR); results for infrastructure items are by reading only. Experiment IDs are stable and can be re-run with `scripts/security-rig.sh` after each fix.
