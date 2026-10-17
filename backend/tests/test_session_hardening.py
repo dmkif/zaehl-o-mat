@@ -42,7 +42,7 @@ def _callback(client, groups, sub="sub-1"):
     cfg = {"token_endpoint": "http://x/t", "userinfo_endpoint": "http://x/u"}
     with patch.object(ra, "_oidc_config", new=AsyncMock(return_value=cfg)), \
          patch.object(ra.httpx, "AsyncClient", FakeClient), \
-         patch.object(ra, "_consume_pkce_state", lambda db, st: "v"):
+         patch.object(ra, "_consume_pkce_state", lambda db, st, b=None: "v"):
         return client.get("/api/auth/callback?code=c&state=st", follow_redirects=False)
 
 

@@ -61,6 +61,14 @@ backend:
     # (50 MiB). Keep below ingress.maxRequestBodyBytes.
     MAX_BULK_FILES: "50"
     MAX_BULK_TOTAL_BYTES: "52428800"
+    # -- Interactive API docs (/api/docs, /api/redoc, /api/openapi.json). Off by
+    # default (F-031); set "true" only for debugging.
+    ENABLE_API_DOCS: "false"
+    # -- Rate limit per client for /api/auth/login and /api/auth/callback (F-026),
+    # cap on pending SSO logins, and the bound (seconds) for calls to the IdP.
+    # OIDC_RATE_LIMIT: "20/minute"
+    # OIDC_MAX_PENDING_STATES: "1000"
+    # OIDC_HTTP_TIMEOUT_S: "10"
 
     # -- Peers whose X-Forwarded-For the rate limiter believes (comma-separated
     # CIDRs; '*' is rejected). The limiter keys on the rightmost forwarded

@@ -95,16 +95,17 @@ def test_callback_db_work_not_on_event_loop(client, db):
     N parallel sign-ins block the loop inside QueuePool._do_get (B-32).
     A real pool exhaustion needs PostgreSQL: rig experiment E-A06-001 with
     RIG_RACE_SIGNINS=100."""
-    db.add(OidcPkceState(state="st", code_verifier="v"))
+    import hashlib
+    db.add(OidcPkceState(state="st", code_verifier="v." + hashlib.sha256(b"b").hexdigest()))
     db.commit()
     # SQLite returns naive datetimes; PostgreSQL (prod) returns aware ones.
     real_consume = _consume_pkce_state
 
-    def consume(d, s):
+    def consume(d, s, b=None):
         row = d.query(OidcPkceState).filter(OidcPkceState.state == s).first()
         if row is not None and row.created_at.tzinfo is None:
             row.created_at = row.created_at.replace(tzinfo=timezone.utc)
-        return real_consume(d, s)
+        return real_consume(d, s, "b")
 
     seen = {}
 

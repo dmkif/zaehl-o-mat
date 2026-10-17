@@ -115,7 +115,7 @@ def test_callback_login_ok_event(client, db, caplog):
     cfg = {"token_endpoint": "http://x/t", "userinfo_endpoint": "http://x/u"}
     with patch.object(ra, "_oidc_config", new=AsyncMock(return_value=cfg)), \
          patch.object(ra.httpx, "AsyncClient", FakeClient), \
-         patch.object(ra, "_consume_pkce_state", lambda db, st: "v"):
+         patch.object(ra, "_consume_pkce_state", lambda db, st, b=None: "v"):
         r = client.get("/api/auth/callback?code=c&state=st", follow_redirects=False)
     assert r.status_code in (302, 307)
     msgs = events(caplog)

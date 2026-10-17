@@ -77,21 +77,21 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | fixed in feature 009 (migration 0008, 0.6.0), verified by E-A02-003 |
 | F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | fixed in feature 009 (0.6.0) |
 | F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | fixed in feature 009 (chart, 0.6.0) |
-| F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | proposed |
-| F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | proposed |
-| F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | proposed |
+| F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | fixed (010) |
+| F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | fixed (010) |
+| F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | fixed (010) |
 | F-020 | low | A10 | backend | `compare_digest` on non-ASCII strings raises TypeError (500 on superadmin login) | confirmed by experiment E-A07-004 | proposed |
 | F-021 | low | A08 | backend | Client-chosen `source` lets the retention job downsample and delete readings and image links | confirmed by reading | proposed |
 | F-022 | low | A06 | backend | Duplicate-image check is a check-then-insert race without a unique constraint | confirmed by experiment E-A06-002 | proposed |
 | F-023 | low | A05 | backend | Weak validation of numeric, string and structured input gives 500s and can poison data | confirmed by experiment E-A05-001 / E-A02-002 / E-A01-006 | proposed |
 | F-024 | low | A10 | backend | `delete_user` probably fails with 500 for users with property links | suspected | proposed |
-| F-025 | low | A10 | backend | Startup depends on an external fetch and unguarded oil-price DB writes | confirmed by reading | proposed |
-| F-026 | low | A06 | backend | Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache | confirmed by experiment E-A10-002 | proposed |
-| F-027 | low | A09 | backend | Oil-price API key can be written to the log | confirmed by reading | proposed |
+| F-025 | low | A10 | backend | Startup depends on an external fetch and unguarded oil-price DB writes | confirmed by reading | fixed (010) |
+| F-026 | low | A06 | backend | Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache | confirmed by experiment E-A10-002 | fixed (010) |
+| F-027 | low | A09 | backend | Oil-price API key can be written to the log | confirmed by reading | fixed (010) |
 | F-028 | low | A10 | backend | Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files | confirmed by experiment E-A10-002 / E-A08-001 | partly fixed (feature 008, 0.6.0: orphan files) |
 | F-029 | low | A08 | backend, ocr-service | LLM and OCR-service output is not validated or bounded; malformed OCR JSON gives 500; EXIF date is free text | confirmed by experiment E-A08-001 / E-UP-001 | fixed (feature 008, 0.6.0) |
 | F-030 | low | A07 | ocr-service, chart | OCR service has no authentication and relies on network isolation | confirmed by reading | proposed |
-| F-031 | low | A02 | backend | API documentation and verbose health endpoint are public | confirmed by experiment E-A02-002 | proposed |
+| F-031 | low | A02 | backend | API documentation and verbose health endpoint are public | confirmed by experiment E-A02-002 | fixed (010) |
 | F-032 | low | A08 | backend | Scan stores undecoded, truncated or broken images | confirmed by experiment E-UP-001 | proposed |
 | F-033 | low | A06 | backend | EXIF GPS data is retained in stored and served images | confirmed by experiment E-UP-001 | proposed |
 | F-034 | low | A04 | backend | JWT parsing robustness: non-string `alg` header or `sub` gives 500 | confirmed by experiment E-A04-001 | proposed |
@@ -107,7 +107,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-044 | low | A03 | backend, ocr-service, images | Dependency advisories without a reachable path: authlib 1.6.9, pydantic-settings 2.13.1, Mako, pip | confirmed by reading | proposed |
 | F-050 | low | A02 | images, compose, migrations | Frontend image runs as root outside the chart; images have no HEALTHCHECK; migrations run at container start with the application DB role | confirmed by reading | proposed |
 | F-045 | informational | A01 | backend | 404-before-403 ordering leaks existence of properties, meters and readings | confirmed by reading | proposed |
-| F-046 | informational | A05 | backend | `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines | confirmed by experiment E-A02-002 | proposed |
+| F-046 | informational | A05 | backend | `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines | confirmed by experiment E-A02-002 | fixed (010) |
 | F-047 | informational | A02 | compose, scripts | Documentation does not match the implementation (ports, redirect URI, routing mode, default login) | confirmed by reading | proposed |
 | F-048 | informational | A02 | chart | Chart: secrets injected as env via `envFrom`; HSTS preload and includeSubdomains set unconditionally | confirmed by reading | proposed |
 | F-049 | informational | A03 | frontend, ci, backend | Frontend and test-tooling hygiene: dev-only npm advisories, unused axios, python-jose in test requirements, error detail rendering | confirmed by reading | proposed |
@@ -394,7 +394,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A06-004 `state_bound_to_initiating_browser` (the test was a false PASS in run 1 and fails after the rig fix).
 * **evidence**: Browser B completes browser A's login. State replay, parallel reuse, expiry and forged state are rejected (pass).
 * **recommendation**: Short-lived HttpOnly cookie with random value stored (hashed) with the state row and required at callback; atomic consume with `DELETE ... RETURNING`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (`/auth/login` sets a short-lived HttpOnly SameSite=Lax cookie `oidc_binder`; only its SHA-256 is stored with the state; callback consumes the state once and rejects a missing or foreign cookie with 400; an `nonce` derived from the state is sent and checked when an id_token is processed). Verified by `backend/tests/test_oidc_login_hardening.py` (`test_callback_without_binder_rejected`, `test_callback_with_foreign_binder_rejected`, `test_id_token_nonce_mismatch_rejected`).
 * **source**: backend B-13
 
 ### F-018 Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`)
@@ -410,7 +411,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only (needs a fake userinfo without `sub`).
 * **evidence**: -
 * **recommendation**: Require non-empty string `sub` (<= 255) else 502; never let OIDC login touch rows with NULL `oidc_sub`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (missing, empty, non-string or over-long `sub` gives 502 before any lookup; OIDC login never reads `oidc_sub IS NULL` rows). Verified by `test_bad_sub_rejected_and_superadmin_untouched`, `test_callback_without_sub_is_502_not_500`.
 * **source**: backend B-14
 
 ### F-019 Username/e-mail collisions give 500 on login or silent account confusion
@@ -426,7 +428,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Run 1 backend log: 1207 `users_username_key` violations from identical `preferred_username` of different identities (masked tests until the rig used unique names).
 * **evidence**: HTTP 500 for every second identity with the same preferred username.
 * **recommendation**: Derive a unique local username on collision, do not key on e-mail, mark the superadmin by a dedicated column, catch IntegrityError on all paths; add a dedicated B-15 experiment.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (colliding username gets a deterministic suffix from the `sub` hash, never merges with an existing or the superadmin account; taken e-mail on first login is 409, on later login the old e-mail is kept; empty e-mail gets a placeholder; IntegrityError handled on all paths). Verified by `test_same_username_different_identity_gets_unique_name`, `test_username_like_superadmin_never_merges`, `test_email_collision_new_identity_is_409_no_merge`, `test_email_change_to_taken_address_keeps_old_email`. Not done: dedicated superadmin column (the break-glass row is still found by username).
 * **source**: backend B-15; triage-group2 root cause 1
 
 ### F-020 `compare_digest` on non-ASCII strings raises TypeError (500 on superadmin login)
@@ -522,7 +525,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only.
 * **evidence**: -
 * **recommendation**: try/except + rollback, upsert with ON CONFLICT, range check, run as background task.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (start-up runs the oil-price job as a background task, `_run_oil_price` never raises, DB errors are rolled back and logged, non-finite or implausible prices are ignored). Verified by `test_run_oil_price_never_raises`, `test_startup_survives_oil_price_failure`, `test_db_error_in_oil_price_is_guarded`, `test_absurd_price_not_stored`. Not done: ON CONFLICT upsert (a lost race is caught and logged instead).
 * **source**: backend B-21
 
 ### F-026 Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache
@@ -538,7 +542,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A10-002 `idp_down_at_login_with_cold_discovery_cache`, `idp_unavailable_at_token_exchange[idp_slow]`.
 * **evidence**: Login with IdP down and cold cache returns 500; slow IdP (17 s) at token exchange returns 500.
 * **recommendation**: Rate limit `/login` and `/callback`, cap pending states, map `httpx.HTTPError` to 502/503/504, 30-60 s negative cache.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (`/auth/login` and `/auth/callback` rate limited by `OIDC_RATE_LIMIT`, pending states capped by `OIDC_MAX_PENDING_STATES` with purge of expired rows, httpx errors mapped to 502/503/504, IdP calls bounded by `OIDC_HTTP_TIMEOUT_S` with connect <= 3 s, 30 s negative cache for discovery, stale discovery served when refresh fails). Verified by `test_login_rate_limited`, `test_pending_states_capped`, `test_discovery_failure_negative_cached`, `test_callback_idp_errors_mapped`.
 * **source**: backend B-22; triage-group2
 
 ### F-027 Oil-price API key can be written to the log
@@ -554,7 +559,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only.
 * **evidence**: -
 * **recommendation**: Pass the key as header/params and log only exception class and status.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (API key sent as request parameter, failed fetches log only exception class and HTTP status, log filter masks `apikey`/`key`/`token` query values). Verified by `test_error_text_never_contains_key`, `test_tankerkoenig_key_sent_as_param_not_in_log`, `test_logging_filter_redacts_apikey`.
 * **source**: backend B-23
 
 ### F-028 Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files
@@ -621,7 +627,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A02-002 `api_documentation_not_public` (2 params), `health_endpoint_minimal_to_anonymous`.
 * **evidence**: Anonymous 200 on docs and openapi.json; health detail returned.
 * **recommendation**: Disable docs unless `debug`, anonymous health = status only, detail on a cluster-internal path, cache health results, close the DB in `finally`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (`/api/docs`, `/api/redoc`, `/api/openapi.json` only with `ENABLE_API_DOCS=true`; anonymous `/api/health` returns `{status}` and makes no outbound calls; detail on `/api/health/details` for admins with a 30 s cache; DB session closed in `finally`; probes and healthchecks unchanged in path, chart probes got `timeoutSeconds: 3`). Verified by `backend/tests/test_health_docs_misc.py`. Not done: separate cluster-internal path (admin auth is used instead).
 * **source**: backend B-26; triage-group1
 
 ### F-032 Scan stores undecoded, truncated or broken images
@@ -861,7 +868,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only.
 * **evidence**: -
 * **recommendation**: Answer 404 for both when the caller lacks access.
-* **planned disposition**: proposed
+* **planned disposition**: proposed (documented, not changed)
+* **fix**: not changed in feature 010 (informational, documented only): existence is checked before access; UUIDs make probing impractical and the integer reading id oracle (`rescan/{reading_id}`) stays a candidate for accepted risk or a 404-for-both change in the router owner's feature.
 * **source**: backend B-29
 
 ### F-046 `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines
@@ -877,7 +885,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A02-002 `request_id_header_not_reflected_unbounded`.
 * **evidence**: 8000 characters returned.
 * **recommendation**: Accept `^[A-Za-z0-9._-]{1,64}$` else generate a UUID; `repr()` client-derived log arguments.
-* **planned disposition**: proposed
+* **planned disposition**: fixed
+* **fix**: fixed in feature 010 (`X-Request-ID` must match `^[A-Za-z0-9._-]{1,64}$`, else a UUID is generated). Verified by `test_request_id_validated`. Client-derived filenames/model strings in `routers/ocr.py` and `services/llm_client.py` are outside this feature's files and still logged raw.
 * **source**: backend B-30
 
 ### F-047 Documentation does not match the implementation (ports, redirect URI, routing mode, default login)

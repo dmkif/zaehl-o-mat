@@ -7,6 +7,7 @@ Supported sources:
   - custom           (arbitrary JSON endpoint, expects {"price_per_100l": <float>})
 """
 import logging
+import math
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -18,6 +19,17 @@ from app.config import settings
 from app.models import OilMarketPrice, OilPriceSource
 
 logger = logging.getLogger(__name__)
+
+# Plausible range for a price per 100 l (EUR); rejects nan/inf/1e30 from a hostile source.
+MIN_PRICE, MAX_PRICE = 1.0, 1000.0
+
+
+def _safe_error(exc: BaseException) -> str:
+    """Log text for a failed fetch: class and HTTP status only. httpx error
+    strings contain the request URL, which may carry an API key (F-027)."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{type(exc).__name__} (HTTP {exc.response.status_code})"
+    return type(exc).__name__
 
 
 async def fetch_and_store_oil_price(db: Session) -> Optional[OilMarketPrice]:
@@ -33,29 +45,40 @@ async def fetch_and_store_oil_price(db: Session) -> Optional[OilMarketPrice]:
             logger.warning("Unknown oil_price_source: %s", source)
             return None
     except Exception as exc:
-        logger.error("Oil price fetch failed (%s): %s", source, exc)
+        logger.error("Oil price fetch failed (%s): %s", source, _safe_error(exc))
         return None
 
     if price is None:
         return None
+    if not isinstance(price, (int, float)) or not math.isfinite(price) or not (MIN_PRICE <= price <= MAX_PRICE):
+        logger.error("Oil price from %s outside the plausible range, ignored", source)
+        return None
 
-    today = date.today()
-    existing = (
-        db.query(OilMarketPrice)
-        .filter(OilMarketPrice.price_date == today, OilMarketPrice.source == source)
-        .first()
-    )
-    if existing:
-        existing.price_per_100l = price
+    try:
+        today = date.today()
+        existing = (
+            db.query(OilMarketPrice)
+            .filter(OilMarketPrice.price_date == today, OilMarketPrice.source == source)
+            .first()
+        )
+        if existing:
+            existing.price_per_100l = price
+            db.commit()
+            db.refresh(existing)
+            return existing
+
+        entry = OilMarketPrice(price_date=today, price_per_100l=price, source=source)
+        db.add(entry)
         db.commit()
-        db.refresh(existing)
-        return existing
-
-    entry = OilMarketPrice(price_date=today, price_per_100l=price, source=source)
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-    return entry
+        db.refresh(entry)
+        return entry
+    except Exception as exc:  # e.g. two replicas inserting the same day: never crash the caller
+        try:
+            db.rollback()
+        except Exception:  # nosec B110
+            pass
+        logger.error("Oil price could not be stored (%s): %s", source, _safe_error(exc))
+        return None
 
 
 async def _fetch_heizoel_aktuell() -> float:
@@ -89,9 +112,10 @@ async def _fetch_tankerkoenig() -> float:
     if not settings.oil_price_api_key:
         raise ValueError("TANKERKOENIG_API_KEY not set")
     # Tankerkoenig is primarily for auto-fuel; use a placeholder endpoint
-    url = f"https://creativecommons.tankerkoenig.de/json/list.php?lat=52&lng=10&rad=5&sort=dist&type=all&apikey={settings.oil_price_api_key}"
+    url = "https://creativecommons.tankerkoenig.de/json/list.php"
+    params = {"lat": 52, "lng": 10, "rad": 5, "sort": "dist", "type": "all", "apikey": settings.oil_price_api_key}
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url)
+        resp = await client.get(url, params=params)
         resp.raise_for_status()
     data = resp.json()
     # Extract Heizöl if available in response
