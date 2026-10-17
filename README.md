@@ -37,6 +37,7 @@ cat > .env <<EOF
 JWT_SECRET_KEY=$(openssl rand -base64 48)
 SUPERADMIN_USER=admin
 SUPERADMIN_PASSWORD=$(openssl rand -base64 18)
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
 EOF
 ```
 
@@ -46,6 +47,12 @@ rejects placeholder or weak values at startup: `JWT_SECRET_KEY` needs at least
 value (`changeme`, `secret`, `password`, `admin123`, ...), and user and password
 must be set together or both left empty. `DEBUG` defaults to `false`; set
 `DEBUG=true` in `.env` for local development only.
+
+`POSTGRES_PASSWORD` is required too. An existing `db-data` volume keeps the password
+it was created with: put that value in `.env` (or change it in the database with
+`ALTER USER`). Ollama is not published on the host (it has no authentication); the
+backend (127.0.0.1:8000) is only reachable from the host itself. Use the proxy on
+port 8081.
 
 > **Note:** The stack includes an Ollama container (and the optional `ocr`
 > container) that expect an NVIDIA GPU. Without a GPU, remove the

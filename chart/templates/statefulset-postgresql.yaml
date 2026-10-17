@@ -19,6 +19,8 @@ spec:
         {{- include "zaehl-o-mat.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgresql
     spec:
+      # The database never talks to the Kubernetes API (F-016).
+      automountServiceAccountToken: false
       securityContext:
         fsGroup: 999
         seccompProfile:

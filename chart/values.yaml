@@ -295,16 +295,50 @@ externalDatabase:
   host: ""
 
 # =============================================================================
-# NetworkPolicy
-# Off by default: enabling this without first checking ingressFrom will
-# silently cut off all ingress traffic instead of protecting anything - the
-# selector must actually match your ingress controller's pods/namespace.
+# NetworkPolicy (F-016)
+# Enabled state:
+#   null (default) -> on exactly when ocr.enabled (the unauthenticated OCR
+#                     service relies on it); existing installs without OCR render
+#                     no policy, i.e. behave as before.
+#   true / false   -> force on / off.
+# Once on, `ingressFrom` is REQUIRED (rendering fails otherwise): a selector that
+# does not match your ingress controller silently cuts all ingress traffic, and
+# an empty selector would admit every pod, so there is no default.
+# Example for k3s' bundled Traefik (namespace kube-system):
+#   ingressFrom:
+#     namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+#     podSelector: {matchLabels: {app.kubernetes.io/name: traefik}}
 # =============================================================================
 networkPolicy:
-  # -- Once enabled: postgresql only accepts traffic from this chart's own
-  # backend; backend/frontend only accept traffic matching ingressFrom
-  # (i.e. from your ingress controller).
-  enabled: false
+  # -- null = auto (on iff ocr.enabled), true, or false.
+  enabled: null
+  # -- Source of ingress traffic to backend and frontend (your ingress
+  # controller). Both selectors must be non-empty when the policy is on.
   ingressFrom:
     namespaceSelector: {}
     podSelector: {}
+  # -- Egress policies (default off: allowed destinations are cluster specific).
+  # When on: backend may reach DNS, its postgres, the OCR service and whatever
+  # `extraTo` / `allowExternal` allow; OCR, postgres and frontend get no egress
+  # except DNS. Enabling it without `extraTo` for the KI-Gateway cuts gateway
+  # access.
+  egress:
+    enabled: false
+    # -- DNS server selector (kube-dns).
+    dns:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    # -- Allow the backend to reach public addresses on `externalPorts` (OIDC
+    # provider, oil-price API). Private ranges stay blocked unless in `extraTo`.
+    allowExternal: true
+    externalPorts: [443]
+    # -- Additional egress `to` + `ports` rules for the backend, raw NetworkPolicy
+    # syntax. Example (KI-Gateway):
+    #   - to:
+    #       - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ai-gateway}}
+    #     ports: [{port: 20128, protocol: TCP}]
+    extraTo: []

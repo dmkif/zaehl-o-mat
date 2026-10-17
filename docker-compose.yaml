@@ -1,24 +1,33 @@
 services:
   db:
-    image: postgres:18-alpine
+    # Pinned by digest (Renovate updates tag + digest together).
+    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_DB: zaehlwart
       POSTGRES_USER: zaehlwart
-      POSTGRES_PASSWORD: zaehlwart
+      # Required, no default: `openssl rand -hex 24`. Only reachable inside the
+      # compose network (no published port). An existing db-data volume keeps the
+      # password it was created with: set POSTGRES_PASSWORD to that value in .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 24)}
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zaehlwart"]
+      test: ["CMD-SHELL", "pg_isready -U zaehlwart -d zaehlwart"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.6
     restart: unless-stopped
-    ports:
-      - "11434:11434"
+    # No published port: Ollama has no authentication and is only used by the
+    # backend over the compose network. To use it from the host for debugging:
+    #   docker compose exec ollama ollama list
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ollama-data:/root/.ollama
     environment:
@@ -37,6 +46,19 @@ services:
   ocr:
     build: ./ocr-service
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       # Same decoded-size limits as the backend (F-011), checked from the image header.
       MAX_IMAGE_PIXELS: "40000000"
@@ -47,6 +69,19 @@ services:
   backend:
     build: ./backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -59,7 +94,7 @@ services:
     volumes:
       - uploads:/data/uploads
     environment:
-      DATABASE_URL: postgresql://zaehlwart:zaehlwart@db:5432/zaehlwart
+      DATABASE_URL: postgresql://zaehlwart:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/zaehlwart
       # Required, no default: generate with `openssl rand -base64 48` (>= 32 chars)
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env (openssl rand -base64 48)}
       SUPERADMIN_USER: ${SUPERADMIN_USER:-admin}
@@ -94,12 +129,28 @@ services:
     build:
       context: ./frontend
     restart: unless-stopped
+    # The static-web-server image is FROM scratch (no shell, no wget), so there is
+    # no in-container probe; the proxy healthcheck below exercises it end to end.
+    user: "65534:65534"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
     depends_on:
       - backend
 
   proxy:
-    image: nginx:alpine
+    image: nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # Through the proxy to the frontend: covers proxy + frontend.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       - frontend
       - backend

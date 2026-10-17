@@ -1,4 +1,11 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- if include "zaehl-o-mat.networkPolicyEnabled" . }}
+{{- /* F-016: no permissive default. An empty selector pair would admit every pod of every namespace. */}}
+{{- $nsSel := .Values.networkPolicy.ingressFrom.namespaceSelector }}
+{{- $podSel := .Values.networkPolicy.ingressFrom.podSelector }}
+{{- if and (empty $nsSel) (empty $podSel) }}
+{{- fail "networkPolicy is enabled (explicitly or because ocr.enabled) but networkPolicy.ingressFrom has no namespaceSelector/podSelector: set it to your ingress controller (see values.yaml), or set networkPolicy.enabled=false" }}
+{{- end }}
+{{- $egress := .Values.networkPolicy.egress }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -12,6 +19,9 @@ spec:
       app.kubernetes.io/component: postgresql
   policyTypes:
     - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - podSelector:
@@ -21,6 +31,10 @@ spec:
       ports:
         - port: tcp-postgresql
           protocol: TCP
+  {{- if $egress.enabled }}
+  # Standalone database: no outbound traffic at all.
+  egress: []
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,15 +49,53 @@ spec:
       app.kubernetes.io/component: backend
   policyTypes:
     - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
-    - from:
-        - namespaceSelector:
-            {{- toYaml .Values.networkPolicy.ingressFrom.namespaceSelector | nindent 12 }}
-          podSelector:
-            {{- toYaml .Values.networkPolicy.ingressFrom.podSelector | nindent 12 }}
+    {{- include "zaehl-o-mat.npIngressFrom" . | nindent 4 }}
+  {{- if $egress.enabled }}
+  egress:
+    {{- include "zaehl-o-mat.npDnsEgress" . | nindent 4 }}
+    {{- if .Values.postgresql.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "zaehl-o-mat.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgresql
+      ports:
+        - port: tcp-postgresql
+          protocol: TCP
+    {{- end }}
+    {{- if .Values.ocr.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "zaehl-o-mat.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: ocr
       ports:
         - port: http
           protocol: TCP
+    {{- end }}
+    {{- if $egress.allowExternal }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        {{- range $egress.externalPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- with $egress.extraTo }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -58,15 +110,14 @@ spec:
       app.kubernetes.io/component: frontend
   policyTypes:
     - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
-    - from:
-        - namespaceSelector:
-            {{- toYaml .Values.networkPolicy.ingressFrom.namespaceSelector | nindent 12 }}
-          podSelector:
-            {{- toYaml .Values.networkPolicy.ingressFrom.podSelector | nindent 12 }}
-      ports:
-        - port: http
-          protocol: TCP
+    {{- include "zaehl-o-mat.npIngressFrom" . | nindent 4 }}
+  {{- if $egress.enabled }}
+  egress: []
+  {{- end }}
 {{- if .Values.ocr.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -82,6 +133,9 @@ spec:
       app.kubernetes.io/component: ocr
   policyTypes:
     - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - podSelector:
@@ -91,5 +145,9 @@ spec:
       ports:
         - port: http
           protocol: TCP
+  {{- if $egress.enabled }}
+  # Processes untrusted images: no outbound traffic.
+  egress: []
+  {{- end }}
 {{- end }}
 {{- end }}
