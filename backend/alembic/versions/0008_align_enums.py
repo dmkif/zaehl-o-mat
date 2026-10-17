@@ -14,16 +14,16 @@ PostgreSQL < 12 and the new label cannot be used in the same transaction, hence
 ``autocommit_block``.
 
 Revision ID: 0008
-Revises: 0006
+Revises: 0007
 Create Date: 2026-10-17
 
 NOTE: written in parallel to 0007 (session hardening).  After merging both, the
-integrator must set ``down_revision = "0007"``.
+down_revision is "0007" (session hardening).
 """
 from alembic import op
 
 revision = "0008"
-down_revision = "0006"
+down_revision = "0007"
 branch_labels = None
 depends_on = None
 

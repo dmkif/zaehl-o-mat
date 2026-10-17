@@ -43,7 +43,7 @@ def test_migration_0008_covers_every_model_enum_name():
 
 def test_migration_0008_only_adds_never_removes():
     mig = _load("0008")
-    assert mig.down_revision == "0006"  # integrator re-points to 0007 after merge
+    assert mig.down_revision == "0007"
     assert mig.downgrade.__doc__ and "no-op" in mig.downgrade.__doc__.lower()
 
 

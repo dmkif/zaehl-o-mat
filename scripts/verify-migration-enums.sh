@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # F-014: verify migration 0008 on a throw-away PostgreSQL (podman, random loopback port).
 #   (a) DB built by `alembic upgrade 0006`, then `upgrade head`: meters of every unit / type / integration insert fine
-#   (b) DB built by Base.metadata.create_all + `alembic stamp 0006`: `upgrade head` leaves the enum labels unchanged
+#   (b) DB built by Base.metadata.create_all + `alembic stamp 0007`: `upgrade head` leaves the enum labels unchanged
 # Usage: scripts/verify-migration-enums.sh [python]   (python needs the backend requirements)
 set -euo pipefail
 PY="${1:-python}"
@@ -45,7 +45,7 @@ echo "== (b) create_all-built database, stamped"
 mkdb b
 DATABASE_URL="$(url b)" "$PY" -c "from app.database import Base; import app.models; from sqlalchemy import create_engine; import os; Base.metadata.create_all(create_engine(os.environ['DATABASE_URL']))"
 labels b > /tmp/zom-labels-before-$$
-DATABASE_URL="$(url b)" "$PY" -m alembic stamp 0006
+DATABASE_URL="$(url b)" "$PY" -m alembic stamp 0007
 DATABASE_URL="$(url b)" "$PY" -m alembic upgrade head
 labels b > /tmp/zom-labels-after-$$
 diff /tmp/zom-labels-before-$$ /tmp/zom-labels-after-$$ && echo "labels unchanged: 0008 is a no-op on create_all databases"
