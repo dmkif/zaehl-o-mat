@@ -64,8 +64,16 @@ async def _run_oil_price():
         db.close()
 
 
+def warn_if_group_diagnostics() -> None:
+    if settings.oidc_group_diagnostics:
+        logger.warning(
+            "OIDC group diagnostics are ENABLED (OIDC_GROUP_DIAGNOSTICS=true): "
+            "group names of rejected sign-ins are written to the log")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    warn_if_group_diagnostics()
     # Fetch oil price immediately so data is available from the first request
     await _run_oil_price()
 

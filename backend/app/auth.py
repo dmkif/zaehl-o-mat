@@ -14,6 +14,7 @@ from app.database import get_db
 from app.limiter import _key_func as client_ip
 from app.models import User, UserRole
 from app.security_log import log_event
+from app.services import oidc_audit
 
 bearer_scheme = HTTPBearer(auto_error=False)
 _jwt = JsonWebToken([settings.jwt_algorithm])
@@ -83,12 +84,14 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     elif settings.oidc_user_group in groups:
         role = UserRole.user
     else:
-        # Reason only: no group names, e-mail or subject (spec 006 FR-010).
-        log_event("sso_login", outcome="denied", reason="no_permitted_group")
+        # Reason + sign-in name only; group names only with the diagnostic switch (spec 003).
+        oidc_audit.log_rejected(oidc_data, groups)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized: user is not a member of any permitted group",
         )
+
+    oidc_audit.log_accepted(oidc_data, role, groups)
 
     user = db.query(User).filter(User.oidc_sub == sub).first()
     if user:
