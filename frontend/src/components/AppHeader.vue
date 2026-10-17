@@ -44,7 +44,13 @@ const themeStore = useThemeStore()
 const router = useRouter()
 
 async function logout() {
-  await apiFetch('/api/auth/logout', { method: 'POST' })
+  try {
+    // Revokes the session server side; failures must not block the local logout.
+    await apiFetch('/api/auth/logout', {
+      method: 'POST',
+      headers: authStore.token ? { Authorization: `Bearer ${authStore.token}` } : {},
+    })
+  } catch { /* offline: still log out locally */ }
   authStore.logout()
   router.push('/login')
 }

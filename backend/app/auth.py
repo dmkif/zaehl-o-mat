@@ -25,6 +25,7 @@ def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> st
         minutes=expires_minutes or settings.jwt_access_token_expire_minutes
     )
     payload["exp"] = int(expire.timestamp())
+    payload.setdefault("iat", int(datetime.now(timezone.utc).timestamp()))
     header = {"alg": settings.jwt_algorithm}
     return _jwt.encode(header, payload, settings.jwt_secret_key).decode()
 
@@ -49,6 +50,22 @@ def decode_access_token(token: str) -> dict:
     except Exception as exc:  # malformed token shapes must not become a 500
         raise JoseError("Invalid token") from exc
     return dict(claims)
+
+
+def issue_user_token(user: User) -> str:
+    """Session JWT for ``user``; `tv` binds it to the current revocation counter."""
+    return create_access_token({"sub": str(user.id), "role": user.role.value, "tv": user.token_version})
+
+
+def revoke_sessions(db: Session, user: User, *, actor: Optional[object] = None,
+                    ip: Optional[str] = None, reason: str) -> None:
+    """Invalidate every token issued to ``user`` so far (atomic counter increment)."""
+    db.query(User).filter(User.id == user.id).update(
+        {User.token_version: User.token_version + 1}, synchronize_session=False
+    )
+    db.commit()
+    db.refresh(user)
+    log_event("session_revoked", actor=actor, target=user.id, ip=ip, reason=reason)
 
 
 def _normalize_groups(raw) -> list[str]:
@@ -85,6 +102,11 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     else:
         # Reason only: no group names, e-mail or subject (spec 006 FR-010).
         log_event("sso_login", outcome="denied", reason="no_permitted_group")
+        # F-007: a known user who lost every permitted group loses open sessions too.
+        sub_known = oidc_data.get("sub")
+        known = db.query(User).filter(User.oidc_sub == sub_known).first() if isinstance(sub_known, str) else None
+        if known:
+            revoke_sessions(db, known, reason="idp_group_removed")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized: user is not a member of any permitted group",
@@ -92,10 +114,15 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
 
     user = db.query(User).filter(User.oidc_sub == sub).first()
     if user:
+        role_changed = user.role != role
         user.role = role
         user.email = email
+        if role_changed:
+            user.token_version = User.token_version + 1
         db.commit()
         db.refresh(user)
+        if role_changed:
+            log_event("session_revoked", target=user.id, reason="role_changed_at_login")
         return user
 
     # First login — create user (guard against concurrent first-login race condition)
@@ -148,6 +175,9 @@ def get_current_user(
         user_id = payload.get("sub")
         if not user_id or not isinstance(user_id, str):
             raise _deny(request, "invalid_token")
+        tv = payload.get("tv")
+        if isinstance(tv, bool) or not isinstance(tv, int):
+            raise _deny(request, "invalid_token")
     except JoseError:
         raise _deny(request, "invalid_token")
 
@@ -157,6 +187,8 @@ def get_current_user(
         raise _deny(request, "invalid_token")
     if not user or not user.is_active:
         raise _deny(request, "user_inactive_or_unknown", actor=user.id if user else None)
+    if tv != user.token_version:
+        raise _deny(request, "invalid_token", actor=user.id)
     return user
 
 
