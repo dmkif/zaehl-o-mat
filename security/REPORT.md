@@ -74,9 +74,9 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-011 | medium | A10 | backend, ocr-service | Image decompression and 4x upscale memory amplification; no pixel cap | confirmed by experiment E-UP-001 (acceptance); resource effect not measured | fixed (spec 006) |
 | F-012 | medium | A10 | backend, chart | Bulk scan reads all uploaded files into memory before any size check; no body limit on the Kubernetes path | confirmed by reading | proposed |
 | F-013 | medium | A10 | backend | DB connection pinned for the whole streamed LLM run in bulk scan | suspected | proposed |
-| F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | proposed |
-| F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | proposed |
-| F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | proposed |
+| F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | fixed in feature 009 (migration 0008) |
+| F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | fixed in feature 009 |
+| F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | fixed in feature 009 (chart) |
 | F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | proposed |
 | F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | proposed |
 | F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | proposed |
