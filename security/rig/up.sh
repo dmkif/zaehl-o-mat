@@ -109,6 +109,10 @@ BACKEND_ENV=(
   "APP_BASE_URL=$BACKEND_URL"
   "LOG_LEVEL=debug"
   "DEBUG=${SEC_RIG_APP_DEBUG:-true}"
+  # The rig peer is loopback, which is in the default TRUSTED_PROXIES: a spoofed X-Forwarded-For would be honoured.
+  # Default for the rig = a harmless non-loopback range (no peer is trusted); E-A07-001 (trusted-proxy variant)
+  # restarts with 127.0.0.0/8 to test the rightmost-untrusted rule.
+  "TRUSTED_PROXIES=${SEC_RIG_TRUSTED_PROXIES:-10.255.255.0/24}"
   "RIG_DISABLE_LIMITER=${RIG_DISABLE_LIMITER:-1}"   # read by rig/rig_app.py only (rate-limit tests restart with it unset)
 )
 
@@ -152,7 +156,7 @@ done
 # --- backend ------------------------------------------------------------------
 log "starting backend on $BACKEND_URL (source: $BACKEND_DIR)"
 ( cd "$STATE"; setsid "${ENVI[@]}" "${BACKEND_ENV[@]}" "PYTHONPATH=$RIG_DIR" "$PY" -m uvicorn rig_app:app --app-dir "$BACKEND_DIR" \
-    --host "$LOOP" --port "$BACKEND_PORT" --log-level debug >"$BACKEND_LOG" 2>&1 </dev/null & echo $! >"$STATE/pids/backend" )
+    --host "$LOOP" --port "$BACKEND_PORT" --log-level debug --no-proxy-headers >"$BACKEND_LOG" 2>&1 </dev/null & echo $! >"$STATE/pids/backend" )
 BACKEND_PID=$(cat "$STATE/pids/backend")
 healthy=0
 for _ in $(seq 1 60); do

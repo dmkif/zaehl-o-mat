@@ -37,6 +37,10 @@ services:
   ocr:
     build: ./ocr-service
     restart: unless-stopped
+    environment:
+      # Same decoded-size limits as the backend (F-011), checked from the image header.
+      MAX_IMAGE_PIXELS: "40000000"
+      MAX_IMAGE_SIDE: "12000"
     devices:
       - nvidia.com/gpu=all
 
@@ -56,13 +60,15 @@ services:
       - uploads:/data/uploads
     environment:
       DATABASE_URL: postgresql://zaehlwart:zaehlwart@db:5432/zaehlwart
-      JWT_SECRET_KEY: local-dev-secret-change-in-prod
-      SUPERADMIN_USER: admin
-      SUPERADMIN_PASSWORD: admin123
+      # Required, no default: generate with `openssl rand -base64 48` (>= 32 chars)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env (openssl rand -base64 48)}
+      SUPERADMIN_USER: ${SUPERADMIN_USER:-admin}
+      # Required, no default: >= 12 chars, e.g. `openssl rand -base64 18`
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env (openssl rand -base64 18)}
       UPLOAD_PATH: /data/uploads
       OIL_PRICE_SOURCE: heizoel-aktuell
       APP_BASE_URL: http://localhost:5173
-      DEBUG: "true"
+      DEBUG: ${DEBUG:-false}
       # Peers whose X-Forwarded-For is believed by the rate limiter (CIDRs).
       # Narrow to the compose network subnet if known; never '*'.
       TRUSTED_PROXIES: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
@@ -70,6 +76,9 @@ services:
       OLLAMA_MODEL: "qwen3-vl:8b"
       # Optional — leave empty (or remove) to run without the `ocr` service above.
       OCR_URL: http://ocr:8100
+      # Decoded image limits for uploads (checked from the header, before storing).
+      MAX_IMAGE_PIXELS: "40000000"
+      MAX_IMAGE_SIDE: "12000"
       # OIDC optional – leer lassen deaktiviert SSO
       OIDC_CLIENT_ID: ""
       OIDC_CLIENT_SECRET: ""

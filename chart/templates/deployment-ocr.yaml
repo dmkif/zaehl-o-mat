@@ -36,6 +36,13 @@ spec:
           ports:
             - name: http
               containerPort: 8100
+          {{- with .Values.ocr.env }}
+          env:
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

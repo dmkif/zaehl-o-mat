@@ -53,6 +53,10 @@ backend:
     # Where to fetch heating-oil market prices from.
     # One of: heizoel-aktuell | tankerkoenig | custom
     OIL_PRICE_SOURCE: heizoel-aktuell
+    # -- Decoded image limits for uploads, checked from the image header before
+    # anything is stored (F-011). Keep equal to ocr.env.
+    MAX_IMAGE_PIXELS: "40000000"
+    MAX_IMAGE_SIDE: "12000"
 
     # -- Peers whose X-Forwarded-For the rate limiter believes (comma-separated
     # CIDRs; '*' is rejected). The limiter keys on the rightmost forwarded
@@ -94,16 +98,18 @@ backend:
   # holding the backend's sensitive configuration. All keys present in the
   # Secret are exposed to the container as environment variables.
   #
-  # Required key:   DATABASE_URL, JWT_SECRET_KEY
+  # Required key:   DATABASE_URL, JWT_SECRET_KEY (>= 32 random chars; weak or
+  #                   placeholder values make the backend refuse to start)
   # Optional keys:  OIDC_CLIENT_SECRET (only if using OIDC)
   #                 SUPERADMIN_USER, SUPERADMIN_PASSWORD (built-in admin
-  #                   account, bypasses OIDC)
+  #                   account, bypasses OIDC; set both or neither, password
+  #                   >= 12 chars and not a common password)
   #                 OIL_PRICE_API_KEY (only if oil_price_source needs one)
   #
   # Example:
   #   kubectl create secret generic zaehl-o-mat-secret \
   #     --from-literal=DATABASE_URL='postgresql://user:pass@host:5432/db' \
-  #     --from-literal=JWT_SECRET_KEY="$(openssl rand -hex 32)"
+  #     --from-literal=JWT_SECRET_KEY="$(openssl rand -base64 48)"
   #
   # Leave empty to default to "<fullname>-secret".
   existingSecret: ""
@@ -199,6 +205,10 @@ ocr:
   # case). Required key: value of secretApiKeyKey below (default OCR_API_KEY).
   existingSecret: ""
   secretApiKeyKey: OCR_API_KEY
+  # -- Non-secret OCR service configuration (decoded image limits, F-011).
+  env:
+    MAX_IMAGE_PIXELS: "40000000"
+    MAX_IMAGE_SIDE: "12000"
 
 # =============================================================================
 # Ingress (Traefik IngressRoute - requires the Traefik ingress controller

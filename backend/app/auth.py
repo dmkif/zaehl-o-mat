@@ -4,14 +4,16 @@ from typing import Optional
 import uuid
 
 from authlib.jose import JsonWebToken, JoseError
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.limiter import _key_func as client_ip
 from app.models import User, UserRole
+from app.security_log import log_event
 
 bearer_scheme = HTTPBearer(auto_error=False)
 _jwt = JsonWebToken([settings.jwt_algorithm])
@@ -81,6 +83,8 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     elif settings.oidc_user_group in groups:
         role = UserRole.user
     else:
+        # Reason only: no group names, e-mail or subject (spec 006 FR-010).
+        log_event("sso_login", outcome="denied", reason="no_permitted_group")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized: user is not a member of any permitted group",
@@ -120,32 +124,47 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
         return user
 
 
+def _deny(request: Request, reason: str, actor: Optional[object] = None) -> HTTPException:
+    log_event("auth_denied", outcome="denied", actor=actor, ip=client_ip(request), reason=reason)
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_DENY_DETAIL[reason])
+
+
+_DENY_DETAIL = {
+    "no_credentials": "Not authenticated",
+    "invalid_token": "Invalid token",  # nosec B105 - response text, not a credential
+    "user_inactive_or_unknown": "User not found",
+}
+
+
 def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
     if not credentials:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise _deny(request, "no_credentials")
     try:
         payload = decode_access_token(credentials.credentials)
-        user_id: str = payload.get("sub")
+        user_id = payload.get("sub")
         if not user_id or not isinstance(user_id, str):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+            raise _deny(request, "invalid_token")
     except JoseError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise _deny(request, "invalid_token")
 
     try:
         user = db.query(User).filter(User.id == uuid.UUID(user_id)).first()
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise _deny(request, "invalid_token")
     if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise _deny(request, "user_inactive_or_unknown", actor=user.id if user else None)
     return user
 
 
 def require_role(*roles: UserRole):
-    def checker(current_user: User = Depends(get_current_user)) -> User:
+    def checker(request: Request, current_user: User = Depends(get_current_user)) -> User:
         if current_user.role not in roles and current_user.role != UserRole.superadmin:
+            log_event("auth_denied", outcome="denied", actor=current_user.id,
+                      ip=client_ip(request), reason="insufficient_role")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return current_user
     return checker

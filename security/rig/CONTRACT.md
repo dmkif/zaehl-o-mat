@@ -36,7 +36,7 @@ Backend env set by up.sh: DATABASE_URL, JWT_SECRET_KEY, OIDC_* (discovery `$OIDC
 
 ## Rate limiter switch and run profiles (rerun tooling)
 
-* The backend is started as `uvicorn rig_app:app` (`rig/rig_app.py`, PYTHONPATH=`rig/`), a thin wrapper that imports the
+* The backend is started as `uvicorn rig_app:app --no-proxy-headers` (same as backend/Dockerfile; without it uvicorn itself rewrites the client address from X-Forwarded-For) with `TRUSTED_PROXIES=10.255.255.0/24` (no peer trusted; E-A07-001 trusted-proxy variant restarts with `127.0.0.0/8`). It runs `uvicorn rig_app:app` (`rig/rig_app.py`, PYTHONPATH=`rig/`), a thin wrapper that imports the
   unmodified `app.main` and, when `RIG_DISABLE_LIMITER=1` (default for the whole rig, written to `.state/backend.env`),
   sets `app.limiter.limiter.enabled = False`. No file under `backend/` is touched.
 * Rate-limit experiments (E-A07-001) call `restart_backend({"RIG_DISABLE_LIMITER": None})` to run against the real limiter;

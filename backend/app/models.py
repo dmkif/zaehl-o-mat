@@ -223,6 +223,22 @@ class OilDeliveryDismissal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class UploadFile(Base):
+    """Registry of stored meter images: who uploaded a file, for which property.
+
+    Written by scan / bulk-scan; consulted before a file may be attached to a
+    reading, served or re-scanned (F-004).  ``property_id`` is NULL while the
+    scan was not tied to a meter - such a file belongs to its uploader only.
+    """
+    __tablename__ = "upload_files"
+
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    property_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=True, index=True)
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class OilMarketPrice(Base):
     __tablename__ = "oil_market_prices"
     __table_args__ = (UniqueConstraint("price_date", "source"),)

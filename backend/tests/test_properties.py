@@ -131,7 +131,7 @@ class TestUpdateProperty:
         assert r.status_code == 200
         assert r.json()["name"] == "Neu"
 
-    def test_property_manager_can_update(self, client, db):
+    def test_property_manager_cannot_update(self, client, db):
         prop = make_property(db, name="Alt")
         user = make_user(db, role=UserRole.user)
         db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.manager))
@@ -141,7 +141,8 @@ class TestUpdateProperty:
             headers=auth_headers(user),
             json={"name": "Geändert"},
         )
-        assert r.status_code == 200
+        # spec 006 (F-005): property edit needs property-admin, managers only read/write meters
+        assert r.status_code == 403
 
     def test_property_user_cannot_update(self, client, db):
         prop = make_property(db)

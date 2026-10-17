@@ -301,7 +301,7 @@ class _RestartBackend:
         with open(os.devnull, "rb") as devnull:
             p = subprocess.Popen(
                 [sys.executable, "-m", "uvicorn", "rig_app:app", "--app-dir", rig["BACKEND_DIR"],
-                 "--host", "127.0.0.1", "--port", port, "--log-level", "debug"],
+                 "--host", "127.0.0.1", "--port", port, "--log-level", "debug", "--no-proxy-headers"],
                 env=_backend_proc_env(overrides), cwd=STATE, stdin=devnull, stdout=log, stderr=log,
                 start_new_session=True)
         log.close()

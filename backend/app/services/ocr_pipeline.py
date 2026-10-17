@@ -10,6 +10,7 @@ optional `ocr-service` container (see ocr-service/app/pipeline.py). This
 module calls it over HTTP via _ocr_service_scan/_ocr_service_serial, the
 same way it already calls the optional Ollama LLM service.
 """
+import io
 import json
 import logging
 import re
@@ -43,6 +44,43 @@ _MIME_TO_EXT: dict[str, str] = {
 }
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# F-011: decoded-size limits.  The byte limit above says nothing about the
+# decoded bitmap (a 20000x20000 PNG is a few KB).  Defaults apply until the
+# Settings fields ``max_image_pixels`` / ``max_image_side`` exist.
+_DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
+_DEFAULT_MAX_IMAGE_SIDE = 12_000
+
+
+class ImageTooLarge(ValueError):
+    """Image dimensions exceed the configured limits (or cannot be read)."""
+
+
+def image_limits() -> tuple[int, int]:
+    """(max pixels, max side length) from settings, with safe defaults."""
+    return (
+        int(getattr(settings, "max_image_pixels", _DEFAULT_MAX_IMAGE_PIXELS)),
+        int(getattr(settings, "max_image_side", _DEFAULT_MAX_IMAGE_SIDE)),
+    )
+
+
+def check_image_dimensions(contents: bytes) -> tuple[int, int]:
+    """Read width/height from the image header only and enforce the limits.
+
+    PIL opens lazily, so no pixel data is decoded.  An unparseable header is
+    rejected as well - the file would not be usable anyway.
+    """
+    from PIL import Image
+
+    max_pixels, max_side = image_limits()
+    try:
+        with Image.open(io.BytesIO(contents)) as img:
+            width, height = img.size
+    except Exception as exc:  # PIL raises many types incl. DecompressionBombError
+        raise ImageTooLarge("unreadable image header") from exc
+    if width < 1 or height < 1 or max(width, height) > max_side or width * height > max_pixels:
+        raise ImageTooLarge(f"image {width}x{height} exceeds the allowed size")
+    return width, height
 
 # Outbound calls to the optional OCR service MUST be bounded (FR-011) so a
 # stuck/unreachable service cannot degrade the rest of the application.

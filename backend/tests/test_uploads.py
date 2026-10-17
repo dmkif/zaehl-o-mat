@@ -16,7 +16,14 @@ from pathlib import Path
 import pytest
 
 from app.models import UserRole
+from app.models import UploadFile
 from tests.conftest import auth_headers, make_user
+
+
+def _registered(db, user, filename):
+    """Registry row as a scan would leave it: file belongs to ``user`` (F-004)."""
+    db.add(UploadFile(filename=filename, uploaded_by_id=user.id))
+    db.commit()
 
 # Minimal valid JPEG bytes (1×1 pixel)
 _MINIMAL_JPEG = (
@@ -80,6 +87,7 @@ class TestUploadsRouter:
         (upload_dir / "meter.jpg").write_bytes(_MINIMAL_JPEG)
 
         user = make_user(db)
+        _registered(db, user, "meter.jpg")
         r = client.get("/api/uploads/meter.jpg", headers=auth_headers(user))
         assert r.status_code == 200
         assert r.content == _MINIMAL_JPEG
@@ -92,12 +100,13 @@ class TestUploadsRouter:
         (upload_dir / "photo.jpg").write_bytes(_MINIMAL_JPEG)
 
         user = make_user(db)
+        _registered(db, user, "photo.jpg")
         r = client.get("/api/uploads/photo.jpg", headers=auth_headers(user))
         assert r.status_code == 200
         assert "jpeg" in r.headers.get("content-type", "").lower()
 
     def test_non_admin_user_can_access_own_uploads(self, client, db, tmp_path, monkeypatch):
-        """Regular users with a valid token should be able to serve uploads (no ACL on filename)."""
+        """Regular users can serve files they uploaded (registry ownership, F-004)."""
         upload_dir = tmp_path / "uploads"
         upload_dir.mkdir()
         monkeypatch.setattr("app.routers.uploads.settings.upload_path", str(upload_dir))
@@ -105,5 +114,6 @@ class TestUploadsRouter:
         (upload_dir / "meter.jpg").write_bytes(_MINIMAL_JPEG)
 
         regular_user = make_user(db, role=UserRole.user)
+        _registered(db, regular_user, "meter.jpg")
         r = client.get("/api/uploads/meter.jpg", headers=auth_headers(regular_user))
         assert r.status_code == 200

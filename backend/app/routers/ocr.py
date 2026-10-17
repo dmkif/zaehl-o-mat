@@ -30,9 +30,12 @@ from app.services.llm_client import (
 )
 from app.models import User, Meter, Reading
 from app.permissions import accessible_property_ids, is_global_admin, require_property_access
+from app.upload_registry import get_upload, may_use_upload, register_upload
 # Re-exported pipeline internals: tests and app.main import these names from
 # app.routers.ocr, and monkeypatching them on this module must keep working.
 from app.services.ocr_pipeline import (  # noqa: F401
+    ImageTooLarge,
+    check_image_dimensions,
     _ALLOWED_IMAGE_MIMES,
     _MAX_UPLOAD_BYTES,
     _MIME_TO_EXT,
@@ -55,6 +58,17 @@ _LLM_ERROR_STATUS = {
     LocalModelUnavailable: status.HTTP_503_SERVICE_UNAVAILABLE,
     GatewayConfigError: status.HTTP_502_BAD_GATEWAY,
 }
+
+
+def _require_sane_dimensions(contents: bytes, label: str) -> None:
+    """413 when the decoded size (read from the header) exceeds the limits (F-011)."""
+    try:
+        check_image_dimensions(contents)
+    except ImageTooLarge:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"{label} dimensions too large",
+        ) from None
 
 
 def _llm_http_error(exc: LLMError) -> HTTPException:
@@ -287,6 +301,8 @@ async def scan_meter(
     if detected_mime not in _ALLOWED_IMAGE_MIMES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be a supported image (JPEG, PNG, WEBP, GIF, BMP, TIFF)")
 
+    _require_sane_dimensions(contents, "Image")
+
     # Validate optional serial file
     serial_contents: bytes | None = None
     if serial_file is not None:
@@ -298,6 +314,7 @@ async def scan_meter(
         serial_detected_mime = filetype.guess_mime(serial_contents)
         if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be a supported image")
+        _require_sane_dimensions(serial_contents, "Serial image")
 
     # Validate that the requesting user has access to the given meter
     meter: Meter | None = None
@@ -327,6 +344,9 @@ async def scan_meter(
     filename = f"{uuid.uuid4()}{_MIME_TO_EXT.get(detected_mime, '.jpg')}"
     filepath = upload_dir / filename
     filepath.write_bytes(contents)
+    upload_property_id = meter.property_id if meter is not None else None
+    register_upload(db, filename, upload_property_id, current_user)
+    db.commit()
 
     # Compute SHA-256 so the client can pass it to create_reading for duplicate detection
     image_hash = hashlib.sha256(contents).hexdigest()
@@ -343,6 +363,8 @@ async def scan_meter(
         serial_filepath = upload_dir / serial_filename
         serial_filepath.write_bytes(serial_contents)
         serial_image_path = f"uploads/{serial_filename}"
+        register_upload(db, serial_filename, upload_property_id, current_user)
+        db.commit()
         result["detected_serial"] = await _try_ocr_service_serial(serial_filepath)
     elif serial_contents is not None:
         # LLM already found serial — still save the crop for future rescan
@@ -350,6 +372,8 @@ async def scan_meter(
         serial_filepath = upload_dir / serial_filename
         serial_filepath.write_bytes(serial_contents)
         serial_image_path = f"uploads/{serial_filename}"
+        register_upload(db, serial_filename, upload_property_id, current_user)
+        db.commit()
 
     return {"image_path": f"uploads/{filename}", "serial_image_path": serial_image_path, "image_hash": image_hash, **result}
 
@@ -386,6 +410,10 @@ async def hint_rescan_for_meter(
     clean_name = Path(image_path.lstrip("/")).name
     filepath = (upload_dir / clean_name).resolve()
     if not filepath.is_relative_to(upload_dir) or not filepath.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
+    # F-004: the file must be one the caller uploaded or that belongs to the
+    # meter's property - checked before anything is sent to the LLM gateway.
+    if not may_use_upload(db, get_upload(db, clean_name), current_user, meter.property_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
 
     meter_type = meter.meter_type.value
@@ -527,6 +555,13 @@ async def bulk_scan_meters(
                     yield f"data: {json.dumps(item)}\n\n"
                     continue
 
+                try:
+                    check_image_dimensions(contents)
+                except ImageTooLarge:
+                    item["error"] = "Image dimensions too large"
+                    yield f"data: {json.dumps(item)}\n\n"
+                    continue
+
                 # ── SHA-256 hash for duplicate detection ──────────────────────
                 image_hash = hashlib.sha256(contents).hexdigest()
                 item["image_hash"] = image_hash
@@ -564,6 +599,8 @@ async def bulk_scan_meters(
                 filepath = upload_dir / filename
                 filepath.write_bytes(contents)
                 item["temp_image_path"] = f"uploads/{filename}"
+                register_upload(db, filename, property_id, current_user)
+                db.commit()
 
                 # Extract EXIF date + time
                 item["exif_date"] = _extract_exif_datetime(filepath)

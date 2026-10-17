@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models import Meter, Reading, ReadingSource, User
 from app.permissions import accessible_property_ids, get_meter_with_access, is_global_admin
 from app.schemas.readings import ReadingCreate, ReadingResponse, ReadingUpdate
+from app.upload_registry import filename_of, get_upload, may_use_upload, other_references
 
 router = APIRouter(prefix="/properties/{property_id}/meters/{meter_id}/readings", tags=["readings"])
 
@@ -61,11 +62,17 @@ def create_reading(
 ):
     get_meter_with_access(db, property_id, meter_id, current_user, level="write")
 
+    # F-004: only files the caller uploaded (or that belong to this property)
+    # may be attached.  Unknown and foreign files get the same answer.
+    for stored in (body.image_path, body.serial_image_path):
+        if stored and not may_use_upload(db, get_upload(db, filename_of(stored)), current_user, property_id):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown image")
+
     # Compute SHA-256 of the uploaded image so we can detect duplicate readings
     # in future import sessions.
     image_hash: str | None = None
     if body.image_path:
-        img_file = Path(settings.upload_path) / Path(body.image_path).name
+        img_file = Path(settings.upload_path) / filename_of(body.image_path)
         try:
             image_hash = hashlib.sha256(img_file.read_bytes()).hexdigest()
         except OSError:
@@ -113,16 +120,24 @@ def delete_reading(
     reading = db.query(Reading).filter(Reading.id == reading_id, Reading.meter_id == meter_id).first()
     if not reading:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    image_path = reading.image_path
-    serial_image_path = reading.serial_image_path
+    paths = [p for p in (reading.image_path, reading.serial_image_path) if p]
+    reading_id_deleted = reading.id
     db.delete(reading)
     db.commit()
-    if image_path:
-        img_file = Path(settings.upload_path) / Path(image_path).name
-        img_file.unlink(missing_ok=True)
-    if serial_image_path:
-        serial_file = Path(settings.upload_path) / Path(serial_image_path).name
-        serial_file.unlink(missing_ok=True)
+    # Unlink only files no other reading still references (the same upload
+    # can back several readings); never follow a legacy value outside the dir.
+    upload_root = Path(settings.upload_path).resolve()
+    for stored in paths:
+        name = filename_of(stored)
+        if other_references(db, name, reading_id_deleted):
+            continue
+        target = (upload_root / name).resolve()
+        if target.parent == upload_root:
+            target.unlink(missing_ok=True)
+        row = get_upload(db, name)
+        if row is not None:
+            db.delete(row)
+            db.commit()
 
 
 @router.patch("/{reading_id}", response_model=ReadingResponse)
