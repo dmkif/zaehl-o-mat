@@ -90,7 +90,7 @@ All variables are set on the `backend` service.
 | `OLLAMA_API_KEY` | `""` | Bearer token for hosted/proxied Ollama endpoints. Not needed for a local, unauthenticated Ollama. |
 | **OCR (optional)** | | |
 | `OCR_URL` | `""` | OCR service base URL (e.g. `http://ocr:8100`). Leave empty to disable — the app runs fine on the LLM path alone. |
-| `OCR_API_KEY` | `""` | Bearer token for a hosted/proxied OCR endpoint. Not needed for a local, unauthenticated OCR service. |
+| `OCR_API_KEY` | `""` | Shared secret: the backend sends it as Bearer token, the OCR service (same variable) requires it. Required by Compose and the chart; empty = unauthenticated OCR service. |
 | **Oil price** | | |
 | `OIL_PRICE_SOURCE` | `heizoel-aktuell` | Price source: `heizoel-aktuell` \| `tankerkoenig` \| `custom` |
 | `OIL_PRICE_API_KEY` | `""` | API key for tankerkoenig or custom source |
@@ -180,11 +180,13 @@ the backend image — the backend carries no OCR-engine weight at all when
 - Enable it by running the `ocr` service in `docker-compose.yaml` (on by
   default in the quickstart) or setting `ocr.enabled: true` in the Helm
   chart's `values.yaml`, and pointing `OCR_URL` at it.
-- The OCR service implements no authentication itself — same as Ollama.
-  If you front it with an authenticating reverse proxy (recommended once
-  it and the backend no longer share a fully trusted private network,
-  e.g. across Kubernetes namespaces), set `OCR_API_KEY` so the backend
-  sends the token with every request.
+- The OCR service authenticates `/scan` and `/serial` with a shared secret:
+  when `OCR_API_KEY` is set it requires `Authorization: Bearer <OCR_API_KEY>`
+  (constant-time compare, `/health` stays open for probes) and the backend
+  sends the same value. Compose requires `OCR_API_KEY` in `.env`
+  (`openssl rand -base64 32`); the Helm chart requires `ocr.existingSecret`
+  (Secret key `OCR_API_KEY`) unless `ocr.allowUnauthenticated=true`. Without a
+  key the service still runs, unauthenticated, and logs a warning at startup.
 - Disable it entirely by not running the container / leaving `OCR_URL`
   empty — the app works the same as with any other optional subsystem
   turned off (see Health Check below).

@@ -63,6 +63,9 @@ services:
       # Same decoded-size limits as the backend (F-011), checked from the image header.
       MAX_IMAGE_PIXELS: "40000000"
       MAX_IMAGE_SIDE: "12000"
+      # Shared secret with the backend (F-030): /scan and /serial require it as Bearer token.
+      # Required, no default: `openssl rand -base64 32`
+      OCR_API_KEY: ${OCR_API_KEY:?set OCR_API_KEY in .env (openssl rand -base64 32), or remove the ocr service}
     devices:
       - nvidia.com/gpu=all
 
@@ -116,6 +119,8 @@ services:
       OLLAMA_MODEL: "qwen3-vl:8b"
       # Optional — leave empty (or remove) to run without the `ocr` service above.
       OCR_URL: http://ocr:8100
+      # Same value as the ocr service's OCR_API_KEY (sent as Bearer token).
+      OCR_API_KEY: ${OCR_API_KEY:-}
       # Decoded image limits for uploads (checked from the header, before storing).
       MAX_IMAGE_PIXELS: "40000000"
       MAX_IMAGE_SIDE: "12000"

@@ -16,6 +16,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects import sqlite as _sqlite
 from sqlalchemy.dialects.postgresql import UUID
@@ -104,7 +105,7 @@ class User(Base):
     token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="user")
+    property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="user", cascade="all, delete-orphan", passive_deletes=True)
 
 
 class Property(Base):
@@ -168,6 +169,11 @@ class Reading(Base):
         Index("idx_readings_meter_read_at", "meter_id", "read_at"),
         Index("idx_readings_auto_source", "meter_id", "read_at",
               postgresql_where="source IN ('auto', 'archived')"),
+        # F-022: the duplicate-image check is enforced by the database, not only
+        # by a check-then-insert.  Per meter; NULL hashes never collide.
+        Index("uq_readings_meter_image_hash", "meter_id", "image_hash", unique=True,
+              postgresql_where=text("image_hash IS NOT NULL"),
+              sqlite_where=text("image_hash IS NOT NULL")),
     )
 
     id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)

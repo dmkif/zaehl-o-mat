@@ -195,7 +195,8 @@ class TestCreateReading:
         assert r.status_code == 422
 
     def test_create_reading_with_auto_source(self, client, db):
-        """OCR-scanned readings must be saveable with source='auto'."""
+        """OCR-scanned readings are still accepted when the client sends source='auto'
+        (the shipped frontend does), but the server stores them as 'manual' (F-021)."""
         prop = make_property(db)
         meter = make_meter(db, prop.id)
         admin = make_user(db, role=UserRole.admin)
@@ -207,7 +208,7 @@ class TestCreateReading:
         )
         assert r.status_code == 201
         body = r.json()
-        assert body["source"] == "auto"
+        assert body["source"] == "manual"
         assert body["image_path"] == path
 
     def test_create_reading_trailing_slash_not_required(self, client, db):
@@ -225,7 +226,7 @@ class TestCreateReading:
         assert float(r.json()["value"]) == pytest.approx(777.0)
 
     def test_create_ocr_reading_full_flow(self, client, db):
-        """Full OCR save flow: value as float, source auto, image_path optional note."""
+        """Full OCR save flow: value as float, client source auto (ignored), image_path optional note."""
         prop = make_property(db)
         meter = make_meter(db, prop.id)
         admin = make_user(db, role=UserRole.admin)
@@ -240,7 +241,7 @@ class TestCreateReading:
         assert r.status_code == 201
         body = r.json()
         assert float(body["value"]) == pytest.approx(99834.5)
-        assert body["source"] == "auto"
+        assert body["source"] == "manual"  # F-021: server-derived
         assert body["image_path"] == path
         assert body["note"] == "OCR confidence 0.92"
         assert body["read_at"] is not None

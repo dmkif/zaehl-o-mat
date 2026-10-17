@@ -4,17 +4,20 @@ from decimal import Decimal
 from typing import Optional
 from pydantic import BaseModel, field_validator
 from app.models import ReadingSource
+from app.schemas.common import ReadingValue, str_with_limit
 from app.upload_registry import is_valid_stored_path
 
 
 class ReadingCreate(BaseModel):
-    value: Decimal
+    value: ReadingValue
     read_at: Optional[datetime] = None
+    # F-021: accepted for client compatibility (an unknown value is still a 422)
+    # but ignored - the server always stores API-created readings as 'manual'.
     source: Optional[ReadingSource] = ReadingSource.manual
     image_path: Optional[str] = None
     serial_image_path: Optional[str] = None
-    image_hash: Optional[str] = None
-    note: Optional[str] = None
+    image_hash: Optional[str_with_limit(128)] = None  # ignored, the server hashes the stored file
+    note: Optional[str_with_limit(5000)] = None
 
     @field_validator("image_path", "serial_image_path")
     @classmethod
@@ -43,6 +46,6 @@ class ReadingResponse(BaseModel):
 
 
 class ReadingUpdate(BaseModel):
-    value: Optional[Decimal] = None
+    value: Optional[ReadingValue] = None
     read_at: Optional[datetime] = None
-    note: Optional[str] = None
+    note: Optional[str_with_limit(5000)] = None

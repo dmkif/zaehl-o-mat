@@ -23,6 +23,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter
+from app.services.image_hygiene import ImageUndecodable, sanitize_image
 from app.services.llm_client import (
     GatewayConfigError,
     LLMError,
@@ -72,6 +73,22 @@ def _require_sane_dimensions(contents: bytes, label: str) -> None:
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f"{label} dimensions too large",
         ) from None
+
+
+async def _sanitized_or_400(contents: bytes, label: str) -> bytes:
+    """Decode check + metadata removal before anything is stored (F-032, F-033)."""
+    try:
+        return await asyncio.to_thread(sanitize_image, contents)
+    except ImageUndecodable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{label} is damaged or incomplete",
+        ) from None
+
+
+def _reject_nul(value: str | None, label: str) -> None:
+    if value is not None and "\x00" in value:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"{label} contains invalid characters")
 
 
 def _ocr_service_http_error() -> HTTPException:
@@ -363,6 +380,7 @@ async def scan_meter(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be a supported image (JPEG, PNG, WEBP, GIF, BMP, TIFF)")
 
     _require_sane_dimensions(contents, "Image")
+    contents = await _sanitized_or_400(contents, "Image")
 
     # Validate optional serial file
     serial_contents: bytes | None = None
@@ -376,6 +394,7 @@ async def scan_meter(
         if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be a supported image")
         _require_sane_dimensions(serial_contents, "Serial image")
+        serial_contents = await _sanitized_or_400(serial_contents, "Serial image")
 
     # Validate that the requesting user has access to the given meter
     meter: Meter | None = None
@@ -409,7 +428,7 @@ async def scan_meter(
     register_upload(db, filename, upload_property_id, current_user)
     db.commit()
 
-    # Compute SHA-256 so the client can pass it to create_reading for duplicate detection
+    # SHA-256 of the stored (sanitised) bytes - the same value create_reading derives from the file
     image_hash = hashlib.sha256(contents).hexdigest()
 
     stored = [filename]  # F-028: everything written for this scan is removed again on failure
@@ -460,6 +479,10 @@ async def hint_rescan_for_meter(
 
     This avoids a full re-scan when the first-pass result was already correct.
     """
+    _reject_nul(image_path, "image_path")
+    _reject_nul(current_value, "current_value")
+    if len(image_path) > 512 or (current_value is not None and len(current_value) > 64):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Value too long")
     # Load meter + access check
     meter = db.query(Meter).filter(Meter.id == meter_id, Meter.replaced_at.is_(None)).first()
     if not meter:
@@ -647,7 +670,14 @@ async def bulk_scan_meters(
                     yield f"data: {json.dumps(item)}\n\n"
                     continue
 
-                # ── SHA-256 hash for duplicate detection ──────────────────────
+                try:
+                    contents = await asyncio.to_thread(sanitize_image, contents)
+                except ImageUndecodable:
+                    item["error"] = "Image is damaged or incomplete"
+                    yield f"data: {json.dumps(item)}\n\n"
+                    continue
+
+                # ── SHA-256 of the stored (sanitised) bytes for duplicate detection ──
                 image_hash = hashlib.sha256(contents).hexdigest()
                 item["image_hash"] = image_hash
 

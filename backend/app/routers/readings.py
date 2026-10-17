@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -16,6 +17,17 @@ from app.schemas.readings import ReadingCreate, ReadingResponse, ReadingUpdate
 from app.upload_registry import filename_of, get_upload, may_use_upload, other_references
 
 router = APIRouter(prefix="/properties/{property_id}/meters/{meter_id}/readings", tags=["readings"])
+
+
+def _duplicate_response(existing: Reading | None) -> HTTPException:
+    detail: dict = {"code": "duplicate_image"}
+    if existing is not None:
+        detail.update(
+            reading_id=existing.id,
+            value=str(existing.value),
+            read_at=existing.read_at.isoformat(),
+        )
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
 def _find_duplicate_reading(db: Session, image_hash: str, user: User) -> Reading | None:
@@ -32,6 +44,11 @@ def _find_duplicate_reading(db: Session, image_hash: str, user: User) -> Reading
     return q.first()
 
 
+# Kept as a separate name so tests can simulate a lost race (F-022): the
+# pre-check says "free", the unique index still decides.
+_precheck_duplicate = _find_duplicate_reading
+
+
 @router.get("/", response_model=List[ReadingResponse])
 def list_readings(
     property_id: uuid.UUID,
@@ -39,7 +56,7 @@ def list_readings(
     from_dt: Optional[datetime] = Query(None, alias="from"),
     to_dt: Optional[datetime] = Query(None, alias="to"),
     limit: int = Query(200, ge=1, le=10000),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=2_147_483_647),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -79,33 +96,38 @@ def create_reading(
             pass  # file missing → proceed without hash
 
     # Duplicate check: if this exact image (same hash) was already saved, reject.
+    # The partial unique index (meter_id, image_hash) closes the race between
+    # this lookup and the insert (F-022).
     if image_hash:
-        existing = _find_duplicate_reading(db, image_hash, current_user)
+        existing = _precheck_duplicate(db, image_hash, current_user)
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "duplicate_image",
-                    "reading_id": existing.id,
-                    "value": str(existing.value),
-                    "read_at": existing.read_at.isoformat(),
-                },
-            )
+            raise _duplicate_response(existing)
 
     reading = Reading(
         meter_id=meter_id,
         value=body.value,
         read_at=body.read_at or datetime.now(timezone.utc),
-        source=body.source or ReadingSource.manual,
+        # F-021: the source is server-derived.  A client-supplied 'auto' /
+        # 'archived' would hand the reading to the retention job.
+        source=ReadingSource.manual,
         image_path=body.image_path,
         serial_image_path=body.serial_image_path,
         image_hash=image_hash,
         note=body.note,
     )
     db.add(reading)
-    db.commit()
-    db.refresh(reading)
-    return reading
+    try:
+        db.flush()
+        # F-035: build the response before the commit, so a failing read after
+        # a successful commit cannot turn an acknowledged write into an error.
+        response = ReadingResponse.model_validate(reading)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if not image_hash:
+            raise
+        raise _duplicate_response(_find_duplicate_reading(db, image_hash, current_user)) from None
+    return response
 
 
 @router.delete("/{reading_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -162,6 +184,7 @@ def update_reading(
         reading.read_at = updates["read_at"]
     if "note" in updates:
         reading.note = updates["note"]
+    db.flush()
+    response = ReadingResponse.model_validate(reading)  # before commit, see create_reading
     db.commit()
-    db.refresh(reading)
-    return reading
+    return response

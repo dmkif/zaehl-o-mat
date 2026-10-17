@@ -8,6 +8,7 @@ Policy:
   - Read at 91 days – 2 years  → keep 1 average per 15 min
   - Read at ≤ 90 days          → keep 1 average per minute
   - Manual readings             → never touched
+  - Rows with an image or a note → never touched (evidence, F-021)
 
 Also removes uploaded image files that are no longer referenced by any
 reading (e.g. scans that were never confirmed) after a grace period.
@@ -90,7 +91,14 @@ def _downsample(
     Uses raw SQL for performance (potentially millions of rows).
     """
     sources = "('auto')" if bucket_minutes == 1 else "('auto', 'archived')"
-    conditions = [f"r.source IN {sources}"]
+    # F-021: a row carrying evidence (image, note) is never merged away, even if
+    # an older client managed to store it as 'auto'.
+    conditions = [
+        f"r.source IN {sources}",
+        "r.image_path IS NULL",
+        "r.serial_image_path IS NULL",
+        "r.note IS NULL",
+    ]
     params: dict = {"bucket": bucket_minutes}
 
     if older_than:
