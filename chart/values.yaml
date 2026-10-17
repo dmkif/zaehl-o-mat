@@ -87,6 +87,11 @@ backend:
     # OIDC_MANAGER_GROUP: "manager"
     # OIDC_USER_GROUP: "user"
     # OIDC_DEFAULT_MANAGER_GROUP: "manager"
+    # -- Diagnostic: write the group names delivered by the identity provider
+    # (next to the expected ones) to the log when an SSO sign-in is rejected.
+    # Group names are sensitive; default "false". Turn on only while
+    # investigating, restart the backend, turn off again. Logs a WARNING at start.
+    # OIDC_GROUP_DIAGNOSTICS: "false"
 
     # -- Third-party API for oil_price_source: tankerkoenig or custom.
     # OIL_PRICE_API_URL is the endpoint to call; the API key (if the

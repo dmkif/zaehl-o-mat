@@ -84,6 +84,8 @@ services:
       OIDC_CLIENT_SECRET: ""
       OIDC_DISCOVERY_URL: ""
       OIDC_REDIRECT_URI: "http://localhost:5173/api/auth/callback"
+      # Log group names of rejected SSO sign-ins (sensitive; enable only while investigating)
+      OIDC_GROUP_DIAGNOSTICS: "false"
 
   frontend:
     build:

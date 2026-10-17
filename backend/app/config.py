@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     max_image_pixels: int = Field(default=40_000_000, gt=0)
     max_image_side: int = Field(default=12_000, gt=0)
 
+    # Spec 003: write group names of rejected SSO sign-ins to the log (sensitive; off by default)
+    oidc_group_diagnostics: bool = False
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> "Settings":
         if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":

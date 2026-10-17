@@ -96,6 +96,7 @@ All variables are set on the `backend` service.
 | `OIDC_ADMIN_GROUP` | `admin` | OIDC group mapped to the `admin` role |
 | `OIDC_MANAGER_GROUP` | `verwalter` | OIDC group mapped to the `manager` role |
 | `OIDC_USER_GROUP` | `user` | OIDC group mapped to the `user` role |
+| `OIDC_GROUP_DIAGNOSTICS` | `false` | Log delivered vs. expected group names when an SSO sign-in is rejected (sensitive; enable only while investigating, warns at start-up) |
 
 ### Secrets from Files
 
