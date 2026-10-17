@@ -51,6 +51,7 @@ All variables are set on the `backend` service.
 | `UPLOAD_PATH` | `/data/uploads` | Directory where meter images are stored |
 | `APP_BASE_URL` | `https://zaehl-o-mat.example.com` | Public base URL (used for CORS + OIDC) |
 | `DEBUG` | `false` | Enable debug logging |
+| `TRUSTED_PROXIES` | loopback + RFC1918 | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` is believed. Rate limiting keys on the rightmost forwarded address not in this list (client-supplied entries are ignored); `*` is rejected. The default trusts every private address (works behind the compose `proxy` / Traefik, but any pod/container on the private network could spoof its IP) - in production narrow it to the proxy's subnet / Traefik pod CIDR. uvicorn runs with `--no-proxy-headers`; the limiter evaluates the header itself. |
 | **KI-Gateway** (alternative to Ollama) | | |
 | `OCR_BACKEND` | `ollama` | `ollama` (direct Ollama API) or `gateway` (OpenAI-compatible KI-Gateway). |
 | `GATEWAY_BASE_URL` | `""` | Required for `gateway`, e.g. `http://ai-gateway.ai-gateway.svc:20128/v1`. |

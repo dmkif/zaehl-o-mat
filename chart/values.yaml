@@ -54,6 +54,15 @@ backend:
     # One of: heizoel-aktuell | tankerkoenig | custom
     OIL_PRICE_SOURCE: heizoel-aktuell
 
+    # -- Peers whose X-Forwarded-For the rate limiter believes (comma-separated
+    # CIDRs; '*' is rejected). The limiter keys on the rightmost forwarded
+    # address that is NOT in this list, so client-supplied entries cannot dodge
+    # limits (e.g. superadmin-login 5/min). The default (loopback + RFC1918)
+    # works out of the box behind Traefik, but then ANY pod in the cluster is
+    # trusted and could spoof its address. Production: narrow it to the Traefik
+    # pod CIDR / node range, and keep NetworkPolicy ingress limited to Traefik.
+    TRUSTED_PROXIES: "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
     # -- Public base URL of the deployment. Used for CORS and as the base
     # for the OIDC redirect URI. Required for correct behavior once you're
     # not just testing on localhost.

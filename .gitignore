@@ -32,3 +32,8 @@ chart/charts/*.tgz
 !.claude/skills
 .claude/skills/*
 !.claude/skills/speckit-git-branch
+
+# security rig
+security/.venv/
+security/rig/.state/
+security/rig/.last-logs/

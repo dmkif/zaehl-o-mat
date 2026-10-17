@@ -1,0 +1,11 @@
+diff -ruN a/backend/app/permissions.py b/backend/app/permissions.py
+--- a/backend/app/permissions.py	2026-10-09 10:24:02.051907617 +0200
++++ b/backend/app/permissions.py	2026-10-09 10:24:02.052079790 +0200
+@@ -47,7 +47,6 @@
+         db.query(PropertyUser)
+         .filter(
+             PropertyUser.property_id == property_id,
+-            PropertyUser.user_id == user.id,
+             PropertyUser.role.in_(_LEVEL_ROLES[level]),
+         )
+         .first()

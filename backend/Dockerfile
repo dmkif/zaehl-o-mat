@@ -20,7 +20,8 @@ RUN adduser --disabled-password --gecos "" appuser && \
 USER appuser
 
 EXPOSE 8000
-# --proxy-headers + --forwarded-allow-ips: trust X-Forwarded-For from the
-# reverse proxy so rate limiting keys on the real client IP, not the proxy.
-CMD alembic upgrade head && \
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+# --no-proxy-headers: uvicorn must not rewrite the client address from
+# X-Forwarded-For (with '*' that would take the client-controlled leftmost
+# entry). The rate limiter (app/limiter.py) evaluates the header itself, only
+# for peers in TRUSTED_PROXIES. `exec` makes uvicorn PID 1 so SIGTERM reaches it.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-proxy-headers"]
