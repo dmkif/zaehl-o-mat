@@ -199,14 +199,28 @@ class OilDelivery(Base):
     id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
     property_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
     liters: Mapped[float] = mapped_column(Numeric(precision=10, scale=2), nullable=False)
-    total_price: Mapped[float] = mapped_column(Numeric(precision=10, scale=2), nullable=False)
-    price_per_liter: Mapped[float] = mapped_column(Numeric(precision=8, scale=4), nullable=False)
+    total_price: Mapped[float | None] = mapped_column(Numeric(precision=10, scale=2), nullable=True)
+    price_per_liter: Mapped[float | None] = mapped_column(Numeric(precision=8, scale=4), nullable=True)
     delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     supplier: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     property: Mapped["Property"] = relationship(back_populates="oil_deliveries")
+
+
+class OilDeliveryDismissal(Base):
+    """A jump between two readings the user declared a reading error (not a delivery)."""
+    __tablename__ = "oil_delivery_dismissals"
+    __table_args__ = (UniqueConstraint("from_reading_id", "to_reading_id"),)
+
+    id: Mapped[int] = mapped_column(_BigIntPK, primary_key=True, autoincrement=True)
+    meter_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("meters.id", ondelete="CASCADE"), nullable=False)
+    from_reading_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("readings.id", ondelete="CASCADE"), nullable=False)
+    to_reading_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("readings.id", ondelete="CASCADE"), nullable=False)
+    dismissed_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class OilMarketPrice(Base):

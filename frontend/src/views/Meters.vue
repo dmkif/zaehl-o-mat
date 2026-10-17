@@ -6,7 +6,13 @@
       </RouterLink>
       <span class="text-gray-400">/</span>
       <h1 class="text-2xl font-bold">{{ $t('meters.title') }}</h1>
-      <div class="ml-auto">
+      <div class="ml-auto flex items-center gap-2">
+        <RouterLink
+          :to="`/properties/${propertyId}/oil-deliveries`"
+          class="flex items-center gap-2 px-3 py-1.5 text-sm border dark:border-gray-600 rounded-xl font-medium hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+        >
+          ⛽ {{ $t('oil.link') }}
+        </RouterLink>
         <button
           v-if="authStore.isManager"
           @click="showBulkImport = true"
