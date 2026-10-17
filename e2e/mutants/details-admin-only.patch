@@ -1,0 +1,11 @@
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -264,7 +264,7 @@
+ 
+ 
+ @app.get("/api/health/details", tags=["health"])
+-def health_details(response: Response, user: User = Depends(get_current_user)):
++def health_details(response: Response, user: User = Depends(__import__('app.auth', fromlist=['x']).require_admin)):  # MUTANT details-admin-only
+     """Subsystem state for signed-in users (status footer): DB, scheduler, OCR, LLM.
+ 
+     Version and model name are only returned to admins. OCR/LLM do not affect status.

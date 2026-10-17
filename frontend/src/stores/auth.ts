@@ -22,12 +22,21 @@ export const useAuthStore = defineStore('auth', () => {
     sessionStorage.setItem('jwt', t)
   }
 
-  function tryRestoreSession() {
-    const stored = sessionStorage.getItem('jwt')
-    if (stored) {
-      token.value = stored
-      fetchMe()
+  // Restoring is a one-shot promise the router guard can wait for: a reload of /admin must not be decided
+  // before /auth/me told us the role (otherwise an admin is bounced to the dashboard).
+  let restoring: Promise<void> | null = null
+
+  function tryRestoreSession(): Promise<void> {
+    if (!restoring) {
+      const stored = sessionStorage.getItem('jwt')
+      if (stored) {
+        token.value = stored
+        restoring = fetchMe()
+      } else {
+        restoring = Promise.resolve()
+      }
     }
+    return restoring
   }
 
   async function fetchMe() {

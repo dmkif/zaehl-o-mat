@@ -4,6 +4,9 @@
 # Env knobs: SEC_BACKEND_DIR (backend source dir, default <repo>/backend; used for mutants),
 #            SEC_PYTHON (python used to create the venv, default python3),
 #            SEC_PG_IMAGE (default docker.io/library/postgres:18-trixie).
+#            SEC_E2E=1 (set by up-e2e.sh): additionally start rig/browser_proxy.py, the HTTPS edge of the browser
+#            e2e suite (feature 013); the backend then runs behind it as in production (APP_BASE_URL and
+#            OIDC_REDIRECT_URI = proxy origin, TRUSTED_PROXIES = loopback). SEC_E2E_DIST = frontend build dir.
 set -euo pipefail
 
 RIG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,6 +54,14 @@ PG_PASS=$(rand 18); JWT_SECRET=$(rand 48); SA_USER=rig-superadmin; SA_PASS=$(ran
 OIDC_SECRET=$(rand 24); GW_KEY=$(rand 24); OCR_KEY=$(rand 24)
 
 BACKEND_URL="http://$LOOP:$BACKEND_PORT"
+# e2e: the browser talks to the HTTPS proxy, the backend builds its public URLs from that origin
+PROXY_PORT=""; PROXY_URL=""; PUBLIC_URL="$BACKEND_URL"
+if [ "${SEC_E2E:-0}" = 1 ]; then
+  PROXY_PORT=$(free_port); PROXY_URL="https://$LOOP:$PROXY_PORT"; PUBLIC_URL="$PROXY_URL"
+  E2E_DIST="${SEC_E2E_DIST:-$REPO/frontend/dist}"
+  [ -f "$E2E_DIST/index.html" ] || die "SEC_E2E=1 but $E2E_DIST/index.html is missing (cd frontend && npm run build)"
+  export SEC_RIG_TRUSTED_PROXIES="${SEC_RIG_TRUSTED_PROXIES:-127.0.0.0/8}"
+fi
 DATABASE_URL="postgresql://rig:$PG_PASS@$LOOP:$PG_PORT/rig"
 OIDC_URL="http://$LOOP:$OIDC_PORT"
 GATEWAY_URL="http://$LOOP:$GW_PORT/v1"
@@ -59,7 +70,7 @@ UPLOAD_DIR="$STATE/uploads"
 BACKEND_LOG="$STATE/backend.log"
 
 # refuse anything that is not loopback
-for u in "$BACKEND_URL" "$DATABASE_URL" "$OIDC_URL" "$GATEWAY_URL" "$OCR_URL"; do
+for u in "$BACKEND_URL" "${PROXY_URL:-$BACKEND_URL}" "$DATABASE_URL" "$OIDC_URL" "$GATEWAY_URL" "$OCR_URL"; do
   case "$u" in
     *://127.0.0.1:*|*@127.0.0.1:*) ;;
     *) die "refusing non-loopback target: $u" ;;
@@ -94,7 +105,7 @@ BACKEND_ENV=(
   "OIDC_CLIENT_ID=rig-client"
   "OIDC_CLIENT_SECRET=$OIDC_SECRET"
   "OIDC_DISCOVERY_URL=$OIDC_URL/.well-known/openid-configuration"
-  "OIDC_REDIRECT_URI=$BACKEND_URL/api/auth/callback"
+  "OIDC_REDIRECT_URI=$PUBLIC_URL/api/auth/callback"
   "OIDC_ADMIN_GROUP=rig-admins"
   "OIDC_MANAGER_GROUP=rig-managers"
   "OIDC_USER_GROUP=rig-users"
@@ -113,7 +124,7 @@ BACKEND_ENV=(
   # feature 010: /auth/login + /auth/callback are rate limited (20/minute); the rig raises it. Only tests that
   # target the limit restart with a small value.
   "OIDC_RATE_LIMIT=100000/minute"
-  "APP_BASE_URL=$BACKEND_URL"
+  "APP_BASE_URL=$PUBLIC_URL"
   "LOG_LEVEL=debug"
   "DEBUG=${SEC_RIG_APP_DEBUG:-true}"
   # The rig peer is loopback, which is in the default TRUSTED_PROXIES: a spoofed X-Forwarded-For would be honoured.
@@ -139,7 +150,7 @@ start_standin() { # name port [extra args...]
   if [ ! -f "$f" ]; then log "stand-in $name.py missing, skipped (port $port stays closed)"; return 0; fi
   # setsid directly as the background job: $! is then the real python pid (own process group)
   ( cd "$STATE"; setsid "${ENVI[@]}" "RIG_OIDC_URL=$OIDC_URL" "RIG_BACKEND_URL=$BACKEND_URL" "RIG_OIDC_CLIENT_ID=rig-client" \
-      "RIG_OIDC_CLIENT_SECRET=$OIDC_SECRET" "RIG_GATEWAY_API_KEY=$GW_KEY" "RIG_REDIRECT_URI=$BACKEND_URL/api/auth/callback" \
+      "RIG_OIDC_CLIENT_SECRET=$OIDC_SECRET" "RIG_GATEWAY_API_KEY=$GW_KEY" "RIG_REDIRECT_URI=$PUBLIC_URL/api/auth/callback" \
       "$PY" "$f" --port "$port" "$@" >"$STATE/$name.log" 2>&1 </dev/null & echo $! >"$STATE/pids/$name" )
   STANDIN_PIDS="${STANDIN_PIDS:+$STANDIN_PIDS,}$(cat "$STATE/pids/$name")"
 }
@@ -173,6 +184,21 @@ for _ in $(seq 1 60); do
 done
 [ "$healthy" = 1 ] || { tail -30 "$BACKEND_LOG" >&2; die "backend not healthy"; }
 
+# --- e2e browser proxy ----------------------------------------------------------------------------------------
+if [ -n "$PROXY_PORT" ]; then
+  log "starting browser proxy on $PROXY_URL (dist: $E2E_DIST)"
+  ( cd "$STATE"; setsid "${ENVI[@]}" "$PY" "$RIG_DIR/browser_proxy.py" --port "$PROXY_PORT" --backend "$BACKEND_URL" \
+      --dist "$E2E_DIST" --cert-dir "$STATE/tls" --repo "$REPO" >"$STATE/browser_proxy.log" 2>&1 </dev/null & echo $! >"$STATE/pids/browser_proxy" )
+  PROXY_PID=$(cat "$STATE/pids/browser_proxy")
+  up=0
+  for _ in $(seq 1 30); do
+    kill -0 "$PROXY_PID" 2>/dev/null || { tail -20 "$STATE/browser_proxy.log" >&2; die "browser proxy exited during start-up"; }
+    if "$PY" -c "import httpx,sys;sys.exit(0 if httpx.get(sys.argv[1]+'/api/health/live',timeout=2,verify=False).status_code==200 else 1)" "$PROXY_URL" 2>/dev/null; then up=1; break; fi
+    sleep 0.5
+  done
+  [ "$up" = 1 ] || { tail -20 "$STATE/browser_proxy.log" >&2; die "browser proxy not answering"; }
+fi
+
 # --- state file ---------------------------------------------------------------
 cat >"$STATE/rig.env.tmp" <<EOT
 BACKEND_URL=$BACKEND_URL
@@ -194,6 +220,8 @@ BACKEND_PID=$BACKEND_PID
 STANDIN_PIDS=$STANDIN_PIDS
 BACKEND_LOG=$BACKEND_LOG
 BACKEND_DIR=$BACKEND_DIR
+PROXY_URL=$PROXY_URL
+PUBLIC_URL=$PUBLIC_URL
 EOT
 chmod 600 "$STATE/rig.env.tmp"; mv "$STATE/rig.env.tmp" "$STATE/rig.env"
 
