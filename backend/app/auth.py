@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
@@ -27,18 +28,50 @@ def create_access_token(data: dict, expires_minutes: Optional[int] = None) -> st
 
 
 def decode_access_token(token: str) -> dict:
-    claims = _jwt.decode(token, settings.jwt_secret_key)
-    claims.validate()
+    """Decode and validate a JWT. Raises JoseError for every invalid token.
+
+    `exp` is mandatory and must be a finite number; malformed headers/claims
+    (non-string alg, etc.) are mapped to JoseError instead of leaking
+    TypeError/AttributeError as a 500.
+    """
+    try:
+        claims = _jwt.decode(
+            token, settings.jwt_secret_key, claims_options={"exp": {"essential": True}}
+        )
+        claims.validate()
+        exp = claims.get("exp")
+        if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
+            raise JoseError("Invalid exp claim")
+    except JoseError:
+        raise
+    except Exception as exc:  # malformed token shapes must not become a 500
+        raise JoseError("Invalid token") from exc
     return dict(claims)
+
+
+def _normalize_groups(raw) -> list[str]:
+    """Return the group names from an OIDC groups claim.
+
+    Only a list/tuple of strings is accepted (non-string items are dropped).
+    A plain string is ONE group name, compared by exact equality later (never
+    substring). Anything else (dict, None, int, bool, float, ...) means "no
+    groups" and leads to the 403 below.
+    """
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, (list, tuple)):
+        return [g for g in raw if isinstance(g, str)]
+    return []
 
 
 def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     sub = oidc_data.get("sub")
     email = oidc_data.get("email", "")
     username = oidc_data.get("preferred_username") or email.split("@")[0]
-    groups: list[str] = oidc_data.get(settings.oidc_groups_claim, [])
+    groups = _normalize_groups(oidc_data.get(settings.oidc_groups_claim))
 
-    # Map OIDC groups → app role (highest privilege wins).
+    # Map OIDC groups → app role (highest privilege wins). Membership is an
+    # exact match against the normalized list (never a substring test).
     # Users in none of the configured groups are rejected — an account at the
     # IdP alone must not grant access to the app.
     if settings.oidc_admin_group in groups:
@@ -96,7 +129,7 @@ def get_current_user(
     try:
         payload = decode_access_token(credentials.credentials)
         user_id: str = payload.get("sub")
-        if not user_id:
+        if not user_id or not isinstance(user_id, str):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     except JoseError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
