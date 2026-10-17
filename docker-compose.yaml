@@ -104,6 +104,8 @@ services:
       # Bulk-scan bounds (F-012): files per request and total upload bytes (50 MiB).
       MAX_BULK_FILES: "50"
       MAX_BULK_TOTAL_BYTES: "52428800"
+      # Interactive API docs (/api/docs): off unless explicitly enabled (F-031).
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
       OIL_PRICE_SOURCE: heizoel-aktuell
       APP_BASE_URL: http://localhost:5173
       DEBUG: ${DEBUG:-false}

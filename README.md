@@ -104,6 +104,11 @@ All variables are set on the `backend` service.
 | `OIDC_MANAGER_GROUP` | `verwalter` | OIDC group mapped to the `manager` role |
 | `OIDC_USER_GROUP` | `user` | OIDC group mapped to the `user` role |
 | `OIDC_GROUP_DIAGNOSTICS` | `false` | Log delivered vs. expected group names when an SSO sign-in is rejected (sensitive; enable only while investigating, warns at start-up) |
+| `OIDC_RATE_LIMIT` | `20/minute` | Rate limit per client for `/api/auth/login` and `/api/auth/callback` |
+| `OIDC_MAX_PENDING_STATES` | `1000` | Cap on pending (unfinished) SSO logins; above it `/auth/login` answers 503 |
+| `OIDC_HTTP_TIMEOUT_S` | `10` | Timeout in seconds for calls to the identity provider (connect is capped at 3 s) |
+| **API** | | |
+| `ENABLE_API_DOCS` | `false` | Serve `/api/docs`, `/api/redoc` and `/api/openapi.json` (off by default) |
 
 ### Secrets from Files
 
@@ -186,11 +191,17 @@ the backend image — the backend carries no OCR-engine weight at all when
 
 ## Health Check
 
-`GET /api/health` returns the status of all subsystems:
+`GET /api/health` is anonymous and returns only `{"status": "ok"}` (or `"degraded"` with HTTP 503
+when the database or the scheduler is down). It does not contact OCR or the LLM, so it is safe as
+readiness probe. `GET /api/health/live` is the process-only liveness check.
+
+`GET /api/health/details` (admin login required) returns the subsystem detail; OCR/LLM results are
+cached for 30 s:
 
 ```json
 {
   "status": "ok",
+  "version": "0.1.0",
   "db": true,
   "scheduler": true,
   "ocr": true,
@@ -201,7 +212,7 @@ the backend image — the backend carries no OCR-engine weight at all when
 
 - **status** is `"ok"` when DB and scheduler are healthy, `"degraded"` otherwise (HTTP 503).
 - **ocr** / **llm** reflect availability but do not affect overall status — they are optional.
-- The frontend shows these as a traffic-light indicator in the footer.
+- The frontend footer indicator currently reads `/api/health`; anonymous visitors see only ok/degraded, the OCR/LLM lights need `/api/health/details` (admin).
 
 ## Helm Chart (Kubernetes)
 

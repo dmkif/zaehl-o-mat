@@ -136,6 +136,15 @@ class Settings(BaseSettings):
     max_bulk_files: int = Field(default=50, gt=0, le=500)
     max_bulk_total_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
 
+    # Spec 010 (F-031): interactive API docs (/api/docs, /api/redoc, /api/openapi.json)
+    # are off unless explicitly enabled.
+    enable_api_docs: bool = False
+    # Spec 010 (F-026): rate limit for /auth/login and /auth/callback (slowapi
+    # syntax, per client), cap on pending login states, bound for IdP calls (s).
+    oidc_rate_limit: str = "20/minute"
+    oidc_max_pending_states: int = Field(default=1000, gt=0)
+    oidc_http_timeout_s: float = Field(default=10.0, gt=0, le=60)
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> "Settings":
         if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":

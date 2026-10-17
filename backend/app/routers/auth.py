@@ -1,8 +1,11 @@
 import asyncio
+import logging
+import base64
 import hashlib
+import hmac
+import json
 import os
 import secrets
-import base64
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode
@@ -30,16 +33,45 @@ from app.security_log import log_event
 from app.schemas.auth import ExchangeRequest, TokenResponse, SuperadminLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 # OIDC discovery config cache with 1 h TTL (D3)
 _oidc_config_cache: Optional[dict] = None
 _oidc_config_fetched_at: Optional[datetime] = None
 _OIDC_CACHE_TTL = timedelta(hours=1)
+# F-026: after a failed discovery fetch, fail fast for a short while instead of
+# letting every anonymous request wait for the IdP timeout again.
+_oidc_failed_at: Optional[datetime] = None
+_OIDC_NEGATIVE_TTL = timedelta(seconds=30)
 _oidc_lock = asyncio.Lock()
+
+BINDER_COOKIE = "oidc_binder"
+_STATE_TTL = timedelta(minutes=10)
+
+
+def _idp_timeout() -> httpx.Timeout:
+    """Bounded IdP calls: short connect, overall read bound from the setting."""
+    total = settings.oidc_http_timeout_s
+    return httpx.Timeout(total, connect=min(3.0, total))
+
+
+def _idp_error(exc: Exception) -> HTTPException:
+    """Map an httpx failure to a clean gateway error (never leaks details)."""
+    if isinstance(exc, httpx.TimeoutException):
+        return HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Identity provider timed out")
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Identity provider unavailable")
+
+
+def _discovery_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Identity provider temporarily unavailable",
+        headers={"Retry-After": str(int(_OIDC_NEGATIVE_TTL.total_seconds()))},
+    )
 
 
 async def _oidc_config() -> dict:
-    global _oidc_config_cache, _oidc_config_fetched_at
+    global _oidc_config_cache, _oidc_config_fetched_at, _oidc_failed_at
     now = datetime.now(timezone.utc)
     if (
         _oidc_config_cache
@@ -47,6 +79,10 @@ async def _oidc_config() -> dict:
         and now - _oidc_config_fetched_at < _OIDC_CACHE_TTL
     ):
         return _oidc_config_cache
+    if _oidc_failed_at and now - _oidc_failed_at < _OIDC_NEGATIVE_TTL:
+        if _oidc_config_cache:
+            return _oidc_config_cache  # stale beats unavailable
+        raise _discovery_unavailable()
     async with _oidc_lock:
         # Double-checked locking: another coroutine may have refreshed while we waited
         now = datetime.now(timezone.utc)
@@ -56,11 +92,24 @@ async def _oidc_config() -> dict:
             and now - _oidc_config_fetched_at < _OIDC_CACHE_TTL
         ):
             return _oidc_config_cache
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(settings.oidc_discovery_url)
-            resp.raise_for_status()
-            _oidc_config_cache = resp.json()
-            _oidc_config_fetched_at = now
+        if _oidc_failed_at and now - _oidc_failed_at < _OIDC_NEGATIVE_TTL:
+            if _oidc_config_cache:
+                return _oidc_config_cache
+            raise _discovery_unavailable()
+        try:
+            async with httpx.AsyncClient(timeout=_idp_timeout()) as client:
+                resp = await client.get(settings.oidc_discovery_url)
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            _oidc_failed_at = datetime.now(timezone.utc)
+            logger.warning("OIDC discovery failed: %s", type(exc).__name__)
+            if _oidc_config_cache:
+                return _oidc_config_cache
+            raise _idp_error(exc)
+        _oidc_config_cache = data
+        _oidc_config_fetched_at = now
+        _oidc_failed_at = None
     return _oidc_config_cache
 
 
@@ -78,16 +127,45 @@ def _cleanup_expired_pkce(db: Session) -> None:
     db.commit()
 
 
-@router.get("/login")
-async def login(db: Session = Depends(get_db)):
-    """Redirect browser to Authentik for OIDC authentication."""
-    cfg = await _oidc_config()
-    state = secrets.token_urlsafe(16)
-    verifier, challenge = _pkce_pair()
+def _hash_binder(binder: str) -> str:
+    return hashlib.sha256(binder.encode()).hexdigest()
 
+
+def _nonce_for(state: str) -> str:
+    """Per-login OIDC nonce, derived from the state with the server secret (no storage)."""
+    return hmac.new(settings.jwt_secret_key.encode(), b"oidc-nonce:" + state.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _rate() -> str:
+    return settings.oidc_rate_limit
+
+
+def _prepare_login(db: Session, state: str, verifier: str, binder: str) -> None:
+    """Purge expired states, enforce the pending cap, store the new state (sync, DB)."""
     _cleanup_expired_pkce(db)
-    db.add(OidcPkceState(state=state, code_verifier=verifier))
+    if db.query(OidcPkceState).count() >= settings.oidc_max_pending_states:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Too many pending sign-ins, try again",
+            headers={"Retry-After": "30"},
+        )
+    # The browser-binding hash is kept next to the verifier ("<verifier>.<sha256(binder)>").
+    db.add(OidcPkceState(state=state, code_verifier=f"{verifier}.{_hash_binder(binder)}"))
     db.commit()
+
+
+@router.get("/login")
+@limiter.limit(_rate)
+async def login(request: Request, db: Session = Depends(get_db)):
+    """Redirect browser to Authentik for OIDC authentication."""
+    cfg = await _oidc_config()  # fails fast (no DB write) while the IdP is down
+    state = secrets.token_urlsafe(16)
+    binder = secrets.token_urlsafe(32)
+    verifier, challenge = _pkce_pair()
+    try:
+        await run_in_threadpool(_prepare_login, db, state, verifier, binder)
+    except PoolTimeoutError:
+        raise _pool_busy()
 
     params = {
         "response_type": "code",
@@ -95,11 +173,18 @@ async def login(db: Session = Depends(get_db)):
         "redirect_uri": settings.oidc_redirect_uri,
         "scope": "openid email profile groups",
         "state": state,
+        "nonce": _nonce_for(state),
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
     url = cfg["authorization_endpoint"] + "?" + urlencode(params)
-    return RedirectResponse(url=url)
+    resp = RedirectResponse(url=url)
+    # F-017: bind the login to this browser (callback requires the cookie).
+    resp.set_cookie(
+        BINDER_COOKIE, binder, max_age=int(_STATE_TTL.total_seconds()), path="/api/auth",
+        httponly=True, samesite="lax", secure=settings.app_base_url.lower().startswith("https://"),
+    )
+    return resp
 
 
 def _pool_busy() -> HTTPException:
@@ -110,23 +195,43 @@ def _pool_busy() -> HTTPException:
     )
 
 
-def _consume_pkce_state(db: Session, state: str) -> str:
-    """Validate and delete the PKCE row, return its code_verifier (sync, DB)."""
+def _consume_pkce_state(db: Session, state: str, binder: Optional[str] = None) -> str:
+    """Validate and delete the PKCE row, return its code_verifier (sync, DB).
+
+    The row is consumed first (single use, even on a binder mismatch); then the
+    browser binding (F-017) is checked.
+    """
     pkce_row = db.query(OidcPkceState).filter(OidcPkceState.state == state).first()
     if not pkce_row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
 
-    # Validate TTL (belt-and-suspenders alongside periodic cleanup)
-    age = datetime.now(timezone.utc) - pkce_row.created_at
-    if age > timedelta(minutes=10):
-        db.delete(pkce_row)
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="State expired")
-
-    verifier = pkce_row.code_verifier
+    stored = pkce_row.code_verifier
+    created_at = pkce_row.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
     db.delete(pkce_row)
     db.commit()
+
+    # Validate TTL (belt-and-suspenders alongside periodic cleanup)
+    if datetime.now(timezone.utc) - created_at > _STATE_TTL:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="State expired")
+
+    verifier, _, binder_hash = stored.partition(".")
+    if not binder or not binder_hash or not hmac.compare_digest(_hash_binder(binder), binder_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
     return verifier
+
+
+def _id_token_nonce(id_token: str) -> Optional[str]:
+    """`nonce` claim of an id_token received over the direct TLS back channel
+    (signature validation is not required there, OIDC Core 3.1.3.7); None if absent/unparsable."""
+    try:
+        payload = id_token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        nonce = claims.get("nonce")
+        return nonce if isinstance(nonce, str) else None
+    except Exception:
+        return None
 
 
 _LOGIN_CODE_TTL = timedelta(seconds=60)
@@ -152,6 +257,7 @@ def _sign_in(db: Session, userinfo: dict, ip: Optional[str] = None) -> str:
 
 
 @router.get("/callback")
+@limiter.limit(_rate)
 async def callback(
     request: Request,
     code: str = Query(...),
@@ -160,8 +266,9 @@ async def callback(
 ):
     """Exchange authorization code for tokens, return JWT."""
     ip = client_ip(request)
+    binder = request.cookies.get(BINDER_COOKIE)
     try:
-        verifier = await run_in_threadpool(_consume_pkce_state, db, state)
+        verifier = await run_in_threadpool(_consume_pkce_state, db, state, binder)
     except HTTPException as exc:
         reason = "state_expired" if exc.detail == "State expired" else "invalid_state"
         log_event("login", outcome="failed", ip=ip, reason=reason)
@@ -170,34 +277,48 @@ async def callback(
         raise _pool_busy()
 
     cfg = await _oidc_config()
-    async with httpx.AsyncClient(timeout=15) as client:
-        token_resp = await client.post(
-            cfg["token_endpoint"],
-            data={
-                "grant_type": "authorization_code",
-                "client_id": settings.oidc_client_id,
-                "client_secret": settings.oidc_client_secret,
-                "code": code,
-                "redirect_uri": settings.oidc_redirect_uri,
-                "code_verifier": verifier,
-            },
-        )
-        if token_resp.status_code != 200:
-            log_event("login", outcome="failed", ip=ip, reason="token_exchange_failed")
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token exchange failed")
+    try:
+        async with httpx.AsyncClient(timeout=_idp_timeout()) as client:
+            token_resp = await client.post(
+                cfg["token_endpoint"],
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": settings.oidc_client_id,
+                    "client_secret": settings.oidc_client_secret,
+                    "code": code,
+                    "redirect_uri": settings.oidc_redirect_uri,
+                    "code_verifier": verifier,
+                },
+            )
+            if token_resp.status_code >= 500:
+                log_event("login", outcome="failed", ip=ip, reason="idp_error")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Identity provider unavailable")
+            if token_resp.status_code != 200:
+                log_event("login", outcome="failed", ip=ip, reason="token_exchange_failed")
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token exchange failed")
 
-        tokens = token_resp.json()
-        access_token_oidc = tokens.get("access_token")
-        if not access_token_oidc:
-            log_event("login", outcome="failed", ip=ip, reason="no_access_token")
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider returned no access token")
+            tokens = token_resp.json()
+            id_token = tokens.get("id_token")
+            if id_token is not None:
+                # F-017: a processed id_token must carry the nonce of this login.
+                got = _id_token_nonce(id_token) if isinstance(id_token, str) else None
+                if got is None or not hmac.compare_digest(got, _nonce_for(state)):
+                    log_event("login", outcome="failed", ip=ip, reason="nonce_mismatch")
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
+            access_token_oidc = tokens.get("access_token")
+            if not access_token_oidc:
+                log_event("login", outcome="failed", ip=ip, reason="no_access_token")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider returned no access token")
 
-        userinfo_resp = await client.get(
-            cfg["userinfo_endpoint"],
-            headers={"Authorization": f"Bearer {access_token_oidc}"},
-        )
-        userinfo_resp.raise_for_status()
-        userinfo = userinfo_resp.json()
+            userinfo_resp = await client.get(
+                cfg["userinfo_endpoint"],
+                headers={"Authorization": f"Bearer {access_token_oidc}"},
+            )
+            userinfo_resp.raise_for_status()
+            userinfo = userinfo_resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log_event("login", outcome="failed", ip=ip, reason="idp_unavailable")
+        raise _idp_error(exc)
 
     # Sync DB work must not run on the event loop: with the pool exhausted it
     # would block every request incl. /health (B-32). Pool timeout -> 503.
@@ -208,7 +329,9 @@ async def callback(
     # F-008: no JWT in the URL. The SPA route /auth/token reads the single-use
     # code from the fragment (never sent to servers) and POSTs it to /auth/exchange.
     frontend_url = settings.app_base_url.rstrip("/")
-    return RedirectResponse(url=f"{frontend_url}/auth/token#code={login_code}")
+    resp = RedirectResponse(url=f"{frontend_url}/auth/token#code={login_code}")
+    resp.delete_cookie(BINDER_COOKIE, path="/api/auth")
+    return resp
 
 
 def _consume_login_code(db: Session, code: str) -> Optional[User]:
