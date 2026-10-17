@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "apexcharts": "^5.10.4",
-    "axios": "^1.14.0",
     "pinia": "^3.0.4",
     "vue": "^3.5.31",
     "vue-advanced-cropper": "^2.8.9",

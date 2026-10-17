@@ -27,7 +27,7 @@ docker run --rm -it ollama/ollama ollama pull gemma4:e4b
 docker compose up -d
 ```
 
-The app is available at **http://localhost:8080**.  
+The app is available at **http://localhost:8081** (Compose proxy; plain HTTP, local use only).  
 There are no default credentials. Before the first start, create a `.env` file
 next to `docker-compose.yaml` with freshly generated secrets (Compose refuses to
 start without them):
@@ -131,7 +131,7 @@ backend:
 ## OIDC Setup (Authentik)
 
 1. Create an **OAuth2/OpenID Connect** provider in Authentik.
-2. Set the redirect URI to `https://<your-domain>/auth/callback` (hash-based routing: `/#/auth/token` is handled by the frontend).
+2. Set the redirect URI to `https://<your-domain>/api/auth/callback` (the backend handles the callback, then redirects the browser to the SPA route `/auth/token#code=...`; the SPA uses history-mode routing, not hash routing). Register exactly this URL, never a wildcard.
 3. Copy the client ID, secret and discovery URL into the env vars above.
 4. Create groups matching `OIDC_ADMIN_GROUP` / `OIDC_MANAGER_GROUP` / `OIDC_USER_GROUP` and assign users.
 
@@ -238,7 +238,24 @@ SUPERADMIN_USER
 SUPERADMIN_PASSWORD
 ```
 
-See [`chart/values.yaml`](chart/values.yaml) for all available values.
+Every key of that Secret becomes an environment variable of the backend pod
+(`envFrom`), so it is visible to anyone who may `kubectl describe` the pod or
+read its `/proc`. To avoid that, deliver the secrets as files instead with
+`backend.secretVolume.enabled=true` (one key per file under `/run/secrets`; the
+app reads both, environment variables win). Keep the database password consistent
+between the backend Secret (`DATABASE_URL`) and the PostgreSQL Secret
+(`postgresql.auth.existingSecret`).
+
+HSTS is configurable via `ingress.hsts.seconds`, `ingress.hsts.includeSubdomains`
+and `ingress.hsts.preload` (defaults: one year, both `true`). Set `preload` and
+`includeSubdomains` to `false` when the host shares a parent domain with other
+services. The chart and the Compose proxy (`nginx.conf`) send the same CSP and
+header set; HSTS is chart-only (TLS terminates at Traefik).
+
+The JWT lives in `sessionStorage` (not `localStorage`, no cookie): it is gone when
+the tab closes and is removed on logout and on any 401. This is an accepted
+trade-off for an SPA with a strict CSP (`script-src 'self'`, no inline script, no
+HTML sinks); moving it to an HttpOnly cookie would need CSRF protection.
 
 ## Role-Based Access
 

@@ -252,6 +252,14 @@ ingress:
   # F-012). Must exceed backend.env.MAX_BULK_TOTAL_BYTES plus multipart
   # overhead; the default is 60 MiB.
   maxRequestBodyBytes: 62914560
+  # -- Strict-Transport-Security sent by the security-headers Middleware (F-048).
+  # Defaults keep the previous behaviour. `preload` on a shared parent domain is
+  # hard to retract: set it to false unless the whole domain is meant for the
+  # HSTS preload list. `includeSubdomains` affects every subdomain of `host`.
+  hsts:
+    seconds: 31536000
+    includeSubdomains: true
+    preload: true
 
 # =============================================================================
 # Persistent storage for uploaded meter images
