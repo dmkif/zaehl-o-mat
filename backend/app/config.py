@@ -131,6 +131,11 @@ class Settings(BaseSettings):
     # Spec 003: write group names of rejected SSO sign-ins to the log (sensitive; off by default)
     oidc_group_diagnostics: bool = False
 
+    # Bulk-scan bounds (spec 008, F-012): number of files and the total upload
+    # budget per request (the per-file limit stays 10 MB).
+    max_bulk_files: int = Field(default=50, gt=0, le=500)
+    max_bulk_total_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> "Settings":
         if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":

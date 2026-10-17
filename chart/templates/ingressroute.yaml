@@ -18,11 +18,23 @@ spec:
   entryPoints:
     - websecure
   routes:
-    # API traffic → backend
-    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`)
+    # Bulk-scan streams its result as SSE. Traefik's `buffering` middleware also
+    # buffers the response, which would break the stream, so this route has no
+    # body-limit middleware: the backend refuses oversized bodies itself
+    # (BodyLimitMiddleware, MAX_BULK_TOTAL_BYTES) before the form is parsed.
+    - match: Host(`{{ .Values.ingress.host }}`) && Path(`/api/ocr/bulk-scan`)
       kind: Rule
       middlewares:
         - name: {{ include "zaehl-o-mat.fullname" . }}-security-headers
+      services:
+        - name: {{ include "zaehl-o-mat.fullname" . }}-backend
+          port: 8000
+    # Other API traffic → backend, request body capped by Traefik (F-012)
+    - match: Host(`{{ .Values.ingress.host }}`) && PathPrefix(`/api`) && !Path(`/api/ocr/bulk-scan`)
+      kind: Rule
+      middlewares:
+        - name: {{ include "zaehl-o-mat.fullname" . }}-security-headers
+        - name: {{ include "zaehl-o-mat.fullname" . }}-body-limit
       services:
         - name: {{ include "zaehl-o-mat.fullname" . }}-backend
           port: 8000
