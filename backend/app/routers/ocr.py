@@ -9,6 +9,8 @@ import hashlib
 import json
 import logging
 import uuid
+from contextlib import contextmanager
+from types import SimpleNamespace
 from pathlib import Path
 
 import filetype
@@ -28,13 +30,14 @@ from app.services.llm_client import (
     llm_enabled,
     using_gateway,
 )
-from app.models import User, Meter, Reading
+from app.models import UploadFile as UploadRecord, User, Meter, Reading
 from app.permissions import accessible_property_ids, is_global_admin, require_property_access
 from app.upload_registry import get_upload, may_use_upload, register_upload
 # Re-exported pipeline internals: tests and app.main import these names from
 # app.routers.ocr, and monkeypatching them on this module must keep working.
 from app.services.ocr_pipeline import (  # noqa: F401
     ImageTooLarge,
+    OcrServiceError,
     check_image_dimensions,
     _ALLOWED_IMAGE_MIMES,
     _MAX_UPLOAD_BYTES,
@@ -71,6 +74,60 @@ def _require_sane_dimensions(contents: bytes, label: str) -> None:
         ) from None
 
 
+def _ocr_service_http_error() -> HTTPException:
+    # F-029: fixed text, the malformed upstream body is never echoed.
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail="OCR service returned an invalid response",
+    )
+
+
+@contextmanager
+def _short_session(bind):
+    """Short-lived DB session for one step of the streamed bulk scan (F-013)."""
+    session = Session(bind=bind, autoflush=False)
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def _discard_upload(db: Session, *filenames: str | None) -> None:
+    """Remove stored files and their registry rows of a scan that failed (F-028)."""
+    names = [n for n in filenames if n]
+    for name in names:
+        try:
+            (Path(settings.upload_path) / name).unlink(missing_ok=True)
+        except OSError:
+            logger.warning("could not remove orphan upload %s", name)
+    if names:
+        try:
+            db.query(UploadRecord).filter(UploadRecord.filename.in_(names)).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.warning("could not remove upload registry rows")
+
+
+def _discard_bulk_file(bind, filename: str | None) -> None:
+    if filename:
+        with _short_session(bind) as s:
+            _discard_upload(s, filename)
+
+
+async def _read_limited(upload: UploadFile, limit: int) -> bytes:
+    """Read at most ``limit + 1`` bytes in chunks (the caller checks for overflow)."""
+    chunks: list[bytes] = []
+    total = 0
+    while total <= limit:
+        chunk = await upload.read(min(65536, limit + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
 def _llm_http_error(exc: LLMError) -> HTTPException:
     return HTTPException(
         status_code=_LLM_ERROR_STATUS.get(type(exc), status.HTTP_503_SERVICE_UNAVAILABLE),
@@ -104,7 +161,7 @@ async def _try_ocr_service_serial(filepath: Path) -> str | None:
         return None
     try:
         return await asyncio.to_thread(_ocr_service_serial, filepath)
-    except httpx.HTTPError:
+    except (httpx.HTTPError, OcrServiceError):
         logger.warning("OCR-service serial lookup failed for %s", filepath)
         return None
 
@@ -189,6 +246,8 @@ async def _run_ocr_on_file(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="OCR service is unreachable",
             ) from exc
+        except OcrServiceError:
+            raise _ocr_service_http_error() from None
 
     # engine == "auto": LLM first (if available), fall back to the optional OCR service
     detected = None
@@ -206,6 +265,8 @@ async def _run_ocr_on_file(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="OCR service is unreachable",
             ) from exc
+        except OcrServiceError:
+            raise _ocr_service_http_error() from None
 
     return {"raw_texts": [], "detected_value": detected, "detected_serial": detected_serial, "detection_method": "llm" if detected else None}
 
@@ -351,29 +412,29 @@ async def scan_meter(
     # Compute SHA-256 so the client can pass it to create_reading for duplicate detection
     image_hash = hashlib.sha256(contents).hexdigest()
 
+    stored = [filename]  # F-028: everything written for this scan is removed again on failure
+    serial_image_path: str | None = None
     try:
         result = await _run_ocr_on_file(filepath, engine=engine, already_cropped=already_cropped, last_reading=last_reading_value, meter_type=meter_type_str)
-    except LLMError as exc:
-        raise _llm_http_error(exc) from None
 
-    # If serial file provided and OCR didn't already detect serial (LLM may have), run dedicated serial OCR
-    serial_image_path: str | None = None
-    if serial_contents is not None and result.get("detected_serial") is None:
-        serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"
-        serial_filepath = upload_dir / serial_filename
-        serial_filepath.write_bytes(serial_contents)
-        serial_image_path = f"uploads/{serial_filename}"
-        register_upload(db, serial_filename, upload_property_id, current_user)
-        db.commit()
-        result["detected_serial"] = await _try_ocr_service_serial(serial_filepath)
-    elif serial_contents is not None:
-        # LLM already found serial — still save the crop for future rescan
-        serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"
-        serial_filepath = upload_dir / serial_filename
-        serial_filepath.write_bytes(serial_contents)
-        serial_image_path = f"uploads/{serial_filename}"
-        register_upload(db, serial_filename, upload_property_id, current_user)
-        db.commit()
+        # Serial crop is stored in both cases; dedicated serial OCR only when the
+        # pipeline did not already find a serial (LLM may have).
+        if serial_contents is not None:
+            serial_filename = f"{uuid.uuid4()}_serial{_MIME_TO_EXT.get(serial_detected_mime, '.jpg')}"
+            serial_filepath = upload_dir / serial_filename
+            serial_filepath.write_bytes(serial_contents)
+            stored.append(serial_filename)
+            serial_image_path = f"uploads/{serial_filename}"
+            register_upload(db, serial_filename, upload_property_id, current_user)
+            db.commit()
+            if result.get("detected_serial") is None:
+                result["detected_serial"] = await _try_ocr_service_serial(serial_filepath)
+    except LLMError as exc:
+        _discard_upload(db, *stored)
+        raise _llm_http_error(exc) from None
+    except Exception:
+        _discard_upload(db, *stored)
+        raise
 
     return {"image_path": f"uploads/{filename}", "serial_image_path": serial_image_path, "image_hash": image_hash, **result}
 
@@ -481,8 +542,11 @@ async def bulk_scan_meters(
     """
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided")
-    if len(files) > 50:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum 50 files per batch")
+    if len(files) > settings.max_bulk_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum {settings.max_bulk_files} files per batch",
+        )
 
     # ── Build accessible meter list ───────────────────────────────────────────
     if is_global_admin(current_user):
@@ -506,16 +570,35 @@ async def bulk_scan_meters(
                 Meter.replaced_at.is_(None),
             ).all()
 
-    # ── Read all file contents upfront (UploadFile is only readable during the request scope) ──
+    # ── Read the uploads in chunks against a cumulative budget (F-012) ───────
+    # A file over the per-file limit is kept as ``None`` (error item later, its
+    # bytes are not retained); exceeding the total budget rejects the request.
     upload_dir = Path(settings.upload_path)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    file_payloads: list[tuple[str, bytes]] = []
+    budget = settings.max_bulk_total_bytes
+    used = 0
+    file_payloads: list[tuple[str, bytes | None]] = []
     for f in files:
-        file_payloads.append((f.filename or "image.jpg", await f.read()))
+        data = await _read_limited(f, _MAX_UPLOAD_BYTES)
+        used += len(data)
+        if used > budget:
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=f"Upload too large (max {budget // (1024 * 1024)} MB per batch)",
+            )
+        file_payloads.append((f.filename or "image.jpg", None if len(data) > _MAX_UPLOAD_BYTES else data))
 
     all_meters_dicts = [_meter_to_dict(m) for m in meters]
     accessible_meter_ids = [m.id for m in meters]
+
+    # ── F-013: release the request session before the long streamed run ──────
+    # Every step in the generator that needs the database opens its own short
+    # session; nothing is held while the LLM/OCR service is awaited.
+    uploader = SimpleNamespace(id=current_user.id)
+    bind = db.get_bind()
+    db.expunge_all()
+    db.close()
 
     async def generate():
         # Track hashes seen within this batch to catch in-session duplicates
@@ -524,7 +607,9 @@ async def bulk_scan_meters(
         # images are not sent (each would wait up to the full client timeout).
         llm_abort: str | None = None
 
-        for original_filename, contents in file_payloads:
+        while file_payloads:
+            original_filename, contents = file_payloads.pop(0)  # release the bytes once processed
+            stored_name: str | None = None
             item: dict = {
                 "original_filename": original_filename,
                 "temp_image_path": None,
@@ -544,7 +629,7 @@ async def bulk_scan_meters(
                 yield f"data: {json.dumps(item)}\n\n"
                 continue
             try:
-                if len(contents) > _MAX_UPLOAD_BYTES:
+                if contents is None:
                     item["error"] = "File too large (max 10 MB)"
                     yield f"data: {json.dumps(item)}\n\n"
                     continue
@@ -574,33 +659,37 @@ async def bulk_scan_meters(
                     }
                 else:
                     seen_hashes[image_hash] = original_filename
-                    # (2) existing reading with this hash — scoped to the caller's
-                    # accessible meters so no foreign tenant data leaks into the response
-                    existing = (
-                        db.query(Reading)
-                        .filter(
-                            Reading.image_hash == image_hash,
-                            Reading.meter_id.in_(accessible_meter_ids),
-                        )
-                        .join(Reading.meter)
-                        .first()
-                    )
-                    if existing:
-                        item["duplicate_reading"] = {
-                            "source": "database",
-                            "reading_id": existing.id,
-                            "meter_name": existing.meter.name if existing.meter else None,
-                            "value": str(existing.value),
-                            "read_at": existing.read_at.isoformat(),
-                        }
 
                 ext = _MIME_TO_EXT.get(detected_mime, ".jpg")
                 filename = f"{uuid.uuid4()}{ext}"
                 filepath = upload_dir / filename
                 filepath.write_bytes(contents)
+                stored_name = filename
                 item["temp_image_path"] = f"uploads/{filename}"
-                register_upload(db, filename, property_id, current_user)
-                db.commit()
+                # Short session: duplicate lookup + upload registration
+                with _short_session(bind) as s:
+                    if item["duplicate_reading"] is None:
+                        # existing reading with this hash — scoped to the caller's
+                        # accessible meters so no foreign tenant data leaks into the response
+                        existing = (
+                            s.query(Reading)
+                            .filter(
+                                Reading.image_hash == image_hash,
+                                Reading.meter_id.in_(accessible_meter_ids),
+                            )
+                            .join(Reading.meter)
+                            .first()
+                        )
+                        if existing:
+                            item["duplicate_reading"] = {
+                                "source": "database",
+                                "reading_id": existing.id,
+                                "meter_name": existing.meter.name if existing.meter else None,
+                                "value": str(existing.value),
+                                "read_at": existing.read_at.isoformat(),
+                            }
+                    register_upload(s, filename, property_id, uploader)
+                    s.commit()
 
                 # Extract EXIF date + time
                 item["exif_date"] = _extract_exif_datetime(filepath)
@@ -664,14 +753,15 @@ async def bulk_scan_meters(
                     and engine != "ocr"
                     and llm_enabled()
                 ):
-                    last_reading_obj = (
-                        db.query(Reading)
-                        .filter(Reading.meter_id == matched.id)
-                        .order_by(Reading.read_at.desc())
-                        .first()
-                    )
-                    if last_reading_obj is not None:
-                        hint_value = float(last_reading_obj.value)
+                    with _short_session(bind) as s:
+                        last_reading_obj = (
+                            s.query(Reading)
+                            .filter(Reading.meter_id == matched.id)
+                            .order_by(Reading.read_at.desc())
+                            .first()
+                        )
+                        hint_value = float(last_reading_obj.value) if last_reading_obj is not None else None
+                    if hint_value is not None:
                         logger.info(
                             "bulk hint-retry: file=%s value=%r → retry with last_reading=%s meter_type=%s",
                             original_filename, item["detected_value"], hint_value, matched.meter_type.value,
@@ -690,9 +780,13 @@ async def bulk_scan_meters(
                 logger.warning("Bulk scan: %s (%s) — skipping remaining images", type(exc).__name__, original_filename)
                 llm_abort = str(exc)
                 item["error"] = llm_abort
+                item["temp_image_path"] = None
+                _discard_bulk_file(bind, stored_name)
             except Exception as exc:
-                logger.error("Bulk scan error for %s: %s", original_filename, exc)
+                logger.error("Bulk scan error for %s: %s", original_filename, type(exc).__name__)
                 item["error"] = "OCR processing failed"
+                item["temp_image_path"] = None
+                _discard_bulk_file(bind, stored_name)
 
             yield f"data: {json.dumps(item)}\n\n"
 

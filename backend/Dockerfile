@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS base
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -15,11 +15,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN adduser --disabled-password --gecos "" appuser && \
+RUN adduser --disabled-password --gecos "" --uid 1000 appuser && \
     mkdir -p /data/uploads && chown appuser /data/uploads
 USER appuser
 
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=4).status == 200 else 1)"]
 # --no-proxy-headers: uvicorn must not rewrite the client address from
 # X-Forwarded-For (with '*' that would take the client-controlled leftmost
 # entry). The rate limiter (app/limiter.py) evaluates the header itself, only

@@ -76,3 +76,41 @@ ServiceAccount name to use.
 {{ .Values.serviceAccount.name | default "default" }}
 {{- end }}
 {{- end }}
+
+{{/*
+NetworkPolicy switch: explicit true/false wins, unset (null) follows ocr.enabled.
+Renders "true" or "" so it can be used in `if`.
+*/}}
+{{- define "zaehl-o-mat.networkPolicyEnabled" -}}
+{{- $v := .Values.networkPolicy.enabled -}}
+{{- if kindIs "invalid" $v -}}
+{{- if .Values.ocr.enabled }}true{{ end -}}
+{{- else if $v }}true{{ end -}}
+{{- end }}
+
+{{- define "zaehl-o-mat.npIngressFrom" -}}
+- from:
+    - {{- with .Values.networkPolicy.ingressFrom.namespaceSelector }}
+      namespaceSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.networkPolicy.ingressFrom.podSelector }}
+      podSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  ports:
+    - port: http
+      protocol: TCP
+{{- end }}
+{{- define "zaehl-o-mat.npDnsEgress" -}}
+- to:
+    - namespaceSelector:
+        {{- toYaml .Values.networkPolicy.egress.dns.namespaceSelector | nindent 8 }}
+      podSelector:
+        {{- toYaml .Values.networkPolicy.egress.dns.podSelector | nindent 8 }}
+  ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+{{- end }}

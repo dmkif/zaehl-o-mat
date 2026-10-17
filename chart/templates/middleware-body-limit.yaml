@@ -1,0 +1,15 @@
+{{- if .Values.ingress.enabled }}
+# Request-body cap for the API route except bulk-scan (F-012; bulk-scan is
+# bounded by the backend itself because buffering would break its SSE stream). Traefik has no limit by default,
+# so without this a client could stream an arbitrarily large multipart body to
+# the backend. Compose gets the same cap from nginx `client_max_body_size`.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "zaehl-o-mat.fullname" . }}-body-limit
+  labels:
+    {{- include "zaehl-o-mat.labels" . | nindent 4 }}
+spec:
+  buffering:
+    maxRequestBodyBytes: {{ .Values.ingress.maxRequestBodyBytes | int64 }}
+{{- end }}

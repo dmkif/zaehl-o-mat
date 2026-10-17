@@ -252,3 +252,18 @@ def unregister_upload_row(rig, filename: str) -> None:
 
 def timed():
     return time.monotonic()
+
+
+def token_version_of(rig, sub: str) -> int | None:
+    """users.token_version of ``sub`` from the rig DB (feature 007: tokens carry ``tv``); None if no such row."""
+    from sqlalchemy import create_engine, text
+
+    eng = create_engine(rig["DATABASE_URL"])
+    try:
+        with eng.connect() as c:
+            row = c.execute(text("SELECT token_version FROM users WHERE id = :i"), {"i": str(sub)}).first()
+    except Exception:  # noqa: BLE001 - not a uuid etc.
+        return None
+    finally:
+        eng.dispose()
+    return None if row is None else int(row[0])

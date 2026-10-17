@@ -14,7 +14,7 @@ import pytest
 
 from idp_helpers import (
     TINY_PNG, USER_GROUP, authorize, callback, cfg, get_client, maybe, new_http, set_claims, signin,
-    start_flow, token_of,
+    start_flow, token_of, code_of, exchange_token,
 )
 
 pytestmark = pytest.mark.security
@@ -62,9 +62,10 @@ async def test_E_A09_001_no_secrets_in_logs_and_security_events_present(rig, cli
         await set_claims(oidc, [USER_GROUP], f"sub-ok-{mark}", email_ok)
         flow = await authorize(http, await start_flow(http))
         resp = await callback(http, flow.code, flow.returned_state)
-        tok = token_of(resp)
-        assert tok, f"sign-in failed: {resp.status_code}"
-        secrets_found["oidc session token"] = tok
+        login_code = code_of(resp)
+        assert login_code, f"sign-in failed: {resp.status_code}"
+        secrets_found["app login code (one-time, from redirect fragment)"] = login_code
+        secrets_found["oidc session token"] = await exchange_token(http, login_code)
         secrets_found["oidc authorization code (ok flow)"] = flow.code
 
         # 3. rejected sign-in (no permitted group)

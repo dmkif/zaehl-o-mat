@@ -8,7 +8,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.auth import require_admin
+from app.auth import require_admin, revoke_sessions
 from app.database import get_db
 from app.models import User, UserRole
 from app.security_log import log_event
@@ -66,6 +66,7 @@ def set_user_role(
     user.role = body.role
     db.commit()
     db.refresh(user)
+    revoke_sessions(db, user, actor=current_user.id, ip=_ip(request), reason="role_changed")
     log_event("user_role_changed", actor=current_user.id, target=user.id, ip=_ip(request),
               reason=f"role_{body.role.value}")
     return user

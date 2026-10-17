@@ -124,6 +124,15 @@ def encode_image(img, max_side: int) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+# F-029: an answer is a few dozen characters; anything longer is hostile or broken.
+MAX_ANSWER_CHARS = 8192
+MAX_ANSWER_BYTES = 1024 * 1024
+
+
+def _cap_answer(text: str) -> str:
+    return text[:MAX_ANSWER_CHARS]
+
+
 def _gateway_headers() -> dict[str, str]:
     key = settings.gateway_api_key.get_secret_value() if settings.gateway_api_key else ""
     return {"Authorization": f"Bearer {key}"}
@@ -177,10 +186,13 @@ def gateway_complete(b64_image: str, prompt: str, profile: ModelProfile) -> tupl
         logger.warning("gateway answered HTTP %s after %.1fs", resp.status_code, time.monotonic() - started)
         raise err from None
     try:
+        if len(resp.content) > MAX_ANSWER_BYTES:
+            raise ValueError("gateway answer too large")
         data = resp.json()
-        text = (data["choices"][0]["message"].get("content") or "").strip()
-        model = data.get("model") if isinstance(data.get("model"), str) else None
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        content = data["choices"][0]["message"].get("content")
+        text = _cap_answer(content.strip()) if isinstance(content, str) else ""
+        model = data.get("model")[:100] if isinstance(data.get("model"), str) else None
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError, RecursionError):
         text, model = "", None
     logger.info(
         "gateway ok profile=%s model=%s duration=%.1fs", profile.name, model, time.monotonic() - started
@@ -206,10 +218,13 @@ def ollama_complete(b64_image: str, prompt: str, schema: dict, model: str, timeo
         timeout=timeout,
     )
     resp.raise_for_status()
+    if len(resp.content) > MAX_ANSWER_BYTES:
+        return ""
     body = resp.json()
     # Ollama-Quirk (verified 2026-07-17, qwen3-vl + structured output):
     # the JSON answer lands in "thinking" while "response" stays empty.
-    return (body.get("response", "") or body.get("thinking", "") or "").strip()
+    answer = body.get("response", "") or body.get("thinking", "") or ""
+    return _cap_answer(answer.strip()) if isinstance(answer, str) else ""
 
 
 def _ollama_headers() -> dict[str, str] | None:

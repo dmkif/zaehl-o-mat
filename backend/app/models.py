@@ -99,6 +99,9 @@ class User(Base):
     oidc_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False, default=UserRole.user)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Session revocation (F-007): embedded in every token as `tv`; bumping it
+    # invalidates all tokens issued before.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     property_users: Mapped[list["PropertyUser"]] = relationship(back_populates="user")
@@ -260,4 +263,18 @@ class OidcPkceState(Base):
 
     state: Mapped[str] = mapped_column(String(64), primary_key=True)
     code_verifier: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class LoginCode(Base):
+    """Single-use, short-lived code handed to the SPA after the OIDC callback (F-008).
+
+    Only the SHA-256 hash is stored; the code is exchanged for the session JWT via
+    ``POST /auth/exchange`` so the token never travels in a URL.
+    """
+    __tablename__ = "login_codes"
+
+    code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
