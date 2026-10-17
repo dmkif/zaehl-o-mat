@@ -50,8 +50,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
+const auth = useAuthStore()
 
 const frontendVersion = __APP_VERSION__
 
@@ -72,23 +74,9 @@ function dotClass(state: boolean | null): string {
 
 async function poll() {
   try {
-    const res = await fetch('/api/health')
-    if (!res.ok) {
-      // Backend reachable but degraded
-      const data = await res.json()
-      backendOk.value = true
-      ocrOk.value = data.ocr ?? false
-      llmOk.value = data.llm ?? false
-      llmModel.value = data.llm_model ?? null
-      backendVersion.value = data.version ?? null
-      return
-    }
-    const data = await res.json()
+    // Anonymous liveness/readiness: only {status}. Backend is reachable even when degraded (503).
+    await fetch('/api/health')
     backendOk.value = true
-    ocrOk.value = data.ocr ?? false
-    llmOk.value = data.llm ?? false
-    llmModel.value = data.llm_model ?? null
-    backendVersion.value = data.version ?? null
   } catch {
     // Network error — backend unreachable
     backendOk.value = false
@@ -96,6 +84,26 @@ async function poll() {
     llmOk.value = null
     llmModel.value = null
     backendVersion.value = null
+    return
+  }
+  // Subsystem state needs a signed-in user (version and model name are admin-only).
+  if (!auth.token) {
+    ocrOk.value = null
+    llmOk.value = null
+    llmModel.value = null
+    backendVersion.value = null
+    return
+  }
+  try {
+    const res = await fetch('/api/health/details', { headers: { Authorization: `Bearer ${auth.token}` } })
+    if (res.status === 401 || res.status === 403) return
+    const data = await res.json()
+    ocrOk.value = data.ocr ?? false
+    llmOk.value = data.llm ?? false
+    llmModel.value = data.llm_model ?? null
+    backendVersion.value = data.version ?? null
+  } catch {
+    // Details unavailable; the anonymous check above already decided backendOk.
   }
 }
 

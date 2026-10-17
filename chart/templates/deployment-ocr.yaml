@@ -1,4 +1,7 @@
 {{- if .Values.ocr.enabled }}
+{{- if and (not .Values.ocr.existingSecret) (not .Values.ocr.allowUnauthenticated) }}
+{{- fail "ocr.enabled needs ocr.existingSecret (a Secret with key OCR_API_KEY, e.g. `openssl rand -base64 32`; the backend and the OCR service both read it), or set ocr.allowUnauthenticated=true to run the OCR service without authentication (F-030)" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,19 +39,26 @@ spec:
           ports:
             - name: http
               containerPort: 8100
-          {{- with .Values.ocr.env }}
+          {{- if or .Values.ocr.env .Values.ocr.existingSecret }}
           env:
-            {{- range $k, $v := . }}
+            {{- range $k, $v := .Values.ocr.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if .Values.ocr.existingSecret }}
+            # Same Secret/key the backend reads; /scan and /serial require it as Bearer token.
+            - name: OCR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ocr.existingSecret }}
+                  key: {{ .Values.ocr.secretApiKeyKey }}
             {{- end }}
           {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-          # No auth check here by design - the service implements none
-          # itself (see contracts/ocr-service-api.md); front it with an
-          # authenticating reverse proxy if it needs to be secured.
+          # /health is unauthenticated on purpose (probes); /scan and /serial
+          # require the Bearer token OCR_API_KEY (F-030).
           startupProbe:
             httpGet:
               path: /health

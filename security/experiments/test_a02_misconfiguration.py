@@ -158,17 +158,27 @@ LEAK_PATTERNS = re.compile(
 )
 
 
+DOC_PATHS = ["/docs", "/redoc", "/openapi.json", "/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect"]
+
+
 @pytest.mark.security
-@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json", "/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect"])
-async def test_E_A02_002_api_documentation_not_public(anon, path):
+async def test_E_A02_002_api_documentation_not_public(rig, restart_backend):
     """E-A02-002 `/docs`, `/redoc`, `/openapi.json` (also under `/api`) on an internet-facing instance.
 
-    Expected (secure): not reachable anonymously (401/403/404). A public OpenAPI document hands an
-    attacker the complete route and schema map. (Suspected weakness: main.py always sets
-    docs_url=/api/docs and openapi_url=/api/openapi.json regardless of DEBUG.)
-    """
-    r = await anon.get(path)
-    assert r.status_code in (401, 403, 404), f"{path} answered {r.status_code} to an anonymous caller"
+    Expected (secure, feature 010 / F-031): with the DEFAULT configuration (``ENABLE_API_DOCS`` unset) none of
+    them is reachable (404). The rig itself runs with ENABLE_API_DOCS=true (experiments enumerate the OpenAPI), so
+    this experiment restarts the backend with the variable unset and restores the rig afterwards. A control check
+    proves the opt-in still works (``ENABLE_API_DOCS=true`` -> /api/openapi.json 200) so the 404s are not a harness defect."""
+    from idp_helpers import Restarted, new_http, wait_healthy
+
+    async with Restarted(restart_backend, {"ENABLE_API_DOCS": None}):
+        async with new_http(rig) as http:
+            assert await wait_healthy(http, 60)
+            seen = {path: (await http.get(path)).status_code for path in DOC_PATHS}
+    assert all(code in (401, 403, 404) for code in seen.values()), f"documentation reachable by default: {seen}"
+    async with new_http(rig) as http:  # rig default again (ENABLE_API_DOCS=true): control
+        assert await wait_healthy(http, 60)
+        assert (await http.get("/api/openapi.json")).status_code == 200, "ENABLE_API_DOCS=true no longer exposes the docs (control)"
 
 
 def _repo_text(globs: list[str]) -> str:
@@ -227,14 +237,25 @@ async def test_E_A02_002_no_server_version_banner(anon):
 async def test_E_A02_002_health_endpoint_minimal_to_anonymous(anon):
     """E-A02-002 unauthenticated `/api/health`.
 
-    Expected (secure): liveness style answer only. The readiness endpoint publishes app version, the
-    LLM model name and which backends (DB, OCR, LLM) are up -- reconnaissance data. (Likely
-    low severity; the probe path could be restricted to the cluster network instead.)
-    """
+    Expected (secure, feature 010 / F-031): liveness style answer only -- exactly ``{"status": ...}``. Version, LLM
+    model name and which backends (DB, OCR, LLM) are up are reconnaissance data and need a login."""
     r = await anon.get("/api/health")
+    assert r.status_code == 200
     body = r.json()
-    leaked = {k for k in ("version", "llm_model", "ocr", "llm", "db", "scheduler") if k in body}
-    assert not leaked, f"anonymous /api/health exposes {sorted(leaked)}"
+    assert set(body) == {"status"}, f"anonymous /api/health exposes {sorted(set(body) - {'status'})}"
+
+
+@pytest.mark.security
+async def test_E_A02_002_health_details_need_login_and_hide_version_from_non_admins(anon, client):
+    """E-A02-002 `/api/health/details` (feature 010): 401 anonymously; for a logged-in non-admin without
+    ``version`` / ``llm_model``; admins get them."""
+    assert (await anon.get("/api/health/details")).status_code == 401
+    user = await client("user").get("/api/health/details")
+    assert user.status_code == 200
+    leaked = {k for k in ("version", "llm_model") if k in user.json()}
+    assert not leaked, f"non-admin sees {sorted(leaked)}"
+    admin = await client("admin").get("/api/health/details")
+    assert admin.status_code == 200 and "db" in admin.json()
 
 
 async def _provoke(anon, rig) -> list[tuple[str, httpx.Response]]:
@@ -379,6 +400,50 @@ async def test_E_A02_002_request_id_header_not_reflected_unbounded(anon):
     r = await anon.get("/api/health/live", headers={"X-Request-ID": big})
     echoed = r.headers.get("x-request-id", "")
     assert len(echoed) <= 128 and echoed != big, f"echoed {len(echoed)} chars of client-controlled id"
-    odd = "abc def;<script>\t"
-    r = await anon.get("/api/health/live", headers={"X-Request-ID": odd})
-    assert r.headers.get("x-request-id") != odd, "request id with spaces/markup echoed verbatim"
+    # (a tab or other control character cannot be sent: the HTTP client refuses it before it hits the wire)
+    for odd in ("abc def;<script>", 'a"b', "x" * 65, "id\u00e4", "a/b", ""):
+        try:
+            r = await anon.get("/api/health/live", headers={"X-Request-ID": odd})
+        except (httpx.LocalProtocolError, UnicodeEncodeError):
+            continue
+        echoed = r.headers.get("x-request-id")
+        assert echoed != odd, f"request id {odd[:20]!r} echoed verbatim"
+        assert echoed and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", echoed), f"replacement id not a safe token: {echoed!r}"
+    ok = "client-id.1_ok"
+    r = await anon.get("/api/health/live", headers={"X-Request-ID": ok})
+    assert r.headers.get("x-request-id") == ok, "a valid client id is no longer propagated (correlation)"
+
+
+# --------------------------------------------------------------------------- E-A02-004 (feature 012, trailing-slash redirect)
+
+@pytest.mark.security
+async def test_E_A02_004_redirect_keeps_https_behind_a_trusted_proxy(rig, restart_backend):
+    """E-A02-004: `GET /api/properties` (no trailing slash) is answered with a redirect to `/api/properties/`.
+    uvicorn runs with --no-proxy-headers (F-002), so behind a TLS terminating proxy the Location used to be `http://`
+    (mixed content / blocked by CSP). Expected: with a TRUSTED peer (127.0.0.0/8, which the rig client is) and
+    `X-Forwarded-Proto: https` the Location starts with `https://`; with an UNTRUSTED peer (rig default
+    TRUSTED_PROXIES=10.255.255.0/24) the header is ignored (`http://`) so a client cannot choose the scheme; and in
+    the trusted case garbage / downgrade values (`javascript`, `ftp`, `https, http` = last hop wins) never yield
+    anything but `http://`/`https://` and the last hop decides."""
+    from idp_helpers import Restarted, new_http, wait_healthy
+
+    async def loc(http, xfp):
+        h = {"X-Forwarded-Proto": xfp} if xfp is not None else {}
+        r = await http.get("/api/properties", headers=h)
+        assert r.status_code in (301, 302, 307, 308), f"no slash redirect: HTTP {r.status_code}"
+        return r.headers["location"]
+
+    async with new_http(rig) as http:  # untrusted peer
+        assert (await loc(http, "https")).startswith("http://"), "X-Forwarded-Proto honoured from an UNTRUSTED peer"
+        assert (await loc(http, None)).startswith("http://")
+    async with Restarted(restart_backend, {"TRUSTED_PROXIES": "127.0.0.0/8"}):
+        async with new_http(rig) as http:
+            assert await wait_healthy(http, 60)
+            got = await loc(http, "https")
+            assert got.startswith("https://") and got.endswith("/api/properties/"), got
+            assert (await loc(http, None)).startswith("http://"), "no header: scheme must stay http"
+            assert (await loc(http, "http")).startswith("http://")
+            assert (await loc(http, "javascript")).startswith("http://"), "unknown scheme must be ignored"
+            assert (await loc(http, "ftp")).startswith("http://")
+            assert (await loc(http, "https, http")).startswith("http://"), "last (closest) hop must win"
+            assert (await loc(http, "http, https")).startswith("https://")

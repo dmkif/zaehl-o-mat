@@ -27,7 +27,7 @@ docker run --rm -it ollama/ollama ollama pull gemma4:e4b
 docker compose up -d
 ```
 
-The app is available at **http://localhost:8080**.  
+The app is available at **http://localhost:8081** (Compose proxy; plain HTTP, local use only).  
 There are no default credentials. Before the first start, create a `.env` file
 next to `docker-compose.yaml` with freshly generated secrets (Compose refuses to
 start without them):
@@ -90,7 +90,7 @@ All variables are set on the `backend` service.
 | `OLLAMA_API_KEY` | `""` | Bearer token for hosted/proxied Ollama endpoints. Not needed for a local, unauthenticated Ollama. |
 | **OCR (optional)** | | |
 | `OCR_URL` | `""` | OCR service base URL (e.g. `http://ocr:8100`). Leave empty to disable — the app runs fine on the LLM path alone. |
-| `OCR_API_KEY` | `""` | Bearer token for a hosted/proxied OCR endpoint. Not needed for a local, unauthenticated OCR service. |
+| `OCR_API_KEY` | `""` | Shared secret: the backend sends it as Bearer token, the OCR service (same variable) requires it. Required by Compose and the chart; empty = unauthenticated OCR service. |
 | **Oil price** | | |
 | `OIL_PRICE_SOURCE` | `heizoel-aktuell` | Price source: `heizoel-aktuell` \| `tankerkoenig` \| `custom` |
 | `OIL_PRICE_API_KEY` | `""` | API key for tankerkoenig or custom source |
@@ -104,6 +104,11 @@ All variables are set on the `backend` service.
 | `OIDC_MANAGER_GROUP` | `verwalter` | OIDC group mapped to the `manager` role |
 | `OIDC_USER_GROUP` | `user` | OIDC group mapped to the `user` role |
 | `OIDC_GROUP_DIAGNOSTICS` | `false` | Log delivered vs. expected group names when an SSO sign-in is rejected (sensitive; enable only while investigating, warns at start-up) |
+| `OIDC_RATE_LIMIT` | `20/minute` | Rate limit per client for `/api/auth/login` and `/api/auth/callback` |
+| `OIDC_MAX_PENDING_STATES` | `1000` | Cap on pending (unfinished) SSO logins; above it `/auth/login` answers 503 |
+| `OIDC_HTTP_TIMEOUT_S` | `10` | Timeout in seconds for calls to the identity provider (connect is capped at 3 s) |
+| **API** | | |
+| `ENABLE_API_DOCS` | `false` | Serve `/api/docs`, `/api/redoc` and `/api/openapi.json` (off by default) |
 
 ### Secrets from Files
 
@@ -126,7 +131,7 @@ backend:
 ## OIDC Setup (Authentik)
 
 1. Create an **OAuth2/OpenID Connect** provider in Authentik.
-2. Set the redirect URI to `https://<your-domain>/auth/callback` (hash-based routing: `/#/auth/token` is handled by the frontend).
+2. Set the redirect URI to `https://<your-domain>/api/auth/callback` (the backend handles the callback, then redirects the browser to the SPA route `/auth/token#code=...`; the SPA uses history-mode routing, not hash routing). Register exactly this URL, never a wildcard.
 3. Copy the client ID, secret and discovery URL into the env vars above.
 4. Create groups matching `OIDC_ADMIN_GROUP` / `OIDC_MANAGER_GROUP` / `OIDC_USER_GROUP` and assign users.
 
@@ -175,22 +180,30 @@ the backend image — the backend carries no OCR-engine weight at all when
 - Enable it by running the `ocr` service in `docker-compose.yaml` (on by
   default in the quickstart) or setting `ocr.enabled: true` in the Helm
   chart's `values.yaml`, and pointing `OCR_URL` at it.
-- The OCR service implements no authentication itself — same as Ollama.
-  If you front it with an authenticating reverse proxy (recommended once
-  it and the backend no longer share a fully trusted private network,
-  e.g. across Kubernetes namespaces), set `OCR_API_KEY` so the backend
-  sends the token with every request.
+- The OCR service authenticates `/scan` and `/serial` with a shared secret:
+  when `OCR_API_KEY` is set it requires `Authorization: Bearer <OCR_API_KEY>`
+  (constant-time compare, `/health` stays open for probes) and the backend
+  sends the same value. Compose requires `OCR_API_KEY` in `.env`
+  (`openssl rand -base64 32`); the Helm chart requires `ocr.existingSecret`
+  (Secret key `OCR_API_KEY`) unless `ocr.allowUnauthenticated=true`. Without a
+  key the service still runs, unauthenticated, and logs a warning at startup.
 - Disable it entirely by not running the container / leaving `OCR_URL`
   empty — the app works the same as with any other optional subsystem
   turned off (see Health Check below).
 
 ## Health Check
 
-`GET /api/health` returns the status of all subsystems:
+`GET /api/health` is anonymous and returns only `{"status": "ok"}` (or `"degraded"` with HTTP 503
+when the database or the scheduler is down). It does not contact OCR or the LLM, so it is safe as
+readiness probe. `GET /api/health/live` is the process-only liveness check.
+
+`GET /api/health/details` (admin login required) returns the subsystem detail; OCR/LLM results are
+cached for 30 s:
 
 ```json
 {
   "status": "ok",
+  "version": "0.1.0",
   "db": true,
   "scheduler": true,
   "ocr": true,
@@ -201,7 +214,7 @@ the backend image — the backend carries no OCR-engine weight at all when
 
 - **status** is `"ok"` when DB and scheduler are healthy, `"degraded"` otherwise (HTTP 503).
 - **ocr** / **llm** reflect availability but do not affect overall status — they are optional.
-- The frontend shows these as a traffic-light indicator in the footer.
+- The frontend footer indicator currently reads `/api/health`; anonymous visitors see only ok/degraded, the OCR/LLM lights need `/api/health/details` (admin).
 
 ## Helm Chart (Kubernetes)
 
@@ -225,7 +238,24 @@ SUPERADMIN_USER
 SUPERADMIN_PASSWORD
 ```
 
-See [`chart/values.yaml`](chart/values.yaml) for all available values.
+Every key of that Secret becomes an environment variable of the backend pod
+(`envFrom`), so it is visible to anyone who may `kubectl describe` the pod or
+read its `/proc`. To avoid that, deliver the secrets as files instead with
+`backend.secretVolume.enabled=true` (one key per file under `/run/secrets`; the
+app reads both, environment variables win). Keep the database password consistent
+between the backend Secret (`DATABASE_URL`) and the PostgreSQL Secret
+(`postgresql.auth.existingSecret`).
+
+HSTS is configurable via `ingress.hsts.seconds`, `ingress.hsts.includeSubdomains`
+and `ingress.hsts.preload` (defaults: one year, both `true`). Set `preload` and
+`includeSubdomains` to `false` when the host shares a parent domain with other
+services. The chart and the Compose proxy (`nginx.conf`) send the same CSP and
+header set; HSTS is chart-only (TLS terminates at Traefik).
+
+The JWT lives in `sessionStorage` (not `localStorage`, no cookie): it is gone when
+the tab closes and is removed on logout and on any 401. This is an accepted
+trade-off for an SPA with a strict CSP (`script-src 'self'`, no inline script, no
+HTML sinks); moving it to an HttpOnly cookie would need CSRF protection.
 
 ## Role-Based Access
 

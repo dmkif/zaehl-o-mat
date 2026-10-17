@@ -107,6 +107,8 @@ def _claims() -> dict:
     c = {"sub": p.get("sub", "rig-oidc-sub-1"), "email": p.get("email", "rig-oidc@example.test"),
          "preferred_username": p.get("preferred_username", "rig-oidc")}
     c[gc] = p["groups"] if "groups" in p else ["rig-users"]
+    for k in p.get("omit", []):   # e.g. {"omit": ["sub"]}: claim absent (not null)
+        c.pop(k, None)
     return c
 
 

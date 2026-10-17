@@ -115,7 +115,9 @@ async def test_E_A10_001_postgres_stopped_midrequest(rig, client, pg_stop, pg_st
                 assert r.status_code in (500, 502, 503, 504), f"{what}: odd 5xx {r.status_code}"
                 _no_internals(r, rig, what)
         assert not isinstance(health, Exception), f"health endpoint unreachable while DB down: {health!r}"
-        assert health.status_code == 503 and health.json().get("db") is False, "health does not report the DB outage"
+        # feature 010: the anonymous probe answers {"status": "degraded"} only (details need a login, which needs the DB)
+        assert health.status_code == 503 and health.json().get("status") == "degraded", "health does not report the DB outage"
+        assert set(health.json()) == {"status"}, f"anonymous health leaks details: {sorted(health.json())}"
         assert not isinstance(live, Exception) and live.status_code == 200, "liveness must not depend on the DB"
         _no_internals(health, rig, "health")
     finally:
@@ -285,8 +287,11 @@ async def test_E_A10_002_optional_subsystems_unconfigured(rig, client, restart_b
         admin = await get_client(client, "admin")
         async with new_http(rig) as anon:
             assert await wait_healthy(anon, 90), "backend did not become healthy with optional subsystems unconfigured"
-            h = (await anon.get("/api/health")).json()
+            hr = await anon.get("/api/health")
+            assert hr.status_code == 200 and hr.json().get("status") == "ok", f"core health not ok: {hr.status_code} {hr.text[:100]}"
         if "OCR_URL" in overrides:
+            # feature 010: component details live behind a login (admins)
+            h = (await admin.get("/api/health/details")).json()
             assert h["ocr"] is False
         for engine in ("ocr", "llm", "auto"):
             before = _files(rig)
@@ -301,3 +306,53 @@ async def test_E_A10_002_optional_subsystems_unconfigured(rig, client, restart_b
             else:
                 assert r.status_code == 503, f"{label}/{engine}: HTTP {r.status_code}"
                 assert not (_files(rig) - before), f"{label}/{engine}: failed scan left an orphan file"
+
+
+# --------------------------------------------------------------------------- E-A10-005 (feature 011, F-035)
+
+async def test_E_A10_005_db_outage_is_503_not_500(rig, client, pg_stop, pg_start):
+    """E-A10-005: PostgreSQL stopped, then plain authenticated requests (GET list, GET one, POST, PATCH) and an
+    unauthenticated `/api/properties/`. Expected: every answer is a generic `503 {"detail": "Service temporarily
+    unavailable"}` with a Retry-After header -- never 500, no internals in the body -- and the service serves
+    normally again after PostgreSQL is back (no restart)."""
+    admin = await get_client(client, "admin")
+    pid, mid = await make_meter(admin, "e5")
+    probes = [
+        ("GET list", "GET", "/api/properties/", None),
+        ("GET one", "GET", f"/api/properties/{pid}", None),
+        ("GET readings", "GET", f"/api/properties/{pid}/meters/{mid}/readings/", None),
+        ("POST reading", "POST", f"/api/properties/{pid}/meters/{mid}/readings/", {"json": {"value": "5"}}),
+        ("PATCH property", "PATCH", f"/api/properties/{pid}", {"json": {"name": "x-e5"}}),
+        ("GET me", "GET", "/api/auth/me", None),
+    ]
+    await _call(pg_stop)
+    bad = []
+    try:
+        await asyncio.sleep(1.0)
+        for what, method, url, kw in probes:
+            for attempt in range(2):  # the very first request may meet a dead pooled connection
+                try:
+                    r = await asyncio.wait_for(admin.request(method, url, **(kw or {})), BOUND_S)
+                    break
+                except httpx.TransportError as exc:
+                    if attempt:
+                        bad.append((what, "transport", type(exc).__name__))
+                        r = None
+            if r is None:
+                continue
+            if r.status_code != 503:
+                bad.append((what, r.status_code, r.text[:120]))
+                continue
+            if r.json() != {"detail": "Service temporarily unavailable"}:
+                bad.append((what, "body", r.text[:120]))
+            if not r.headers.get("retry-after"):
+                bad.append((what, "no Retry-After"))
+            if leaks_internals(r.text):
+                bad.append((what, "internals", r.text[:120]))
+    finally:
+        await _call(pg_start)
+    assert not bad, bad
+    assert await wait_healthy(admin, 90), "service did not recover after PostgreSQL came back"
+    r = await admin.get("/api/properties/")
+    assert r.status_code == 200, f"not serving after recovery: {r.status_code}"
+    await admin.delete(f"/api/properties/{pid}")

@@ -41,6 +41,8 @@ Backend env set by up.sh: DATABASE_URL, JWT_SECRET_KEY, OIDC_* (discovery `$OIDC
   sets `app.limiter.limiter.enabled = False`. No file under `backend/` is touched.
 * Rate-limit experiments (E-A07-001) call `restart_backend({"RIG_DISABLE_LIMITER": None})` to run against the real limiter;
   leaving the context restores the rig default (limiter off).
+* Release 0.7.0 settings of the rig backend (`.state/backend.env`): `ENABLE_API_DOCS=true` (docs are off by default; experiments read `/api/openapi.json`; E-A02-002 restarts with the variable unset to test the default), `OIDC_RATE_LIMIT=100000/minute` (login/callback limit would throttle the sign-in floods), `OCR_API_KEY=<random>` (the backend sends it as Bearer, `fake_ocr` runs with `--api-key`, `/health` stays open like the real service).
+* `/api/auth/login` sets the HttpOnly cookie `oidc_binder` which must come back on `/api/auth/callback`. `idp_helpers.start_flow` remembers it per `state`; `callback()` sends the cookie of that login (pass `binder=None` to send none, or a string to send a foreign one), so parallel flows may share one client.
 * `scripts/security-rig.sh --quick` sets `RIG_RACE_ROUNDS=20`, `RIG_RACE_SIGNINS=30` (defaults for a full run: 100/100).
   Race rounds fail fast (`RIG_RACE_MAX_FAILURES`, default 5) and are bounded by `RIG_RACE_ROUND_TIMEOUT` (30 s).
 * pytest runs with `--durations=30 -ra --timeout=300` (`pytest.ini`).

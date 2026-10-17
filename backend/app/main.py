@@ -1,13 +1,15 @@
+import asyncio
 import logging
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,8 +19,11 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.body_limit import BodyLimitMiddleware
 from app.forwarded_proto import ForwardedProtoMiddleware
+from app.auth import get_current_user
+from app.models import User, UserRole
 from app.config import settings
 from app.database import SessionLocal
+from app.error_handlers import install as install_error_handlers
 from app.limiter import limiter
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
@@ -27,7 +32,7 @@ logger = logging.getLogger(__name__)
 for _noisy in ("httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
-_SENSITIVE_QUERY = re.compile(r"(?i)([?&](?:code|state)=)[^&\s\"]*")
+_SENSITIVE_QUERY = re.compile(r"(?i)([?&](?:code|state|api_?key|key|token|access_token)=)[^&\s\"]*")
 
 
 class AccessLogRedactionFilter(logging.Filter):
@@ -38,12 +43,15 @@ class AccessLogRedactionFilter(logging.Filter):
             record.args = tuple(
                 _SENSITIVE_QUERY.sub(r"\1[redacted]", a) if isinstance(a, str) else a for a in record.args
             )
-        elif isinstance(record.msg, str):
+        if isinstance(record.msg, str):
             record.msg = _SENSITIVE_QUERY.sub(r"\1[redacted]", record.msg)
         return True
 
 
 logging.getLogger("uvicorn.access").addFilter(AccessLogRedactionFilter())
+# F-027: URLs with credentials in the query must not reach any application log either.
+for _h in logging.getLogger().handlers:
+    _h.addFilter(AccessLogRedactionFilter())
 
 scheduler = AsyncIOScheduler()
 
@@ -58,12 +66,16 @@ def _run_retention():
 
 
 async def _run_oil_price():
-    from app.services.oil_price import fetch_and_store_oil_price
-    db = SessionLocal()
+    """Fetch the oil price; never raises (F-025: start-up and the scheduler must survive)."""
     try:
-        await fetch_and_store_oil_price(db)
-    finally:
-        db.close()
+        from app.services.oil_price import fetch_and_store_oil_price
+        db = SessionLocal()
+        try:
+            await fetch_and_store_oil_price(db)
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.error("Oil price job failed: %s", type(exc).__name__)
 
 
 def warn_if_group_diagnostics() -> None:
@@ -76,8 +88,9 @@ def warn_if_group_diagnostics() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     warn_if_group_diagnostics()
-    # Fetch oil price immediately so data is available from the first request
-    await _run_oil_price()
+    # Fetch the oil price right away, but in the background: an unreachable or
+    # slow source must neither delay nor fail start-up (F-025).
+    oil_task = asyncio.create_task(_run_oil_price())
 
     # Schedule jobs
     scheduler.add_job(_run_retention, CronTrigger(hour=3, minute=0), id="retention")
@@ -87,6 +100,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    oil_task.cancel()
     scheduler.shutdown(wait=False)
     logger.info("Scheduler stopped")
 
@@ -95,9 +109,10 @@ app = FastAPI(
     title="Zähl-O-Mat API",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url="/api/docs",
-    redoc_url=None,
-    openapi_url="/api/openapi.json",
+    # F-031: API docs only on explicit opt-in (ENABLE_API_DOCS=true).
+    docs_url="/api/docs" if settings.enable_api_docs else None,
+    redoc_url="/api/redoc" if settings.enable_api_docs else None,
+    openapi_url="/api/openapi.json" if settings.enable_api_docs else None,
 )
 
 app.state.limiter = limiter
@@ -115,6 +130,9 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
     return JSONResponse(status_code=422, content={"detail": detail})
 
 
+install_error_handlers(app)  # F-035: DB outage -> 503, generic 500 (see app/error_handlers.py)
+
+
 # The Vite dev server origin is only trusted in debug mode — never in production.
 _cors_origins = [settings.app_base_url]
 if settings.debug:
@@ -130,9 +148,15 @@ app.add_middleware(
 )
 
 
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    # F-046: accept only short, harmless ids; anything else is replaced.
+    req_id = request.headers.get("x-request-id", "")
+    if not _REQUEST_ID_RE.fullmatch(req_id):
+        req_id = str(uuid.uuid4())
     response = await call_next(request)
     response.headers["x-request-id"] = req_id
     return response
@@ -172,30 +196,55 @@ def health_live():
     return {"status": "ok"}
 
 
-@app.get("/api/health", tags=["health"])
-def health(response: Response):
-    """Readiness/status probe: checks DB, scheduler, OCR and LLM availability."""
-    db_ok = False
+def _db_ok() -> bool:
+    db = None
     try:
         db = next(get_db())
         db.execute(text("SELECT 1"))
-        db.close()
-        db_ok = True
+        return True
     except Exception:  # nosec B110 - Constitution Principle II: any DB failure means "not ready", never a crash
-        pass
+        return False
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:  # nosec B110
+                pass
 
-    scheduler_ok = scheduler.running
 
-    # OCR-service reachability (optional subsystem, same pattern as Ollama below)
+@app.get("/api/health", tags=["health"])
+def health(response: Response):
+    """Readiness probe, anonymous: ``{"status": ...}`` only (F-031).
+
+    Depends on DB and scheduler alone. Optional services (OCR, gateway,
+    Ollama) are never contacted here: a slow GPU host must not flip pod
+    readiness (probe timeout) nor can anonymous callers trigger outbound calls.
+    """
+    core_ok = _db_ok() and scheduler.running
+    if not core_ok:
+        response.status_code = 503
+    return {"status": "ok" if core_ok else "degraded"}
+
+
+_DETAILS_TTL_S = 30.0
+_details_cache: dict = {}
+
+
+def _external_checks() -> dict:
+    """OCR / LLM reachability, cached for _DETAILS_TTL_S so admins cannot amplify outbound calls."""
+    now = time.monotonic()
+    hit = _details_cache.get("ext")
+    if hit and now - hit[0] < _DETAILS_TTL_S:
+        return hit[1]
+
     ocr_ok = False
     if settings.ocr_url:
         try:
             r = _httpx.get(f"{settings.ocr_url}/health", timeout=3.0)
             ocr_ok = r.status_code == 200
-        except Exception:  # nosec B110 - Constitution Principle II: optional subsystem, absence must not crash health check
+        except Exception:  # nosec B110 - optional subsystem, absence must not crash health check
             pass
 
-    # LLM reachability (KI-Gateway or Ollama)
     llm_ok = False
     llm_model: str | None = None
     if _llm_client.using_gateway():
@@ -206,21 +255,34 @@ def health(response: Response):
         try:
             r = _httpx.get(f"{settings.ollama_url}/api/tags", timeout=3.0)
             llm_ok = r.status_code == 200
-        except Exception:  # nosec B110 - Constitution Principle II: optional subsystem, absence must not crash health check
+        except Exception:  # nosec B110 - optional subsystem, absence must not crash health check
             pass
 
-    # Core services (DB + scheduler) determine overall health.
-    # OCR and LLM are optional — their absence does not degrade status.
+    result = {"ocr": ocr_ok, "llm": llm_ok, "llm_model": llm_model}
+    _details_cache["ext"] = (now, result)
+    return result
+
+
+@app.get("/api/health/details", tags=["health"])
+def health_details(response: Response, user: User = Depends(get_current_user)):
+    """Subsystem state for signed-in users (status footer): DB, scheduler, OCR, LLM.
+
+    Version and model name are only returned to admins. OCR/LLM do not affect status.
+    """
+    db_ok = _db_ok()
+    scheduler_ok = scheduler.running
     core_ok = db_ok and scheduler_ok
     if not core_ok:
         response.status_code = 503
-
-    return {
+    ext = _external_checks()
+    body = {
         "status": "ok" if core_ok else "degraded",
-        "version": app.version,
         "db": db_ok,
         "scheduler": scheduler_ok,
-        "ocr": ocr_ok,
-        "llm": llm_ok,
-        "llm_model": llm_model,
+        "ocr": ext["ocr"],
+        "llm": ext["llm"],
     }
+    if user.role in (UserRole.superadmin, UserRole.admin):
+        body["version"] = app.version
+        body["llm_model"] = ext["llm_model"]
+    return body

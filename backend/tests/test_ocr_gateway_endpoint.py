@@ -123,12 +123,21 @@ def test_bulk_config_error_text(client, db):
     assert [i["error"] for i in items] == [CONFIG] * 2
 
 
-def test_health_reports_gateway(client, monkeypatch):
+def test_health_reports_gateway(client, db, monkeypatch):
+    from app import main
+    from app.models import UserRole
+    from tests.conftest import auth_headers, make_user
+    admin = make_user(db, role=UserRole.admin, username="adm", email="adm@example.com")
+    h = auth_headers(admin)
+    main._details_cache.clear()
     monkeypatch.setattr(llm_client, "gateway_healthy", lambda: True)
-    body = client.get("/api/health").json()
+    body = client.get("/api/health/details", headers=h).json()
     assert body["llm"] is True and body["llm_model"] == "qwen3.5-9b"
+    main._details_cache.clear()
     monkeypatch.setattr(llm_client, "gateway_healthy", lambda: False)
-    assert client.get("/api/health").json()["llm"] is False
+    assert client.get("/api/health/details", headers=h).json()["llm"] is False
+    # anonymous readiness never calls the gateway
+    assert client.get("/api/health").json() == {"status": "ok"}
 
 
 # ── Log hygiene (SC-005, FR-009) ──────────────────────────────────────────────

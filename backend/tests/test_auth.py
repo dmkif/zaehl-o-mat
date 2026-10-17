@@ -182,3 +182,18 @@ class TestAuthApi:
         db.commit()
         r = client.get("/api/auth/me", headers=auth_headers(user))
         assert r.status_code == 401
+
+
+@pytest.mark.parametrize("extra", [{"zip": "DEF"}, {"jwk": {"kty": "oct"}}, {"x5u": "http://x"}, {"cty": "JWT"}])
+def test_decode_rejects_extension_headers(extra):
+    """A correctly signed token with an extension header (zip, jwk, ...) is refused (F-034, rig E-A04-001)."""
+    from authlib.jose import JsonWebToken
+    from authlib.jose.errors import JoseError
+
+    tok = JsonWebToken(["HS256"]).encode(
+        {"alg": "HS256", **extra}, {"sub": "x", "exp": int(time.time()) + 60}, settings.jwt_secret_key
+    ).decode()
+    with pytest.raises(JoseError):
+        decode_access_token(tok)
+    ok = create_access_token({"sub": "x"})
+    assert decode_access_token(ok)["sub"] == "x"

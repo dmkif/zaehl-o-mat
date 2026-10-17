@@ -12,7 +12,7 @@ import pytest
 
 from idp_helpers import (
     ADMIN_GROUP, MANAGER_GROUP, USER_GROUP, Restarted, authorize, barrier, callback, cfg, get_client,
-    me, new_http, set_claims, signin, start_flow, status_of, token_of, unique_identity, users_by_email,
+    me, new_http, set_claims, set_mode, signin, start_flow, status_of, token_of, unique_identity, users_by_email,
 )
 
 pytestmark = pytest.mark.security
@@ -237,3 +237,257 @@ async def test_E_A07_003_group_claim_shapes(rig, client, oidc, name, groups, exp
         role = (await me(http, token)).json()["role"]
         want = expected.split("|")[0]
         assert role == want, f"{name}: role {role!r}, expected {want!r}"
+
+
+# --------------------------------------------------------------------------- E-A07-008 (feature 010, F-017)
+
+def _binder_of(resp) -> str | None:
+    return resp.cookies.get("oidc_binder")
+
+
+async def _users_named(superadmin, email: str) -> list:
+    return await users_by_email(superadmin, email)
+
+
+async def test_E_A07_008_login_binder_cookie_attributes(rig):
+    """E-A07-008 (login CSRF, F-017): /api/auth/login sets an `oidc_binder` cookie that is HttpOnly, SameSite=Lax,
+    scoped to /api/auth (no Domain), short lived and different for every login."""
+    async with new_http(rig) as http:
+        raws, values = [], []
+        for _ in range(3):
+            r = await http.get("/api/auth/login")
+            assert r.status_code in (302, 303, 307)
+            sc = [v for k, v in r.headers.multi_items() if k.lower() == "set-cookie" and v.startswith("oidc_binder=")]
+            assert len(sc) == 1, f"expected exactly one oidc_binder Set-Cookie, got {sc}"
+            raws.append(sc[0]); values.append(sc[0].split(";", 1)[0].split("=", 1)[1])
+        low = raws[0].lower()
+        assert "httponly" in low and "samesite=lax" in low and "path=/api/auth" in low, raws[0]
+        assert "domain=" not in low, raws[0]
+        import re as _re
+        age = _re.search(r"max-age=(\d+)", low)
+        assert age and 0 < int(age.group(1)) <= 900, raws[0]
+        assert len(set(values)) == 3 and all(len(v) >= 32 for v in values), "binder not unique / too short"
+
+
+async def test_E_A07_008_callback_requires_the_initiating_browsers_cookie(rig, client, oidc):
+    """E-A07-008 (login CSRF, F-017): the callback of a login only succeeds with the oidc_binder cookie that /login of
+    the SAME login issued. Without cookie, with the cookie of another login, with a tampered value -> 400, no login
+    code, no user row; the state is consumed by the failed attempt (a retry with the right cookie also fails).
+    Control: the right cookie works."""
+    superadmin = await get_client(client, "superadmin")
+    results = {}
+    for label in ("control", "no_cookie", "foreign_cookie", "tampered", "retry_after_failure"):
+        sub, email = unique_identity(f"bind-{label[:6]}")
+        await set_claims(oidc, [USER_GROUP], sub, email)
+        async with new_http(rig) as victim, new_http(rig) as attacker:
+            flow = await authorize(victim, await start_flow(victim))
+            other = await start_flow(attacker)            # attacker's own login supplies a foreign cookie
+            assert flow.binder and other.binder and flow.binder != other.binder
+            if label == "control":
+                r = await callback(victim, flow.code, flow.returned_state)
+            elif label == "no_cookie":
+                async with new_http(rig) as nobody:      # a browser that never visited /login: empty cookie jar
+                    r = await callback(nobody, flow.code, flow.returned_state, binder=None)
+            elif label == "foreign_cookie":
+                r = await callback(attacker, flow.code, flow.returned_state, binder=other.binder)
+            elif label == "tampered":
+                r = await callback(victim, flow.code, flow.returned_state, binder=flow.binder[:-2] + ("AA" if flow.binder[-2:] != "AA" else "BB"))
+            else:
+                bad = await callback(attacker, flow.code, flow.returned_state, binder=other.binder)
+                assert bad.status_code == 400
+                r = await callback(victim, flow.code, flow.returned_state)
+            rows = await _users_named(superadmin, email)
+            results[label] = (r.status_code, token_of(r), len(rows))
+    assert results["control"][0] in (302, 303, 307) and results["control"][1] and results["control"][2] == 1, results
+    for label in ("no_cookie", "foreign_cookie", "tampered", "retry_after_failure"):
+        assert results[label] == (400, None, 0), f"{label}: {results[label]} (expected 400, no code, no user)"
+
+
+async def test_E_A07_008_id_token_with_wrong_nonce_is_rejected(rig, client, oidc):
+    """E-A07-008 (nonce, F-017): the IdP returns an id_token whose nonce is not the one of this login (fake IdP mode
+    `wrong_nonce`) -> 400, no login code, no user row. Control: the same flow with a matching nonce succeeds."""
+    superadmin = await get_client(client, "superadmin")
+    sub, email = unique_identity("nonce")
+    await set_claims(oidc, [USER_GROUP], sub, email)
+    async with new_http(rig) as http:
+        resp, token, _ = await signin(http)
+        assert token, f"control sign-in failed: {resp.status_code}"
+    sub2, email2 = unique_identity("nonce2")
+    await set_claims(oidc, [USER_GROUP], sub2, email2)
+    await set_mode(oidc, "wrong_nonce", groups=[USER_GROUP], sub=sub2, email=email2, preferred_username=f"u-{sub2}")
+    async with new_http(rig) as http:
+        resp, token, _ = await signin(http)
+        assert resp.status_code == 400 and not token, f"wrong nonce accepted: {resp.status_code}"
+    assert await _users_named(superadmin, email2) == []
+
+
+# --------------------------------------------------------------------------- E-A07-009 (feature 010, F-018 / F-019)
+
+async def _superadmin_row(superadmin, rig):
+    r = await superadmin.get("/api/admin/users")
+    rows = [u for u in r.json() if u["username"] == cfg(rig, "SUPERADMIN_USER")]
+    assert len(rows) == 1 and rows[0]["role"] == "superadmin"
+    return rows[0]
+
+
+_BAD_SUBS = [
+    ("omitted", {"omit": ["sub"]}),
+    ("null", {"sub": None}),
+    ("empty", {"sub": ""}),
+    ("blank", {"sub": "   "}),
+    ("int", {"sub": 12345}),
+    ("list", {"sub": ["a"]}),
+    ("object", {"sub": {"a": 1}}),
+    ("bool", {"sub": True}),
+    ("too_long", {"sub": "s" * 300}),
+]
+
+
+@pytest.mark.parametrize("name,extra", _BAD_SUBS, ids=[c[0] for c in _BAD_SUBS])
+async def test_E_A07_009_userinfo_without_usable_sub_is_502_and_superadmin_untouched(rig, client, oidc, name, extra):
+    """E-A07-009 (F-018): a userinfo without a usable `sub` (absent, null, empty, blank, wrong type, > 255 chars)
+    gives 502 -- not 500, not a login code -- and never reads or changes the break-glass superadmin row (which has
+    `oidc_sub IS NULL`): same id, role, e-mail and token_version before and after, no user row for the e-mail."""
+    superadmin = await get_client(client, "superadmin")
+    before = await _superadmin_row(superadmin, rig)
+    _, email = unique_identity("nosub")
+    params = {"groups": [ADMIN_GROUP], "email": email, "preferred_username": f"u-nosub-{name}", **extra}
+    await set_mode(oidc, "claims", **params)
+    async with new_http(rig) as http:
+        resp, token, _ = await signin(http)
+    assert resp.status_code == 502 and not token, f"{name}: HTTP {resp.status_code}"
+    assert await _users_named(superadmin, email) == []
+    after = await _superadmin_row(superadmin, rig)
+    assert after == before, f"superadmin row changed: {before} -> {after}"
+    assert (await superadmin.get("/api/auth/me")).status_code == 200, "superadmin token revoked by the bad login"
+
+
+async def test_E_A07_009_username_collisions_do_not_merge_or_crash(rig, client, oidc):
+    """E-A07-009 (F-019): (a) two identities with the same `preferred_username`, (b) a new identity that claims the
+    superadmin's username -> sign-in succeeds (no 500), every identity gets its own user with a derived unique
+    username, the superadmin row is unchanged and not merged. (c) A new identity with an e-mail already used by
+    another account -> 409 (not 500, no merge, victim unchanged)."""
+    superadmin = await get_client(client, "superadmin")
+    before = await _superadmin_row(superadmin, rig)
+    sa_name = cfg(rig, "SUPERADMIN_USER")
+    clash = f"clash-{unique_identity()[0]}"
+    users = []
+    for pname in (clash, clash, sa_name):
+        sub, email = unique_identity("coll")
+        await set_claims(oidc, [USER_GROUP], sub, email, preferred_username=pname)
+        async with new_http(rig) as http:
+            resp, token, _ = await signin(http)
+            assert resp.status_code in (302, 303, 307) and token, f"{pname}: sign-in failed with HTTP {resp.status_code}"
+            ident = (await me(http, token)).json()
+        users.append((sub, email, ident))
+    ids = {u[2]["id"] for u in users}
+    assert len(ids) == 3 and before["id"] not in ids, "identities were merged"
+    names = [u[2]["username"] for u in users]
+    assert len(set(names)) == 3 and names[2] != sa_name, f"usernames not unique: {names}"
+    assert await _superadmin_row(superadmin, rig) == before
+
+    victim_sub, victim_email, victim = users[0]
+    sub2, _ = unique_identity("emailclash")
+    await set_claims(oidc, [USER_GROUP], sub2, victim_email, preferred_username=f"u-{sub2}")
+    async with new_http(rig) as http:
+        resp, token, _ = await signin(http)
+    assert resp.status_code == 409 and not token, f"e-mail collision answered {resp.status_code}"
+    rows = await _users_named(superadmin, victim_email)
+    assert [r["id"] for r in rows] == [victim["id"]], "e-mail collision created or merged an account"
+
+
+# --------------------------------------------------------------------------- E-A07-010 (feature 011, F-030)
+
+_OCR_SERVICE_RUNNER = r'''
+import sys, types
+sys.path.insert(0, sys.argv[1])
+stub = types.ModuleType("app.pipeline")
+stub._run_ocr_on_file_sync = lambda path, already_cropped=False: {"raw_texts": [], "detected_value": "1", "detected_serial": None, "detection_method": "stub"}
+stub._extract_serial_sync = lambda path: "1234567"
+sys.modules["app.pipeline"] = stub
+import uvicorn
+from app.main import app
+uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[2]), log_level="warning")
+'''
+
+
+async def test_E_A07_010_ocr_service_requires_bearer_key(rig, tmp_path):
+    """E-A07-010 (F-030): the REAL ocr-service FastAPI app (app/main.py, EasyOCR pipeline replaced by a stub so no
+    model is needed) is started on loopback with OCR_API_KEY set. Expected: /health stays open; /scan and /serial answer
+    401 (never 500) with no key, a wrong key, a wrong scheme, an empty bearer and a non-ASCII key; the right key passes
+    the gate (200); the same app with no key configured still serves (documented unauthenticated mode, control)."""
+    import socket
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import httpx
+
+    from idp_helpers import TINY_PNG
+
+    repo = Path(__file__).resolve().parents[2]
+    runner = tmp_path / "run_ocr.py"
+    runner.write_text(_OCR_SERVICE_RUNNER)
+
+    def start(key):
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LANG": "C.UTF-8", "PYTHONUNBUFFERED": "1"}
+        if key:
+            env["OCR_API_KEY"] = key
+        p = subprocess.Popen([sys.executable, "-I", str(runner), str(repo / "ocr-service"), str(port)], env=env,
+                             cwd=tmp_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        end = time.monotonic() + 40
+        while time.monotonic() < end:
+            if p.poll() is not None:
+                raise AssertionError(f"ocr-service exited: {p.stdout.read().decode()[-800:]}")
+            try:
+                if httpx.get(f"http://127.0.0.1:{port}/health", timeout=1).status_code == 200:
+                    return p, port
+            except httpx.HTTPError:
+                time.sleep(0.3)
+        p.kill()
+        raise AssertionError("ocr-service did not start")
+
+    files = lambda: {"file": ("m.png", TINY_PNG, "image/png")}  # noqa: E731
+    key = "rig-ocr-key-" + os.urandom(8).hex()
+    p, port = start(key)
+    try:
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20) as c:
+            assert (await c.get("/health")).status_code == 200, "/health must stay open for probes"
+            bad_headers = [
+                {}, {"Authorization": "Bearer wrong"}, {"Authorization": f"Basic {key}"}, {"Authorization": "Bearer"},
+                {"Authorization": key}, {"Authorization": f"Bearer {key}x"}, {"Authorization": f"Bearer {key[:-1]}"},
+                {"Authorization": "Bearer ä".encode("latin-1")},
+            ]
+            for path in ("/scan", "/serial"):
+                for h in bad_headers:
+                    r = await c.post(path, files=files(), headers=h)
+                    assert r.status_code == 401, f"{path} with {h!r}: HTTP {r.status_code} {r.text[:120]}"
+                    assert key not in r.text
+                ok = await c.post(path, files=files(), headers={"Authorization": f"Bearer {key}"})
+                assert ok.status_code == 200, f"{path} with the right key: HTTP {ok.status_code} {ok.text[:120]}"
+    finally:
+        p.terminate(); p.wait(10)
+
+    p, port = start(None)   # control: no key configured -> open by design (startup warning)
+    try:
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=20) as c:
+            assert (await c.post("/scan", files=files())).status_code == 200
+    finally:
+        p.terminate(); p.wait(10)
+
+
+async def test_E_A07_010_backend_with_wrong_ocr_key_fails_closed(rig, client, restart_backend):
+    """E-A07-010 (F-030, backend side): the backend must present the shared key. With a wrong OCR_API_KEY the (key
+    checking) OCR stand-in answers 401 and the scan ends as a clean 502/503 -- no invented reading, no 500 -- while
+    the rig's own key works (control: scan 200)."""
+    from idp_helpers import TINY_PNG
+
+    admin = await get_client(client, "admin")
+    r = await admin.post("/api/ocr/scan", files={"file": ("m.png", TINY_PNG, "image/png")}, data={"engine": "ocr"})
+    assert r.status_code == 200 and r.json().get("detected_value"), f"control scan failed: {r.status_code} {r.text[:200]}"
+    async with Restarted(restart_backend, {"OCR_API_KEY": "not-the-key"}):
+        admin = await get_client(client, "admin")
+        r = await admin.post("/api/ocr/scan", files={"file": ("m.png", TINY_PNG, "image/png")}, data={"engine": "ocr"})
+        assert r.status_code in (502, 503), f"wrong OCR key -> HTTP {r.status_code} {r.text[:200]}"
+        assert "detected_value" not in r.text
