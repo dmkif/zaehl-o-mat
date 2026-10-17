@@ -11,20 +11,23 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 
 from app.auth import (
-    create_access_token,
+    bearer_scheme,
     get_or_create_user_from_oidc,
     get_current_user,
+    issue_user_token,
+    revoke_sessions,
 )
 from app.config import settings
 from app.database import get_db
 from app.limiter import limiter, _key_func as client_ip
-from app.models import User, UserRole, OidcPkceState
+from app.models import LoginCode, User, UserRole, OidcPkceState
 from app.security_log import log_event
-from app.schemas.auth import TokenResponse, SuperadminLoginRequest
+from app.schemas.auth import ExchangeRequest, TokenResponse, SuperadminLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -126,11 +129,26 @@ def _consume_pkce_state(db: Session, state: str) -> str:
     return verifier
 
 
+_LOGIN_CODE_TTL = timedelta(seconds=60)
+
+
+def _hash_code(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
+
+
 def _sign_in(db: Session, userinfo: dict, ip: Optional[str] = None) -> str:
-    """Create/update the user and issue the app JWT (sync, DB)."""
+    """Create/update the user and return a single-use login code (sync, DB).
+
+    The code (not the JWT, F-008) goes to the SPA; only its hash is stored.
+    """
     user = get_or_create_user_from_oidc(db, userinfo)
+    now = datetime.now(timezone.utc)
+    db.query(LoginCode).filter(LoginCode.expires_at < now).delete()
+    code = secrets.token_urlsafe(32)
+    db.add(LoginCode(code_hash=_hash_code(code), user_id=user.id, expires_at=now + _LOGIN_CODE_TTL))
+    db.commit()
     log_event("login", outcome="ok", actor=user.id, ip=ip)
-    return create_access_token({"sub": str(user.id), "role": user.role.value})
+    return code
 
 
 @router.get("/callback")
@@ -184,13 +202,47 @@ async def callback(
     # Sync DB work must not run on the event loop: with the pool exhausted it
     # would block every request incl. /health (B-32). Pool timeout -> 503.
     try:
-        access_token = await run_in_threadpool(_sign_in, db, userinfo, ip)
+        login_code = await run_in_threadpool(_sign_in, db, userinfo, ip)
     except PoolTimeoutError:
         raise _pool_busy()
-    # Redirect to the SPA route /auth/token (history-mode router, no hash) which
-    # picks up the token from the query string and stores it client-side.
+    # F-008: no JWT in the URL. The SPA route /auth/token reads the single-use
+    # code from the fragment (never sent to servers) and POSTs it to /auth/exchange.
     frontend_url = settings.app_base_url.rstrip("/")
-    return RedirectResponse(url=f"{frontend_url}/auth/token?token={access_token}")
+    return RedirectResponse(url=f"{frontend_url}/auth/token#code={login_code}")
+
+
+def _consume_login_code(db: Session, code: str) -> Optional[User]:
+    """Atomically consume a login code; the user, or None for any failure."""
+    h = _hash_code(code)
+    row = db.query(LoginCode).filter(LoginCode.code_hash == h).first()
+    if not row:
+        return None
+    user_id, expires_at = row.user_id, row.expires_at
+    consumed = db.query(LoginCode).filter(LoginCode.code_hash == h).delete()
+    db.commit()
+    if consumed != 1:  # lost a race against a parallel exchange
+        return None
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        return None
+    return user
+
+
+@router.post("/exchange", response_model=TokenResponse)
+@limiter.limit("10/minute")
+def exchange(request: Request, body: ExchangeRequest, db: Session = Depends(get_db)):
+    """Swap the single-use login code from the callback redirect for the session JWT."""
+    ip = client_ip(request)
+    user = _consume_login_code(db, body.code)
+    if user is None:
+        log_event("login_exchange", outcome="failed", ip=ip, reason="invalid_or_expired_code")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired code")
+    log_event("login_exchange", actor=user.id, ip=ip)
+    return TokenResponse(access_token=issue_user_token(user), token_type="bearer")  # nosec B106 - OAuth2 spec literal
 
 
 @router.post("/superadmin-login", response_model=TokenResponse)
@@ -237,7 +289,7 @@ async def superadmin_login(
         db.refresh(user)
 
     log_event("superadmin_login", actor=user.id, ip=ip)
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = issue_user_token(user)
     return TokenResponse(access_token=token, token_type="bearer")  # nosec B106 - OAuth2 spec literal, not a credential
 
 
@@ -252,7 +304,20 @@ async def me(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/logout")
-async def logout():
-    # JWT is stateless; client must discard the token.
-    # Optionally redirect to OIDC end_session_endpoint here.
+def logout(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+):
+    """Revoke all of the caller's tokens. Always 200 so the SPA can finish logging out
+    even with an expired/unknown token (then nothing is revoked)."""
+    user = None
+    if credentials:
+        try:
+            user = get_current_user(request, credentials, db)
+        except HTTPException:
+            user = None
+    if user is not None:
+        revoke_sessions(db, user, actor=user.id, ip=client_ip(request), reason="logout")
+        log_event("logout", actor=user.id, ip=client_ip(request))
     return JSONResponse({"detail": "Logged out"})

@@ -168,5 +168,5 @@ def make_reading(
 
 
 def auth_headers(user: User) -> dict:
-    token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    token = create_access_token({"sub": str(user.id), "role": user.role.value, "tv": user.token_version})
     return {"Authorization": f"Bearer {token}"}

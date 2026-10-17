@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TokenResponse(BaseModel):
@@ -9,3 +9,7 @@ class TokenResponse(BaseModel):
 class SuperadminLoginRequest(BaseModel):
     username: str
     password: str
+
+
+class ExchangeRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
