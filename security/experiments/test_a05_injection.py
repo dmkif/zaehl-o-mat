@@ -532,7 +532,7 @@ XSS_ROUNDTRIP = XSS + ["<img src=x onerror=alert(1)>", "<a href=\"javascript:ale
 
 
 async def test_E_A05_002_stored_xss_roundtrip_api_returns_raw_json(admin):
-    """E-A05-002: XSS strings stored in names, addresses, serials, locations, notes and image paths are returned verbatim
+    """E-A05-002: XSS strings stored in names, addresses, serials, locations and notes (image paths: refused since F-004) are returned verbatim
     (not HTML-escaped or altered by the API) and ONLY as `application/json` -- the API never serves them as HTML, so
     encoding is purely the frontend's job (checked statically below).
 
@@ -548,7 +548,12 @@ async def test_E_A05_002_stored_xss_roundtrip_api_returns_raw_json(admin):
         mr = await admin.post(f"{API}/properties/{pid}/meters/", json={
             "meter_type": "water", "unit": "m³", "name": p, "serial_number": p[:100], "location": p, "notes": p})
         mid = mr.json()["id"]
-        rr = await admin.post(f"{API}/properties/{pid}/meters/{mid}/readings/", json={"value": 2.5, "note": p, "image_path": p})
+        # F-004: ``image_path`` only accepts ``uploads/<uuid>.<ext>`` of a registered upload, so a markup string
+        # there must be refused (4xx, never 5xx, never stored); the markup is stored/returned via ``note``.
+        rr = await admin.post(f"{API}/properties/{pid}/meters/{mid}/readings/", json={"value": 2.5, "note": p})
+        ir = await admin.post(f"{API}/properties/{pid}/meters/{mid}/readings/", json={"value": 2.5, "image_path": p})
+        if not 400 <= ir.status_code < 500:
+            problems.append(f"markup as image_path not refused with 4xx: {ir.status_code} for {short(p)}")
         urls = [(f"{API}/properties/{pid}", "name", p), (f"{API}/properties/{pid}", "address", p),
                 (f"{API}/properties/{pid}/meters/{mid}", "name", p), (f"{API}/properties/{pid}/meters/{mid}", "notes", p),
                 (f"{API}/properties/{pid}/meters/{mid}", "location", p)]
@@ -568,7 +573,7 @@ async def test_E_A05_002_stored_xss_roundtrip_api_returns_raw_json(admin):
             if p not in [x.get(key) for x in g.json()]:
                 problems.append(f"list {url}: {short(p)} not verbatim")
         if rr.status_code != 201:
-            problems.append(f"reading with note/image_path {short(p)} -> {rr.status_code}")
+            problems.append(f"reading with note {short(p)} -> {rr.status_code}")
     assert not problems, "\n".join(problems[:40])
 
 

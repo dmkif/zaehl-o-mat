@@ -28,7 +28,24 @@ docker compose up -d
 ```
 
 The app is available at **http://localhost:8080**.  
-Default superadmin credentials: `admin` / `admin123` (change via env vars).
+There are no default credentials. Before the first start, create a `.env` file
+next to `docker-compose.yaml` with freshly generated secrets (Compose refuses to
+start without them):
+
+```bash
+cat > .env <<EOF
+JWT_SECRET_KEY=$(openssl rand -base64 48)
+SUPERADMIN_USER=admin
+SUPERADMIN_PASSWORD=$(openssl rand -base64 18)
+EOF
+```
+
+Log in with `SUPERADMIN_USER` / `SUPERADMIN_PASSWORD` from that file. The backend
+rejects placeholder or weak values at startup: `JWT_SECRET_KEY` needs at least
+32 characters, `SUPERADMIN_PASSWORD` at least 12, neither may be a well-known
+value (`changeme`, `secret`, `password`, `admin123`, ...), and user and password
+must be set together or both left empty. `DEBUG` defaults to `false`; set
+`DEBUG=true` in `.env` for local development only.
 
 > **Note:** The stack includes an Ollama container (and the optional `ocr`
 > container) that expect an NVIDIA GPU. Without a GPU, remove the
@@ -44,10 +61,10 @@ All variables are set on the `backend` service.
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://...` | PostgreSQL connection string |
-| `JWT_SECRET_KEY` | *(required)* | Secret for signing JWT tokens — change in production |
+| `JWT_SECRET_KEY` | *(required)* | Secret for signing JWT tokens, at least 32 random characters (`openssl rand -base64 48`); weak/placeholder values are rejected at startup |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token lifetime in minutes |
 | `SUPERADMIN_USER` | `""` | Username for the built-in superadmin account |
-| `SUPERADMIN_PASSWORD` | `""` | Password for the built-in superadmin account |
+| `SUPERADMIN_PASSWORD` | `""` | Password for the built-in superadmin account, at least 12 characters, not a common password; must be set together with `SUPERADMIN_USER` |
 | `UPLOAD_PATH` | `/data/uploads` | Directory where meter images are stored |
 | `APP_BASE_URL` | `https://zaehl-o-mat.example.com` | Public base URL (used for CORS + OIDC) |
 | `DEBUG` | `false` | Enable debug logging |

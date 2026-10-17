@@ -1,8 +1,8 @@
 # Security Review Report (feature 004)
 
-Status: review complete, fixes of critical/high findings in progress. Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
+Status: review complete; high findings fixed in feature 004, medium findings F-004, F-005, F-006, F-009, F-010, F-011 fixed in feature 006 ("004b", `specs/006-security-medium-fixes/`). Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
 Standard: OWASP Top 10:2025 (A01 Broken Access Control, A02 Security Misconfiguration, A03 Software Supply Chain Failures, A04 Cryptographic Failures, A05 Injection, A06 Insecure Design, A07 Authentication Failures, A08 Software or Data Integrity Failures, A09 Logging and Alerting Failures, A10 Mishandling of Exceptional Conditions).
-Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 246 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-1.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
+Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 247 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-2.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
 
 ## 1. Summary
 
@@ -12,26 +12,26 @@ Method: manual reading of every component (`security/review/*.md`), automated to
 |---|---|---|---|---|---|
 | critical | 0 | 0 | 0 | 0 | fix in 004 |
 | high | 3 | 3 | 0 | 0 | fix in 004 |
-| medium | 13 | 8 | 4 | 1 | proposed (operator decides) |
+| medium | 13 | 8 | 4 | 1 | 6 fixed (F-004, F-005, F-006, F-009, F-010, F-011), 7 proposed (operator decides) |
 | low | 29 | 15 | 13 | 1 | proposed (operator decides) |
 | informational | 5 | 1 | 4 | 0 | proposed (operator decides) |
 | **total** | **50** | 27 | 21 | 2 | |
 
-Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; at the time of writing no finding is fixed yet.
+Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; medium findings F-004, F-005, F-006, F-009, F-010 and F-011 are `fixed` (feature 006, verified by the experiments listed in their sections, `review/rerun-2.md`); all other medium, low and informational findings stay `proposed`. The state of F-001 to F-003 (feature 004) is tracked in the next table and was not changed by feature 006.
 
 ### Critical and high findings (to be fixed in feature 004)
 
 | ID | Title | Fix PR | State |
 |---|---|---|---|
-| F-001 | OIDC group match is a substring/dict-key test when the IdP claim is not a list | pending (fix in progress) | open |
-| F-002 | Rate-limit key is client-controlled (X-Forwarded-For trusted from every peer) | pending (fix in progress) | open |
-| F-003 | Event-loop stall: synchronous DB checkout in async OIDC callback wedges the whole process at about 30 parallel sign-ins | pending (fix in progress) | open |
+| F-001 | OIDC group match is a substring/dict-key test when the IdP claim is not a list | fixed (v0.4.1, PR #12) | closed |
+| F-002 | Rate-limit key is client-controlled (X-Forwarded-For trusted from every peer) | fixed (v0.4.1, PR #12) | closed |
+| F-003 | Event-loop stall: synchronous DB checkout in async OIDC callback wedges the whole process at about 30 parallel sign-ins | fixed (v0.4.1, PR #12) | closed |
 
 No critical finding was identified. The three high findings are being fixed in parallel; PR links are added here when they merge, and the regression experiments (E-A07-003, E-A07-001, E-A06-001) must pass afterwards.
 
 ### Headline results
 
-* 246 experiments in the latest run (profile `--quick`, `review/rerun-1.md`): 151 passed, 94 failed, 1 skipped. All 94 failures were triaged as real application weaknesses (0 test or rig defects remain); they collapse into the findings below.
+* 247 experiments in the latest run (profile `--quick`, `review/rerun-2.md`, after the fixes of feature 006): 206 passed, 40 failed (39 stable plus the intermittent E-A10-001), 1 skipped. The previous run (`review/rerun-1.md`, before any fix) had 151 passed and 94 failed. Every remaining failure is a real, still open weakness (no test or rig defect remains); they collapse into the unfixed findings below (F-007, F-014, F-017, F-022, F-023, F-028, F-029, F-031, F-032, F-033, F-034, F-035, F-037, F-046 and the OCR/IdP failure-mapping parts of F-026).
 * The access-control core holds: direct access by ID, listings and the streaming bulk scan never leaked foreign objects, traversal and symlink variants are refused, JWT forgery variants (alg none, wrong key, algorithm confusion, tampering) are rejected, SQL and XSS payloads are stored inert, and the frontend has no raw HTML sinks.
 * The weaknesses cluster around: group claim handling and rate-limit key (F-001, F-002), a process-wide stall under parallel logins (F-003), tenant isolation of uploaded images (F-004), role boundaries (F-005, F-006), token lifecycle (F-007, F-008), startup validation of secrets (F-009), missing audit logging (F-010) and input/resource limits (F-011, F-012, F-023).
 * Tooling found no hard-coded real secrets (gitleaks history clean), no High/Critical SAST findings, no production npm advisories and no exploitable dependency path.
@@ -61,17 +61,17 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 
 | ID | Severity | OWASP | Component | Title | Status | Planned disposition |
 |---|---|---|---|---|---|---|
-| F-001 | high | A07 | backend | OIDC group match is a substring/dict-key test when the IdP claim is not a list | confirmed by experiment E-A07-003 | fix in 004 |
-| F-002 | high | A07 | backend, images, compose | Rate-limit key is client-controlled (X-Forwarded-For trusted from every peer) | confirmed by experiment E-A07-001 | fix in 004 |
-| F-003 | high | A06 | backend | Event-loop stall: synchronous DB checkout in async OIDC callback wedges the whole process at about 30 parallel sign-ins | confirmed by experiment (ad-hoc measurement in rerun-1; regression E-A06-001 full profile) | fix in 004 |
-| F-004 | medium | A01 | backend | Client supplied `image_path` is trusted: cross-tenant file reference, foreign OCR, delete and serve-check bypass | confirmed by experiment E-A01-002 / E-UP-001 | proposed |
-| F-005 | medium | A01 | backend | Property role `manager` can manage membership and promote itself to property admin | confirmed by experiment E-A01-003 | proposed |
-| F-006 | medium | A01 | backend | Global admin can demote the superadmin; break-glass role is never restored | confirmed by experiment E-A01-003 | proposed |
+| F-001 | high | A07 | backend | OIDC group match is a substring/dict-key test when the IdP claim is not a list | confirmed by experiment E-A07-003 | fixed (004, v0.4.1) |
+| F-002 | high | A07 | backend, images, compose | Rate-limit key is client-controlled (X-Forwarded-For trusted from every peer) | confirmed by experiment E-A07-001 | fixed (004, v0.4.1) |
+| F-003 | high | A06 | backend | Event-loop stall: synchronous DB checkout in async OIDC callback wedges the whole process at about 30 parallel sign-ins | confirmed by experiment (ad-hoc measurement in rerun-1; regression E-A06-001 full profile) | fixed (004, v0.4.1) |
+| F-004 | medium | A01 | backend | Client supplied `image_path` is trusted: cross-tenant file reference, foreign OCR, delete and serve-check bypass | confirmed by experiment E-A01-002 / E-UP-001 | fixed (spec 006) |
+| F-005 | medium | A01 | backend | Property role `manager` can manage membership and promote itself to property admin | confirmed by experiment E-A01-003 | fixed (spec 006) |
+| F-006 | medium | A01 | backend | Global admin can demote the superadmin; break-glass role is never restored | confirmed by experiment E-A01-003 | fixed (spec 006) |
 | F-007 | medium | A07 | backend, frontend | No token revocation, logout is a no-op, `exp` not required, stale privileges after IdP removal | confirmed by experiment E-A06-003 / E-A04-001 | proposed |
 | F-008 | medium | A07 | backend, frontend | Session JWT is delivered in the URL query string (`/auth/token?token=...`) | confirmed by reading | proposed |
-| F-009 | medium | A02 | backend, compose | Weak JWT secret and weak or half-configured superadmin credentials are accepted at startup | confirmed by experiment E-A02-001 | proposed |
-| F-010 | medium | A09 | backend | No security event logging; callback code and state appear in the access log | confirmed by experiment E-A09-001 | proposed |
-| F-011 | medium | A10 | backend, ocr-service | Image decompression and 4x upscale memory amplification; no pixel cap | confirmed by experiment E-UP-001 (acceptance); resource effect not measured | proposed |
+| F-009 | medium | A02 | backend, compose | Weak JWT secret and weak or half-configured superadmin credentials are accepted at startup | confirmed by experiment E-A02-001 | fixed (spec 006) |
+| F-010 | medium | A09 | backend | No security event logging; callback code and state appear in the access log | confirmed by experiment E-A09-001 | fixed (spec 006) |
+| F-011 | medium | A10 | backend, ocr-service | Image decompression and 4x upscale memory amplification; no pixel cap | confirmed by experiment E-UP-001 (acceptance); resource effect not measured | fixed (spec 006) |
 | F-012 | medium | A10 | backend, chart | Bulk scan reads all uploaded files into memory before any size check; no body limit on the Kubernetes path | confirmed by reading | proposed |
 | F-013 | medium | A10 | backend | DB connection pinned for the whole streamed LLM run in bulk scan | suspected | proposed |
 | F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | proposed |
@@ -173,7 +173,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A01-002 (`cross_tenant_access_by_id_denied` x3 params, `image_filename_guessing_and_reference_attack`, `hint_rescan_does_not_process_foreign_images`), E-UP-001 `reading_cannot_adopt_foreign_upload`. Mutant `access-check-removed`.
 * **evidence**: 6 + 1 tests fail in rerun-1; direct access by ID, listings and the streaming bulk scan did not leak foreign objects (pass).
 * **recommendation**: Record uploader/property per scan (table or sidecar), validate `image_path` against `^uploads/<uuid>.<ext>$`, require unattached and owned by caller, serve only if the user may access all referencing readings, never unlink a file still referenced, bind hint-rescan to files of the meter's property.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (new table `upload_files` plus `app/upload_registry.py`; `image_path` must match `uploads/<uuid>.<ext>` and be a registered upload of the caller or the meter's property; file only deleted when no other reading references it; legacy readings keep working). Verified by E-A01-002 (`cross_tenant_access_by_id_denied` x5, `image_filename_guessing_and_reference_attack`, `hint_rescan_does_not_process_foreign_images`, `unattached_scan_upload_not_readable_by_other_user`) and E-UP-001 `reading_cannot_adopt_foreign_upload`, all passing in rerun-2. Side effect: the experiment of F-036 (unattached upload readable) passes too; F-036 stays `proposed` until the operator closes it.
 * **source**: backend B-07; triage-group1; triage-group3
 
 ### F-005 Property role `manager` can manage membership and promote itself to property admin
@@ -189,7 +190,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A01-003 `property_manager_cannot_grant_or_escalate_roles`.
 * **evidence**: Self-promotion via POST returned success; role matrix for the other property levels passes.
 * **recommendation**: Membership management and property PATCH require property-admin (`delete` level) or global admin; forbid removing or demoting the last property admin and changing one's own role.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (property PATCH and membership add/change/remove need property admin or global admin; last property admin cannot be removed or demoted; no self role change; manager keeps meter/reading write). Verified by E-A01-003 `property_manager_cannot_grant_or_escalate_roles` and `role_matrix_property_levels` (expectation updated: manager gets 403 on property PATCH and on membership changes; unit tests `backend/tests/test_role_escalation.py`), passing in rerun-2.
 * **source**: backend B-05; triage-group1
 
 ### F-006 Global admin can demote the superadmin; break-glass role is never restored
@@ -205,7 +207,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A01-003 `admin_cannot_touch_superadmin` (also a rig hazard: it left the seed superadmin demoted until the autouse restore fixture was added).
 * **evidence**: Admin got HTTP 200 when demoting the superadmin; granting superadmin and deleting the superadmin by an admin are refused (pass).
 * **recommendation**: Reject any change or deletion whose target is superadmin unless the caller is superadmin, restore the role on superadmin login, forbid demoting the last superadmin, decide and document whether OIDC user roles come from the IdP only.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (only a superadmin may change or delete the superadmin; last superadmin protected; role re-asserted on `superadmin-login`). Verified by E-A01-003 `admin_cannot_touch_superadmin`, passing in rerun-2.
 * **source**: backend B-06; triage-group1; triage-group2 root cause 2
 
 ### F-007 No token revocation, logout is a no-op, `exp` not required, stale privileges after IdP removal
@@ -253,7 +256,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A02-001 `weak_jwt_secret_refuses_start` (11 params), `weak_superadmin_password_refuses_start` (7 params), `superadmin_user_without_password_or_vice_versa`.
 * **evidence**: 19 of 24 A02 failures; the sentinel checks, default DB URL and gateway-key checks pass.
 * **recommendation**: Require JWT key >= 32 bytes and not on a denylist, superadmin password minimum length plus denylist, both or neither of user/password, refuse the Compose literals; remove real-looking defaults from Compose or require variables with `${VAR:?}`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (startup validation: JWT secret >= 32 characters and not on a deny-list, superadmin password >= 12 characters and not on a deny-list, user and password both or neither; Compose and README no longer ship working weak values). Verified by E-A02-001 (`weak_jwt_secret_refuses_start` x11, `weak_superadmin_password_refuses_start` x7, `superadmin_user_without_password_or_vice_versa`, control and sentinel checks), passing in rerun-2. Production secrets must satisfy the rules before release (spec 006 edge case).
 * **source**: backend B-12, deployment DEP-01, triage-group1
 
 ### F-010 No security event logging; callback code and state appear in the access log
@@ -269,7 +273,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A09-001 `no_secrets_in_logs_and_security_events_present`.
 * **evidence**: Test fails: no application-level event for failed superadmin login or rejected sign-in; code/state visible in the access log. Application code does not log tokens, passwords or keys (positive).
 * **recommendation**: Structured security-event logger (event, actor id, target id, source IP, outcome; never tokens/codes/passwords), log every denied auth decision, redact the callback query in access logs.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (structured security events via `app/security_log.py`: event, outcome, actor, target, ip; callback query string removed from the access log). Verified by E-A09-001 `no_secrets_in_logs_and_security_events_present`, passing in rerun-2.
 * **source**: backend B-11; triage-group2
 
 ### F-011 Image decompression and 4x upscale memory amplification; no pixel cap
@@ -285,7 +290,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-UP-001 `decompression_bomb_and_huge_dimensions` (single and bulk path).
 * **evidence**: All four bombs returned 200 and were stored; backend stayed responsive only because the stand-in gateway ignores the image.
 * **recommendation**: Header-only size check before writing (reject > 40 MP or side > 12000), set `Image.MAX_IMAGE_PIXELS` and treat the warning as error, cap the upscaled size, memory limits in the chart, size limit in the OCR service.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (spec 006)
+* **fix**: fixed in feature 006 (header-only pixel/side check before anything is stored, default 40 MP / 12000 px, `Image.MAX_IMAGE_PIXELS` set; OCR service enforces the same limit and caps the upscale). Verified by E-UP-001 `decompression_bomb_and_huge_dimensions` (single and bulk path), passing in rerun-2; the memory effect on a pod was not measured.
 * **source**: backend B-10; triage-group3
 
 ### F-012 Bulk scan reads all uploaded files into memory before any size check; no body limit on the Kubernetes path
@@ -914,38 +920,38 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 
 ## 4. Experiments
 
-Latest run: `scripts/security-rig.sh --quick` (rerun-1): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter). 246 tests, **151 passed, 94 failed (93-95, E-A10-001 is intermittent), 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), 7 min 6 s. Every failure is a real application weakness. History: full-run-1 had 119 failures of which 33 were test/rig defects (fixed in rerun-1, see `review/rerun-1.md`).
+Latest run: `scripts/security-rig.sh --quick` (rerun-2, after the fixes of feature 006): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter), backend started with `--no-proxy-headers` and `TRUSTED_PROXIES=10.255.255.0/24` like the production image. 247 tests, **206 passed, 40 failed (39 stable, plus E-A10-001 which is intermittent), 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), 7 min 44 s pytest. Every failure is a real application weakness. History: full-run-1 had 119 failures of which 33 were test/rig defects (fixed in rerun-1); rerun-1 had 94 failures (151 passed, 246 tests); the first run after the feature-006 fixes had 43 failures, 6 of which were test/rig defects caused by the stricter rules (fixed in rerun-2, see `review/rerun-2.md`).
 
-| ID | Goal | Result (rerun-1) | Failing tests (fail / total items) | Findings |
+| ID | Goal | Result (rerun-2) | Failing tests (fail / total items) | Findings |
 |---|---|---|---|---|
 | E-A01-001 | Every endpoint requires authentication (OpenAPI enumeration) | pass | 0 / 1 | - |
-| E-A01-002 | Cross-tenant access by ID, listings, streaming bulk scan, filename reference, unattached upload, hint-rescan | FAIL | 6 failed (3 params of cross-tenant, filename reference, unattached upload, hint-rescan); listings and streaming bulk scan pass | F-004, F-036 |
-| E-A01-003 | Role matrix for admin and property levels, manager escalation, admin vs superadmin | FAIL | 2 failed (manager escalation, admin demotes superadmin); both role matrices pass | F-005, F-006 |
+| E-A01-002 | Cross-tenant access by ID, listings, streaming bulk scan, filename reference, unattached upload, hint-rescan | pass (was FAIL, 6 failed) | 0 / 10 | F-004 fixed, F-036 |
+| E-A01-003 | Role matrix for admin and property levels, manager escalation, admin vs superadmin | pass (was FAIL, 2 failed) | 0 / 22 (property-level matrix now expects 403 for manager on property PATCH and membership changes) | F-005, F-006 fixed |
 | E-A01-004 | Upload path traversal, symlink, stored image path cannot reach other files | pass | 0 / 3 | - |
 | E-A01-005 | Extra fields, foreign `replaced_by_id`, privileged fields on own account | FAIL | 1 failed (foreign meter reference) | F-037 |
-| E-A01-006 | Outbound URLs never request controlled, stored integration config | FAIL | 1 failed (dict `integration_config` gives 500, SSRF half not reached) | F-023 |
-| E-A02-001 | Startup refuses unsafe configuration | FAIL | 19 failed (weak JWT key x11, weak superadmin password x7, half-configured pair); control, default JWT, default DB URL, both defaults and gateway checks pass | F-009 |
-| E-A02-002 | Public docs, headers, banners, health detail, error bodies, CORS, request id | FAIL | 5 failed (docs x2, health detail, authenticated error bodies, request id reflection); the remaining items (CORS, headers, banner, anonymous 5xx) pass | F-031, F-023, F-046 |
-| E-A04-001 | JWT forgery and malformed tokens | FAIL | 7 failed (alg header list, no `exp`, `exp` infinity, `sub` int/bool/list/dict); 46 items pass | F-007, F-034 |
+| E-A01-006 | Outbound URLs never request controlled, stored integration config | FAIL | 1 failed (`unit` kWh gives 500 on a migration-built DB, SSRF half not reached) | F-014, F-023 |
+| E-A02-001 | Startup refuses unsafe configuration | pass (was FAIL, 19 failed) | 0 / 24 | F-009 fixed |
+| E-A02-002 | Public docs, headers, banners, health detail, error bodies, CORS, request id | FAIL | 5 failed (docs x2, health detail, authenticated error bodies, request id reflection); the remaining items pass | F-031, F-023, F-046 |
+| E-A04-001 | JWT forgery and malformed tokens | FAIL | 1 failed (header `zip: DEF` accepted, token still verifies); alg list header, missing `exp`, `exp` infinity and `sub` int/bool/list/dict now pass (were 7 failed; fixed in the backend since rerun-1: mandatory finite `exp`, string-only `sub`, malformed headers mapped to 401), 52 pass | F-034, F-007 |
 | E-A05-001 | Injection in JSON, query, path, multipart, headers, enums; SQL payloads inert | FAIL | 4 failed (json fields, query/path, multipart, enum members); header injection and SQL-inert pass | F-023, F-014 |
-| E-A05-002 | Stored XSS round trip, error bodies, SSE echo, frontend sinks | pass | 0 / 4 | - |
+| E-A05-002 | Stored XSS round trip, error bodies, SSE echo, frontend sinks | pass (markup in `image_path` is now refused with 4xx, markup in `note` etc. is stored inert) | 0 / 4 | - |
 | E-A06-001 | Parallel first sign-in yields one user | pass (30 sign-ins); fails at 32+ (ad-hoc), see F-003 | 0 / 1 | F-003 |
-| E-A06-002 | Races: same image hash, identical readings | FAIL | 3 failed (same_hash x2, identical reading); repetitions 20 rounds, fail-fast after 5 failing rounds; 3 to 6 responses 201 for one hash | F-022 |
+| E-A06-002 | Races: same image hash, identical readings | FAIL | 3 failed (same_hash x2: 2 to 4 responses 201 for one hash; identical reading: 20 rows); fail-fast after 5 failing rounds | F-022 |
 | E-A06-003 | Role change vs sign-in, privilege after IdP removal | FAIL | 1 failed (privilege kept after IdP removal); role change vs sign-in passes (20 rounds) | F-007 |
 | E-A06-004 | State replay, parallel reuse, expiry/forgery, browser binding | FAIL | 1 failed (state not bound to browser); replay, parallel reuse (20 rounds) and forged/expired state pass | F-017 |
-| E-A07-001 | Brute-force limiter, X-Forwarded-For bypass | FAIL | 1 failed (40 forged addresses, 40 evaluated attempts); parallel brute force passes | F-002 |
+| E-A07-001 | Brute-force limiter, X-Forwarded-For bypass, trusted-proxy rightmost rule | pass (3 tests incl. new `trusted_proxy_rightmost_untrusted_entry_is_the_key`) | 0 / 3 | F-002 (fixed in 004) |
 | E-A07-002 | PKCE parameters, verifier mismatch | pass | 0 / 2 | - |
-| E-A07-003 | Group claim shapes (36 parameter sets) | FAIL | 17 failed (13 string/dict shapes grant a role, 4 non-iterable types give 500); 19 legit or rejected shapes pass | F-001 |
-| E-A07-004 | Non-ASCII and malformed superadmin credentials | FAIL | 1 failed (500 for non-ASCII) | F-020 |
+| E-A07-003 | Group claim shapes (36 parameter sets) | pass | 0 / 36 | F-001 (fixed in 004) |
+| E-A07-004 | Non-ASCII and malformed superadmin credentials | pass | 0 / 1 | F-020 |
 | E-A08-001 | Hostile gateway/OCR responses, failure mapping, orphan files, stream well-formedness | FAIL | 10 failed (gateway huge; OCR huge, nested, types, reading==serial, garbage; never-stored; orphan x2; bulk stream); controls, down/unauthorized/slow and foreign-serial pass | F-029, F-028 |
-| E-A09-001 | No secrets in logs, security events present | FAIL | 1 failed (no events; code/state in access log) | F-010 |
-| E-A10-001 | PostgreSQL stopped mid-request | FAIL (intermittent, failed in 1 of 2 runs) | 0 or 1 | F-035 |
+| E-A09-001 | No secrets in logs, security events present | pass (was FAIL) | 0 / 1 | F-010 fixed |
+| E-A10-001 | PostgreSQL stopped mid-request | FAIL in this run (intermittent: passed in the previous run of the same code) | 0 or 1 | F-035 |
 | E-A10-002 | IdP and gateway/OCR failure modes, slow backends, unconfigured subsystems | FAIL | 9 failed (IdP slow, cold-cache login, orphan x4, OCR garbage, unconfigured x2); IdP down and slow gateway/OCR bounded pass | F-026, F-028, F-029 |
-| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | FAIL | 5 failed (decompression bomb, truncated, EXIF GPS, EXIF date, foreign adoption); 10 pass incl. size limit and filename handling | F-011, F-032, F-033, F-029, F-004 |
+| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | FAIL | 3 failed (truncated, EXIF GPS, EXIF date); decompression bomb and foreign adoption now pass (was 5 failed), 12 pass | F-032, F-033, F-029; F-011, F-004 fixed |
 
-Per file (pass / fail): A01 30/10, A02 15/24 (+1 skip), A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9 (10 with E-A10-001), uploads 10/5. Sum 151 passed, 94 failed.
-Slowest tests (rerun-1 `--durations`): A05-001 json fields 64 s, A06-001 63 s, A05-001 query 50 s, A08 ocr_slow 30 s; all others below 20 s.
-Race experiments: quick profile 20 rounds with 30 parallel sign-ins / 20 parallel writes; the specification's 100-repetition profile is `scripts/security-rig.sh` without `--quick` and must be run once after the high fixes (A06-001 is expected to fail it until F-003 is fixed). Failure rates observed: A06-002 same hash produced 3 to 6 successful creations for one hash (fail-fast after 5 failing rounds); A06-001, A06-003 role change and A06-004 replay/parallel reuse had 0 failing rounds out of 20.
+Per file (pass / fail): A01 38/2, A02 34/5 (+1 skip), A04 52/1, A05 6/4, A06 5/5, A07 42/0, A08 13/10, A09 1/0, A10 3/10 (counting E-A10-001), uploads 12/3. Sum 206 passed, 40 failed, 1 skipped (247). Rerun-1 for comparison: A01 30/10, A02 15/24, A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9, uploads 10/5 (246 tests).
+Slowest tests (rerun-2 `--durations`): A05-001 json fields 82 s, A05-001 query 55 s, A06-001 40 s, A08 ocr_slow 30 s; all others below 20 s.
+Race experiments: quick profile 20 rounds with 30 parallel sign-ins / 20 parallel writes; the specification's 100-repetition profile is `scripts/security-rig.sh` without `--quick`. Failure rates observed: A06-002 same hash produced 2 to 4 successful creations for one hash (fail-fast after 5 failing rounds, F-022 unfixed); A06-001, A06-003 role change and A06-004 replay/parallel reuse had 0 failing rounds out of 20.
 
 ### Mutant checks (SC-006)
 
@@ -1000,10 +1006,11 @@ Accepted risks and operator decisions are recorded here with reason and owner. A
 
 | Finding | Decision (fix / track / accept) | Reason | Owner | Date | PR / issue |
 |---|---|---|---|---|---|
-| F-001 | fix in 004 | severity high | repository owner | - | pending |
-| F-002 | fix in 004 | severity high | repository owner | - | pending |
-| F-003 | fix in 004 | severity high | repository owner | - | pending |
-| F-004 to F-016 (medium) | operator decides | see section 3, one row per ID when decided | repository owner | - | - |
+| F-001 | fix in 004 | severity high | repository owner | - | fixed in v0.4.1 (PR #12) |
+| F-002 | fix in 004 | severity high | repository owner | - | fixed in v0.4.1 (PR #12) |
+| F-003 | fix in 004 | severity high | repository owner | - | fixed in v0.4.1 (PR #12) |
+| F-004, F-005, F-006, F-009, F-010, F-011 | fixed (feature 006, spec `specs/006-security-medium-fixes/`) | small, well understood, protect tenant isolation, privileges, secrets and availability; verified by the experiments named in section 3 (rerun-2) | repository owner | 2026-10-17 | feature 006 |
+| F-007, F-008, F-012 to F-016 (medium) | operator decides | see section 3, one row per ID when decided | repository owner | - | - |
 | F-017 to F-050 (low / informational) | operator decides | candidates for accepted risk: F-042 (sessionStorage), F-045, F-046, F-047, F-048, F-049 | repository owner | - | - |
 
 Review limits: the rig runs the backend on a loopback address against synthetic stand-ins (IdP, gateway, OCR); results for infrastructure items are by reading only. Experiment IDs are stable and can be re-run with `scripts/security-rig.sh` after each fix.

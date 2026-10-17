@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sec_common import register_upload_row, unregister_upload_row
 from sqlalchemy import create_engine, text
 
 from idp_helpers import (
@@ -82,9 +83,13 @@ async def test_E_A06_001_parallel_first_signin_one_user(rig, client, oidc, barri
     assert not failures, f"{len(failures)}/{ROUNDS} rounds failed, e.g. {failures[:3]}"
 
 
-def _write_image(rig, content: bytes, name: str | None = None) -> str:
-    name = name or f"race-{uuid.uuid4().hex}.png"
+def _write_image(rig, content: bytes, name: str | None = None, property_id: str | None = None) -> str:
+    """Write an upload file the way scan does: ``<uuid>.png`` (F-004 path rule) and, when ``property_id`` is
+    given, register it in ``upload_files`` for that property so a reading may reference it."""
+    name = name or f"{uuid.uuid4()}.png"
     (Path(cfg(rig, "UPLOAD_DIR")) / name).write_bytes(content)
+    if property_id:
+        register_upload_row(rig, name, property_id)
     return name
 
 
@@ -100,9 +105,9 @@ async def test_E_A06_002_parallel_same_image_hash(rig, client, barrier_gather, r
     async def one_round():
         content = b"\x89PNG\r\n\x1a\n" + os.urandom(64)
         names = (
-            [_write_image(rig, content) for _ in range(PARALLEL_WRITES)]
+            [_write_image(rig, content, property_id=pid) for _ in range(PARALLEL_WRITES)]
             if variant == "distinct_files_same_bytes"
-            else [_write_image(rig, content)] * PARALLEL_WRITES
+            else [_write_image(rig, content, property_id=pid)] * PARALLEL_WRITES
         )
         created_files.extend(names)
         results = await barrier(
@@ -129,6 +134,7 @@ async def test_E_A06_002_parallel_same_image_hash(rig, client, barrier_gather, r
     finally:
         for n in set(created_files):
             (Path(cfg(rig, "UPLOAD_DIR")) / n).unlink(missing_ok=True)
+            unregister_upload_row(rig, n)
         await admin.delete(f"/api/properties/{pid}")
     assert not failures, f"{len(failures)}/{ROUNDS} rounds failed, e.g. {failures[:3]}"
 

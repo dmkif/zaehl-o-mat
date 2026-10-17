@@ -762,6 +762,13 @@ class TestEngineSelectionRegressions:
         mock_llm.assert_not_called()
 
 
+def _register_upload(db, user, filename, prop):
+    """Registry row so the image counts as uploaded by ``user`` for ``prop`` (F-004)."""
+    from app.models import UploadFile
+    db.add(UploadFile(filename=filename, property_id=prop.id, uploaded_by_id=user.id))
+    db.commit()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # POST /api/ocr/hint-rescan  —  manual meter selection hint-retry
 # ──────────────────────────────────────────────────────────────────────────────
@@ -788,6 +795,7 @@ class TestHintRescanEndpoint:
         user = make_user(db)
         db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
         db.commit()
+        _register_upload(db, user, img.name, prop)
 
         llm_calls = []
         with patch("app.routers.ocr._llm_fallback", side_effect=lambda *a, **kw: llm_calls.append(1) or ("99999.9", None)):
@@ -818,6 +826,7 @@ class TestHintRescanEndpoint:
         user = make_user(db)
         db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
         db.commit()
+        _register_upload(db, user, img.name, prop)
 
         make_reading(db, meter.id, 10000.5)
 
@@ -858,6 +867,7 @@ class TestHintRescanEndpoint:
         user = make_user(db)
         db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
         db.commit()
+        _register_upload(db, user, img.name, prop)
 
         llm_calls = []
         with patch("app.routers.ocr._llm_fallback", side_effect=lambda *a, **kw: llm_calls.append(1) or ("99999.9", None)):

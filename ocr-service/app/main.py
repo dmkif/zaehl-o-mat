@@ -8,6 +8,7 @@ who wants to secure this link fronts it with an authenticating reverse
 proxy (see contracts/ocr-service-api.md and research.md Decision 3).
 """
 import asyncio
+import io
 import logging
 import tempfile
 import uuid
@@ -16,6 +17,7 @@ from pathlib import Path
 import filetype
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 
+from app.config import settings
 from app.pipeline import _extract_serial_sync, _run_ocr_on_file_sync
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,24 @@ _MIME_TO_EXT: dict[str, str] = {
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="ocr-service-"))
 
 
+def _check_dimensions(contents: bytes) -> None:
+    """Reject images whose decoded size is too large, reading only the header (F-011)."""
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(contents)) as img:
+            width, height = img.size
+    except Image.DecompressionBombError:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions too large") from None
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unreadable or unsupported image") from None
+    if (
+        max(width, height) > settings.max_image_side
+        or width * height > settings.max_image_pixels
+    ):
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image dimensions too large")
+
+
 def _save_upload(contents: bytes) -> Path:
     """Validate magic bytes and persist to a temp file. Raises 400 on failure."""
     mime = filetype.guess_mime(contents)
@@ -53,6 +73,7 @@ def _save_upload(contents: bytes) -> Path:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unreadable or unsupported image",
         )
+    _check_dimensions(contents)
     filepath = _TMP_DIR / f"{uuid.uuid4()}{_MIME_TO_EXT[mime]}"
     filepath.write_bytes(contents)
     return filepath

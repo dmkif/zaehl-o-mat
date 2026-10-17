@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Meter, Reading, User
 from app.permissions import has_property_access, is_global_admin
+from app.upload_registry import get_upload, may_use_upload
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -26,8 +27,8 @@ def serve_upload(
 
     Tenant check: if the image is referenced by a stored reading, the caller
     must have access to the property that reading belongs to.  Images not yet
-    attached to any reading (fresh scans awaiting confirmation) are only
-    addressable by their unguessable UUID filename.
+    attached to any reading (fresh scans awaiting confirmation) are served to
+    their uploader and to members of the property they were uploaded for.
     """
     upload_root = Path(settings.upload_path).resolve()
     try:
@@ -40,7 +41,7 @@ def serve_upload(
 
     if not is_global_admin(current_user):
         stored_path = f"uploads/{filename}"
-        reading = (
+        readings = (
             db.query(Reading)
             .join(Meter, Reading.meter_id == Meter.id)
             .filter(
@@ -49,12 +50,23 @@ def serve_upload(
                     Reading.serial_image_path == stored_path,
                 )
             )
-            .first()
+            .all()
         )
-        if reading is not None and not has_property_access(
-            db, reading.meter.property_id, current_user, level="read"
-        ):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        if readings:
+            # Attached file: any reading the caller may read grants access.
+            if not any(
+                has_property_access(db, r.meter.property_id, current_user, level="read")
+                for r in readings
+            ):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        else:
+            # Not attached yet (fresh scan): uploader or property member only.
+            # Files unknown to the registry are not served (F-004).
+            row = get_upload(db, filename)
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+            if not may_use_upload(db, row, current_user):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
     mime_type, _ = mimetypes.guess_type(str(filepath))
     return FileResponse(

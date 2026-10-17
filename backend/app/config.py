@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Secrets directory: pydantic-settings reads files like /run/secrets/database_url
@@ -12,9 +12,38 @@ _secrets_dir = Path("/run/secrets")
 # Minimum client timeout for the gateway path (spec 012 FR-006).
 MIN_GATEWAY_TIMEOUT_S = 300.0
 
+# Secret strength rules (spec 006, F-009). Error messages must never contain the value.
+MIN_JWT_SECRET_LEN = 32
+MIN_SUPERADMIN_PASSWORD_LEN = 12
+WEAK_JWT_SECRETS = frozenset({
+    "changeme", "change-me", "change-me-in-production", "secret", "password", "jwt-secret",
+    "local-dev-secret-change-in-prod", "test", "default",
+})
+WEAK_PASSWORDS = frozenset({
+    "admin", "admin123", "administrator", "password", "password123", "changeme", "change-me",
+    "secret", "letmein", "12345678", "123456789012", "qwertz", "qwerty", "superadmin",
+})
+
+
+def _is_weak(value: str, deny: frozenset[str]) -> bool:
+    """Deny-list match, case-insensitive; also an entry repeated or followed by a short suffix."""
+    low = value.strip().lower()
+    if len(set(low)) <= 1:  # empty, whitespace, or one repeated character
+        return True
+    for d in deny:
+        rest = low
+        while rest.startswith(d):
+            rest = rest[len(d):]
+        if rest != low and len(rest) <= 3:
+            return True
+        if low == d or (len(d) >= 16 and d in low):
+            return True
+    return False
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
+        hide_input_in_errors=True,  # validation errors must never echo secret values
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -95,15 +124,30 @@ class Settings(BaseSettings):
     app_base_url: str = "https://zaehl-o-mat.example.com"
     debug: bool = False
 
+    # Image limits (spec 006, F-011; consumed by the upload/OCR routers)
+    max_image_pixels: int = Field(default=40_000_000, gt=0)
+    max_image_side: int = Field(default=12_000, gt=0)
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> "Settings":
         if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":
             raise ValueError(
                 "DATABASE_URL must be overridden — default credentials are insecure"
             )
-        if self.jwt_secret_key == "change-me-in-production":  # nosec B105 - sentinel default, not a real credential
+        if len(self.jwt_secret_key.strip()) < MIN_JWT_SECRET_LEN or _is_weak(self.jwt_secret_key, WEAK_JWT_SECRETS):
             raise ValueError(
-                "JWT_SECRET_KEY must be set to a strong random secret"
+                f"JWT_SECRET_KEY is missing or too weak: use at least {MIN_JWT_SECRET_LEN} random "
+                "characters and no placeholder (generate: openssl rand -base64 48)"
+            )
+        if bool(self.superadmin_user) != bool(self.superadmin_password):
+            raise ValueError("SUPERADMIN_USER and SUPERADMIN_PASSWORD must be set together or both left empty")
+        if self.superadmin_password and (
+            len(self.superadmin_password) < MIN_SUPERADMIN_PASSWORD_LEN
+            or _is_weak(self.superadmin_password, WEAK_PASSWORDS)
+        ):
+            raise ValueError(
+                f"SUPERADMIN_PASSWORD is too weak: use at least {MIN_SUPERADMIN_PASSWORD_LEN} characters "
+                "and no well-known value (generate: openssl rand -base64 18)"
             )
         self.ocr_backend = self.ocr_backend.strip().lower()
         if self.ocr_backend not in ("ollama", "gateway"):

@@ -17,6 +17,15 @@ from app.models import PropertyUser, PropertyUserRole, ReadingSource, UserRole
 from tests.conftest import auth_headers, make_meter, make_property, make_reading, make_user
 
 
+def _registered_upload(db, user, prop) -> str:
+    """Registry row for a scan result, as POST /ocr/scan would leave it (F-004)."""
+    from app.models import UploadFile
+    name = f"{uuid.uuid4()}.jpg"
+    db.add(UploadFile(filename=name, property_id=prop.id, uploaded_by_id=user.id))
+    db.commit()
+    return f"uploads/{name}"
+
+
 def _url(prop_id, meter_id):
     return f"/api/properties/{prop_id}/meters/{meter_id}/readings"
 
@@ -190,15 +199,16 @@ class TestCreateReading:
         prop = make_property(db)
         meter = make_meter(db, prop.id)
         admin = make_user(db, role=UserRole.admin)
+        path = _registered_upload(db, admin, prop)
         r = client.post(
             _url(prop.id, meter.id),
             headers=auth_headers(admin),
-            json={"value": 12345.6, "source": "auto", "image_path": "uploads/test.jpg"},
+            json={"value": 12345.6, "source": "auto", "image_path": path},
         )
         assert r.status_code == 201
         body = r.json()
         assert body["source"] == "auto"
-        assert body["image_path"] == "uploads/test.jpg"
+        assert body["image_path"] == path
 
     def test_create_reading_trailing_slash_not_required(self, client, db):
         """POST without trailing slash must reach the endpoint (no redirect body loss)."""
@@ -219,10 +229,11 @@ class TestCreateReading:
         prop = make_property(db)
         meter = make_meter(db, prop.id)
         admin = make_user(db, role=UserRole.admin)
+        path = _registered_upload(db, admin, prop)
         payload = {
             "value": 99834.5,
             "source": "auto",
-            "image_path": "uploads/meter_scan.jpg",
+            "image_path": path,
             "note": "OCR confidence 0.92",
         }
         r = client.post(_url(prop.id, meter.id), headers=auth_headers(admin), json=payload)
@@ -230,7 +241,7 @@ class TestCreateReading:
         body = r.json()
         assert float(body["value"]) == pytest.approx(99834.5)
         assert body["source"] == "auto"
-        assert body["image_path"] == "uploads/meter_scan.jpg"
+        assert body["image_path"] == path
         assert body["note"] == "OCR confidence 0.92"
         assert body["read_at"] is not None
 

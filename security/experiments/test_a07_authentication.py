@@ -67,6 +67,38 @@ async def test_E_A07_001_limit_not_bypassable_by_forwarded_for(rig, restart_back
             assert codes.count(401) <= 5, f"rate limit bypassed with spoofed X-Forwarded-For: {codes.count(401)} guesses evaluated"
 
 
+async def test_E_A07_001_trusted_proxy_rightmost_untrusted_entry_is_the_key(rig, restart_backend):
+    """E-A07-001 (trusted proxy variant): the rig peer (loopback) is declared a trusted proxy via
+    TRUSTED_PROXIES=127.0.0.0/8, as a real reverse proxy would be. The proxy appends the address it saw
+    to the *right* of whatever the client sent. Secure: the key is the rightmost entry that is not a
+    trusted proxy, so a spoofed leftmost entry neither rotates the bucket (at most 5 guesses for one real
+    client) nor leaks into another real client's bucket (a second real client is still evaluated)."""
+    async with Restarted(restart_backend, {**LIMITER_ON, "TRUSTED_PROXIES": "127.0.0.0/8"}):
+        async with new_http(rig) as http:
+            user = cfg(rig, "SUPERADMIN_USER")
+
+            async def guess(i, real, spoof):
+                r = await http.post(
+                    "/api/auth/superadmin-login",
+                    json={"username": user, "password": f"wrong-{i}"},
+                    headers={"X-Forwarded-For": f"{spoof}, {real}"},
+                )
+                return r.status_code
+
+            codes = [await guess(i, "198.51.100.7", f"203.0.113.{i + 1}") for i in range(20)]
+            assert not [c for c in codes if c >= 500]
+            assert codes.count(401) <= 5, f"spoofed leftmost XFF entry changed the key: {codes.count(401)} guesses evaluated"
+            assert codes.count(429) >= 15, f"no limiting for one real client behind the trusted proxy: {codes}"
+            # a different real client (rightmost entry) has its own bucket: proves the key is the rightmost entry,
+            # not the proxy peer for everybody
+            other = await guess(99, "198.51.100.8", "203.0.113.1")
+            assert other == 401, f"second real client shares the first client's bucket (got {other})"
+            # garbage rightmost entry: falls back to the peer, never to a left (client-controlled) entry
+            r = await http.post("/api/auth/superadmin-login", json={"username": user, "password": "x"},
+                                headers={"X-Forwarded-For": "203.0.113.200, not-an-ip"})
+            assert r.status_code in (401, 429)
+
+
 async def test_E_A07_004_nonascii_and_malformed_credentials_no_5xx(rig, restart_backend):
     """E-A07-004 (extension of E-A07-001): non-ASCII, huge and wrongly typed credentials.
     Secure: 401/422, never 5xx. Suspected: secrets.compare_digest(str, str) raises TypeError

@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 import httpx
 import pytest
+from sec_common import register_upload_row, unregister_upload_row
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND_APP = REPO / "backend" / "app"
@@ -367,10 +368,12 @@ async def test_E_A01_002_image_filename_guessing_and_reference_attack(rig, seed,
     ``Path(image_path).name`` without checking who owns the file.)
     """
     ud = upload_dir(rig)
-    victim_name = f"victim-{uuid.uuid4()}.png"
+    # F-004: stored paths must be ``uploads/<uuid>.<ext>`` and the file must be registered in ``upload_files``
+    victim_name = f"{uuid.uuid4()}.png"
     (ud / victim_name).write_bytes(png_bytes("victim"))
     admin = actors["admin"]
     pb = prop_id(seed, "prop_b")
+    register_upload_row(rig, victim_name, pb)
     mb = next(iter(meters_of(seed, "prop_b").values()))["id"]
     pa = prop_id(seed, "prop_a")
     ma = next(iter(meters_of(seed, "prop_a").values()))["id"]
@@ -406,6 +409,7 @@ async def test_E_A01_002_image_filename_guessing_and_reference_attack(rig, seed,
         for p, m, rid in created:
             await admin.delete(f"/api/properties/{p}/meters/{m}/readings/{rid}")
         (ud / victim_name).unlink(missing_ok=True)
+        unregister_upload_row(rig, victim_name)
 
 
 @pytest.mark.security
@@ -458,8 +462,10 @@ def _allowed(who: str, pkey: str, level: str) -> bool:
     if who in GLOBAL_ADMIN:
         return True
     role = PROP_ROLE.get((pkey, who))
+    # "patch" = PATCH of the property itself and membership changes: property admin or global admin (F-005, spec 006)
     return {"read": role in ("user", "manager", "admin"),
             "write": role in ("manager", "admin"),
+            "patch": role == "admin",
             "delete": role == "admin"}[level]
 
 
@@ -499,9 +505,10 @@ async def test_E_A01_003_role_matrix_property_levels(seed, actors, who, pkey):
 
     Read: ``GET /properties/<id>`` (200/403). Write: a no-op ``PATCH`` of the property and ``PATCH``
     / ``POST`` on an unknown meter or reading (403 when not permitted, 404 when permitted). Delete:
-    ``DELETE`` of an unknown meter / reading (needs property *admin* or global admin). Expected
-    (secure): exactly the permissions of the model in permissions.py (user = read, manager = read+write,
-    property admin / global admin = everything; no membership = nothing).
+    ``DELETE`` of an unknown meter / reading (needs property *admin* or global admin). Since F-005
+    (spec 006) editing the property and changing its membership also need property admin / global admin
+    (manager = read + meter/reading write only). Expected (secure): exactly that model (user = read,
+    manager = read+write, property admin / global admin = everything; no membership = nothing).
     """
     c = actors[who]
     pid = prop_id(seed, pkey)
@@ -514,8 +521,14 @@ async def test_E_A01_003_role_matrix_property_levels(seed, actors, who, pkey):
     assert (r.status_code == 200) == _allowed(who, pkey, "read"), (who, pkey, "list readings", r.status_code)
 
     write_ok = _allowed(who, pkey, "write")
+    patch_ok = _allowed(who, pkey, "patch")
     r = await c.patch(base, json={})
-    assert (r.status_code == 200) == write_ok, (who, pkey, "patch property", r.status_code)
+    assert (r.status_code == 200) == patch_ok, (who, pkey, "patch property", r.status_code)
+    # membership changes need the same level; probes use an unknown target so nothing changes
+    r = await c.post(f"{base}/users", json={"user_id": RND, "role": "user"})
+    assert r.status_code == (404 if patch_ok else 403), (who, pkey, "add member (unknown user)", r.status_code)
+    r = await c.delete(f"{base}/users/{RND}")
+    assert r.status_code == (404 if patch_ok else 403), (who, pkey, "remove member (unknown user)", r.status_code)
     r = await c.patch(f"{base}/meters/{RND}", json={"name": "x"})
     assert r.status_code == (404 if write_ok else 403), (who, pkey, "patch unknown meter", r.status_code)
     r = await c.patch(f"{base}/meters/{mid}/readings/999999999", json={"note": "x"})

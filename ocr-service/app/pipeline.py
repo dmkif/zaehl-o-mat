@@ -27,6 +27,17 @@ def _get_reader():
     return _reader
 
 
+# F-011: the upscaled working image never exceeds this on its long side, so
+# ``already_cropped`` with a huge picture cannot multiply memory by 16x.
+MAX_UPSCALED_SIDE = 4000
+
+
+def upscaled_size(width: int, height: int, factor: int) -> tuple[int, int]:
+    """Target size for a ``factor``x upscale, capped at MAX_UPSCALED_SIDE on the long side."""
+    scale = min(float(factor), MAX_UPSCALED_SIDE / max(width, height))
+    return max(1, int(width * scale)), max(1, int(height * scale))
+
+
 def _preprocess_image(filepath: Path, already_cropped: bool = False) -> tuple:
     """
     Pre-process a utility-meter photo for EasyOCR.  Handles three common
@@ -119,8 +130,7 @@ def _preprocess_image(filepath: Path, already_cropped: bool = False) -> tuple:
 
     # ── Step 4: Denoise + 4× upscale + light sharpen ────────────────────────
     denoised = cv2.fastNlMeansDenoising(enhanced, h=12)
-    scale = 4
-    upscaled = cv2.resize(denoised, (dw * scale, dh * scale), interpolation=cv2.INTER_CUBIC)
+    upscaled = cv2.resize(denoised, upscaled_size(dw, dh, 4), interpolation=cv2.INTER_CUBIC)
     k = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
     sharp = cv2.filter2D(upscaled, -1, k)
 
@@ -254,7 +264,7 @@ def _extract_serial_sync(filepath: Path) -> str | None:
     # artifacts reliably corrupt digit shapes (observed: dropped digits,
     # 8 misread as 5, "0" misread as "O") without measurably helping EasyOCR.
     h, w = enhanced.shape[:2]
-    upscaled = cv2.resize(enhanced, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+    upscaled = cv2.resize(enhanced, upscaled_size(w, h, 3), interpolation=cv2.INTER_CUBIC)
 
     proc_path = filepath.with_suffix(".serial_proc.jpg")
     Image.fromarray(upscaled).save(proc_path, quality=95)

@@ -21,8 +21,9 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
-from app.limiter import limiter
+from app.limiter import limiter, _key_func as client_ip
 from app.models import User, UserRole, OidcPkceState
+from app.security_log import log_event
 from app.schemas.auth import TokenResponse, SuperadminLoginRequest
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -125,21 +126,28 @@ def _consume_pkce_state(db: Session, state: str) -> str:
     return verifier
 
 
-def _sign_in(db: Session, userinfo: dict) -> str:
+def _sign_in(db: Session, userinfo: dict, ip: Optional[str] = None) -> str:
     """Create/update the user and issue the app JWT (sync, DB)."""
     user = get_or_create_user_from_oidc(db, userinfo)
+    log_event("login", outcome="ok", actor=user.id, ip=ip)
     return create_access_token({"sub": str(user.id), "role": user.role.value})
 
 
 @router.get("/callback")
 async def callback(
+    request: Request,
     code: str = Query(...),
     state: str = Query(...),
     db: Session = Depends(get_db),
 ):
     """Exchange authorization code for tokens, return JWT."""
+    ip = client_ip(request)
     try:
         verifier = await run_in_threadpool(_consume_pkce_state, db, state)
+    except HTTPException as exc:
+        reason = "state_expired" if exc.detail == "State expired" else "invalid_state"
+        log_event("login", outcome="failed", ip=ip, reason=reason)
+        raise
     except PoolTimeoutError:
         raise _pool_busy()
 
@@ -157,11 +165,13 @@ async def callback(
             },
         )
         if token_resp.status_code != 200:
+            log_event("login", outcome="failed", ip=ip, reason="token_exchange_failed")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token exchange failed")
 
         tokens = token_resp.json()
         access_token_oidc = tokens.get("access_token")
         if not access_token_oidc:
+            log_event("login", outcome="failed", ip=ip, reason="no_access_token")
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OIDC provider returned no access token")
 
         userinfo_resp = await client.get(
@@ -174,7 +184,7 @@ async def callback(
     # Sync DB work must not run on the event loop: with the pool exhausted it
     # would block every request incl. /health (B-32). Pool timeout -> 503.
     try:
-        access_token = await run_in_threadpool(_sign_in, db, userinfo)
+        access_token = await run_in_threadpool(_sign_in, db, userinfo, ip)
     except PoolTimeoutError:
         raise _pool_busy()
     # Redirect to the SPA route /auth/token (history-mode router, no hash) which
@@ -191,13 +201,19 @@ async def superadmin_login(
     db: Session = Depends(get_db),
 ):
     """Local login for superadmin account (bypasses OIDC)."""
+    ip = client_ip(request)
+
+    def _fail(reason: str) -> HTTPException:
+        log_event("superadmin_login", outcome="failed", ip=ip, reason=reason)
+        return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
     if not settings.superadmin_password:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise _fail("not_configured")
     # compare_digest raises TypeError on non-ASCII str; compare UTF-8 bytes.
     username_ok = secrets.compare_digest(body.username.encode(), settings.superadmin_user.encode())
     password_ok = secrets.compare_digest(body.password.encode(), settings.superadmin_password.encode())
     if not (username_ok and password_ok):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise _fail("bad_credentials")
 
     user = db.query(User).filter(User.username == settings.superadmin_user).first()
     if not user:
@@ -210,7 +226,17 @@ async def superadmin_login(
         db.add(user)
         db.commit()
         db.refresh(user)
+    elif not user.is_active:
+        raise _fail("user_inactive")
+    elif user.role != UserRole.superadmin:
+        # F-006: the env-configured superadmin always carries the superadmin role
+        # (a demoted/edited row must not silently persist), and the token must match.
+        log_event("superadmin_role_restored", actor=user.id, ip=ip, reason=f"was_{user.role.value}")
+        user.role = UserRole.superadmin
+        db.commit()
+        db.refresh(user)
 
+    log_event("superadmin_login", actor=user.id, ip=ip)
     token = create_access_token({"sub": str(user.id), "role": user.role.value})
     return TokenResponse(access_token=token, token_type="bearer")  # nosec B106 - OAuth2 spec literal, not a credential
 

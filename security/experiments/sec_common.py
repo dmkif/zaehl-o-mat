@@ -221,5 +221,34 @@ def restore_seed_roles(rig, seed) -> int:
     return fixed
 
 
+def register_upload_row(rig, filename: str, property_id: str, uploaded_by: str | None = None) -> None:
+    """Register a hand-written upload file in ``upload_files`` (F-004 registry) so it may be referenced.
+
+    The row belongs to ``property_id`` (uploader NULL unless given), exactly like a bulk-scan upload."""
+    from sqlalchemy import create_engine, text
+
+    eng = create_engine(rig["DATABASE_URL"])
+    try:
+        with eng.begin() as c:
+            c.execute(
+                text("INSERT INTO upload_files (filename, property_id, uploaded_by_id, created_at) "
+                     "VALUES (:f, :p, :u, now()) ON CONFLICT (filename) DO NOTHING"),
+                {"f": filename, "p": property_id, "u": uploaded_by},
+            )
+    finally:
+        eng.dispose()
+
+
+def unregister_upload_row(rig, filename: str) -> None:
+    from sqlalchemy import create_engine, text
+
+    eng = create_engine(rig["DATABASE_URL"])
+    try:
+        with eng.begin() as c:
+            c.execute(text("DELETE FROM upload_files WHERE filename = :f"), {"f": filename})
+    finally:
+        eng.dispose()
+
+
 def timed():
     return time.monotonic()

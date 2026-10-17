@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,6 +24,24 @@ logger = logging.getLogger(__name__)
 # httpx logs every request line at INFO; keep request details out of the logs.
 for _noisy in ("httpx", "httpcore"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+_SENSITIVE_QUERY = re.compile(r"(?i)([?&](?:code|state)=)[^&\s\"]*")
+
+
+class AccessLogRedactionFilter(logging.Filter):
+    """Mask OIDC ``code``/``state`` query values in the uvicorn access log (F-010)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _SENSITIVE_QUERY.sub(r"\1[redacted]", a) if isinstance(a, str) else a for a in record.args
+            )
+        elif isinstance(record.msg, str):
+            record.msg = _SENSITIVE_QUERY.sub(r"\1[redacted]", record.msg)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(AccessLogRedactionFilter())
 
 scheduler = AsyncIOScheduler()
 

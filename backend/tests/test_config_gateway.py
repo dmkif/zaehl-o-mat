@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 
-BASE = dict(database_url="sqlite://", jwt_secret_key="x" * 40)
+BASE = dict(database_url="sqlite://", jwt_secret_key="kJ8s2Lq0Zp9xVw3Yt6uNb1MdR4eHgF7aCiOoXzQ5vB2n")  # gitleaks:allow (Testwert)
 GW = dict(ocr_backend="gateway", gateway_base_url="http://gw.test/v1", gateway_api_key="k")
 
 
