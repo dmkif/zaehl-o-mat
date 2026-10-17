@@ -48,7 +48,7 @@ rand() { "$PY" -c "import secrets;print(secrets.token_urlsafe($1))"; }
 
 PG_PORT=$(free_port); BACKEND_PORT=$(free_port); OIDC_PORT=$(free_port); GW_PORT=$(free_port); OCR_PORT=$(free_port)
 PG_PASS=$(rand 18); JWT_SECRET=$(rand 48); SA_USER=rig-superadmin; SA_PASS=$(rand 18)
-OIDC_SECRET=$(rand 24); GW_KEY=$(rand 24)
+OIDC_SECRET=$(rand 24); GW_KEY=$(rand 24); OCR_KEY=$(rand 24)
 
 BACKEND_URL="http://$LOOP:$BACKEND_PORT"
 DATABASE_URL="postgresql://rig:$PG_PASS@$LOOP:$PG_PORT/rig"
@@ -106,6 +106,13 @@ BACKEND_ENV=(
   "GATEWAY_BASE_URL=$GATEWAY_URL"
   "GATEWAY_API_KEY=$GW_KEY"
   "OCR_URL=$OCR_URL"
+  "OCR_API_KEY=$OCR_KEY"   # feature 011: the backend sends it as Bearer; fake_ocr requires it (--api-key)
+  # feature 010: API docs are off by default; the rig (experiments reading /api/openapi.json) opts in. E-A02-002
+  # restarts with ENABLE_API_DOCS unset to test the default.
+  "ENABLE_API_DOCS=true"
+  # feature 010: /auth/login + /auth/callback are rate limited (20/minute); the rig raises it. Only tests that
+  # target the limit restart with a small value.
+  "OIDC_RATE_LIMIT=100000/minute"
   "APP_BASE_URL=$BACKEND_URL"
   "LOG_LEVEL=debug"
   "DEBUG=${SEC_RIG_APP_DEBUG:-true}"
@@ -136,9 +143,9 @@ start_standin() { # name port [extra args...]
       "$PY" "$f" --port "$port" "$@" >"$STATE/$name.log" 2>&1 </dev/null & echo $! >"$STATE/pids/$name" )
   STANDIN_PIDS="${STANDIN_PIDS:+$STANDIN_PIDS,}$(cat "$STATE/pids/$name")"
 }
-start_standin fake_oidc "$OIDC_PORT" --client-secret "$OIDC_SECRET"
-start_standin fake_gateway "$GW_PORT" --api-key "$GW_KEY"
-start_standin fake_ocr "$OCR_PORT"
+start_standin fake_oidc "$OIDC_PORT" --client-secret="$OIDC_SECRET"
+start_standin fake_gateway "$GW_PORT" --api-key="$GW_KEY"
+start_standin fake_ocr "$OCR_PORT" --api-key="$OCR_KEY"
 for pair in "fake_oidc:$OIDC_PORT" "fake_gateway:$GW_PORT" "fake_ocr:$OCR_PORT"; do
   n=${pair%%:*}; p=${pair##*:}
   [ -f "$STATE/pids/$n" ] || continue
@@ -182,6 +189,7 @@ OIDC_CLIENT_SECRET=$OIDC_SECRET
 GATEWAY_URL=$GATEWAY_URL
 GATEWAY_API_KEY=$GW_KEY
 OCR_URL=$OCR_URL
+OCR_API_KEY=$OCR_KEY
 BACKEND_PID=$BACKEND_PID
 STANDIN_PIDS=$STANDIN_PIDS
 BACKEND_LOG=$BACKEND_LOG

@@ -934,11 +934,17 @@ async def test_E_A01_006_stored_integration_config_never_triggers_requests(rig, 
     marker = f"/ssrf-{uuid.uuid4().hex[:8]}"
     cfg = {"url": f"{rig['OCR_URL']}{marker}", "host": "169.254.169.254", "base_url": f"http://169.254.169.254{marker}",
            "token": "t0k3n-should-not-echo"}
-    # `dict`: what the schema (Optional[Any]) advertises; the Text column cannot adapt it (500, F-023).
-    # `json_string`: what the column accepts, so the SSRF half (never fetched, never echoed) is exercised either way.
-    value = cfg if form == "dict" else json.dumps(cfg)
+    # `dict`: the only accepted shape since feature 011 (integration_config is an object or null, F-023).
+    # `json_string`: the old shape the Text column silently accepted; now a strict 422 (never a 500, nothing stored).
+    if form == "json_string":
+        r = await admin.post(f"/api/properties/{pa}/meters/", json={
+            "meter_type": "electricity", "unit": "kWh", "name": "rig-ssrf", "integration_type": "shelly",
+            "integration_config": json.dumps(cfg)})
+        assert r.status_code == 422, f"non-object integration_config must be rejected: {r.status_code} {r.text[:200]}"
+        assert "t0k3n" not in r.text and "169.254" not in r.text, "rejected integration_config echoed in the error"
+        return
     r = await admin.post(f"/api/properties/{pa}/meters/", json={
-        "meter_type": "electricity", "unit": "kWh", "name": "rig-ssrf", "integration_type": "shelly", "integration_config": value})
+        "meter_type": "electricity", "unit": "kWh", "name": "rig-ssrf", "integration_type": "shelly", "integration_config": cfg})
     assert r.status_code == 201, r.text
     mid = r.json()["id"]
     try:
@@ -975,3 +981,58 @@ def test_E_A01_006_configured_urls_not_settable_via_api():
         schema_text += f.read_text()
     for field in ("oidc_discovery_url", "gateway_base_url", "ocr_url", "ollama_url", "oil_price_api_url", "base_url", "callback_url", "webhook"):
         assert not re.search(rf"^\s*{field}\s*:", schema_text, re.M | re.I), f"API schema accepts a URL-valued field {field}"
+
+
+# --------------------------------------------------------------------------- E-A01-007 / E-A01-008 (feature 011)
+
+@pytest.mark.security
+async def test_E_A01_007_delete_user_with_property_links_is_204(rig, seed, client, oidc):
+    """E-A01-007 (F-024): a user who is a member of two properties can be deleted by an admin (204, not 500); the
+    membership rows disappear, the properties and everyone else's memberships stay, the deleted user's token is dead."""
+    from idp_helpers import USER_GROUP, me, new_http, set_claims, signin, unique_identity
+
+    admin = client("admin")
+    sub, email = unique_identity("deluser")
+    await set_claims(oidc, [USER_GROUP], sub, email)
+    async with new_http(rig) as http:
+        resp, token, _ = await signin(http)
+        assert token, f"sign-in failed: {resp.status_code}"
+        uid = (await me(http, token)).json()["id"]
+        pids = [prop_id(seed, "prop_a"), prop_id(seed, "prop_b")]
+        before = {p: (await admin.get(f"/api/properties/{p}/users")).json() for p in pids}
+        for p in pids:
+            r = await admin.post(f"/api/properties/{p}/users", json={"user_id": uid, "role": "user"})
+            assert r.status_code == 201, r.text
+        r = await admin.delete(f"/api/admin/users/{uid}")
+        assert r.status_code == 204, f"delete user with property links -> {r.status_code} {r.text[:200]}"
+        for p in pids:
+            now = (await admin.get(f"/api/properties/{p}/users")).json()
+            assert uid not in {m["user_id"] for m in now}, "membership row survived the user"
+            assert {m["user_id"] for m in now} == {m["user_id"] for m in before[p]}, "other memberships changed"
+        assert (await me(http, token)).status_code == 401, "deleted user's token still works"
+
+
+@pytest.mark.security
+async def test_E_A01_008_client_cannot_choose_reading_source(rig, client):
+    """E-A01-008 (F-021): readings created through the API are always `source=manual`; a client-supplied `auto` /
+    `archived` is accepted for compatibility but ignored (the retention job only downsamples auto/archived rows), and
+    an unknown source is a 422."""
+    from idp_helpers import make_meter
+
+    admin = client("admin")
+    pid, mid = await make_meter(admin, "src")
+    try:
+        base = f"/api/properties/{pid}/meters/{mid}/readings/"
+        for i, src in enumerate(["auto", "archived", "manual", None]):
+            body = {"value": str(100 + i)}
+            if src:
+                body["source"] = src
+            r = await admin.post(base, json=body)
+            assert r.status_code == 201, f"{src}: {r.status_code} {r.text[:160]}"
+            assert r.json()["source"] == "manual", f"client-chosen source {src!r} stored as {r.json()['source']!r}"
+        r = await admin.post(base, json={"value": "5", "source": "ocr"})
+        assert r.status_code == 422
+        stored = (await admin.get(base)).json()
+        assert {x["source"] for x in stored} == {"manual"}, {x["source"] for x in stored}
+    finally:
+        await admin.delete(f"/api/properties/{pid}")

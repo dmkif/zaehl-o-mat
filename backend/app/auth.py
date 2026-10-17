@@ -44,6 +44,10 @@ def decode_access_token(token: str) -> dict:
             token, settings.jwt_secret_key, claims_options={"exp": {"essential": True}}
         )
         claims.validate()
+        # Our tokens carry only `alg` (+ optionally typ/kid); extension headers such as `zip`, `jwk`, `x5u` have
+        # no business in a session token (F-034 residual, security rig E-A04-001).
+        if set(claims.header) - {"alg", "typ", "kid"}:
+            raise JoseError("Unsupported token header")
         exp = claims.get("exp")
         if isinstance(exp, bool) or not isinstance(exp, (int, float)) or not math.isfinite(exp):
             raise JoseError("Invalid exp claim")
@@ -160,6 +164,11 @@ def get_or_create_user_from_oidc(db: Session, oidc_data: dict) -> User:
     # First login — create user. Collisions never merge accounts: a taken
     # username gets a derived suffix, a taken e-mail is a clean 409 (F-019).
     if _email_taken(email):
+        # The holder may be the same identity whose concurrent first login committed between the lookup above and
+        # this check (security rig E-A06-001): that is a sign-in, not a conflict.
+        winner = db.query(User).filter(User.oidc_sub == sub).first()
+        if winner:
+            return _update_existing(db, winner, role, email, _email_taken)
         log_event("login", outcome="failed", reason="email_conflict")
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Account conflict: e-mail already in use")
     for _attempt in range(3):

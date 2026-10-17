@@ -84,6 +84,11 @@ def unique_identity(prefix="id"):
     return f"{prefix}-{u}", f"{prefix}-{u}@rig.example.test"
 
 
+BINDER_COOKIE = "oidc_binder"  # feature 010 (F-017): HttpOnly cookie set by /auth/login, required by /auth/callback
+_BINDERS: dict[str, str] = {}   # state -> binder value of the browser that started that login
+_AUTO = object()
+
+
 @dataclass
 class Flow:
     authorize_url: str
@@ -93,6 +98,7 @@ class Flow:
     query: dict
     code: str | None = None
     returned_state: str | None = None
+    binder: str | None = None   # value of the oidc_binder cookie of the browser that started the login
 
 
 async def start_flow(http: httpx.AsyncClient) -> Flow:
@@ -100,7 +106,10 @@ async def start_flow(http: httpx.AsyncClient) -> Flow:
     assert r.status_code in (302, 303, 307), f"/auth/login -> {r.status_code}"
     loc = r.headers["location"]
     q = {k: v[0] for k, v in parse_qs(urlparse(loc).query).items()}
-    return Flow(loc, q.get("state", ""), q.get("code_challenge"), q.get("code_challenge_method"), q)
+    binder = r.cookies.get(BINDER_COOKIE)
+    if binder and q.get("state"):
+        _BINDERS[q["state"]] = binder
+    return Flow(loc, q.get("state", ""), q.get("code_challenge"), q.get("code_challenge_method"), q, binder=binder)
 
 
 async def authorize(http: httpx.AsyncClient, flow: Flow) -> Flow:
@@ -116,7 +125,14 @@ async def authorize(http: httpx.AsyncClient, flow: Flow) -> Flow:
     return flow
 
 
-async def callback(http: httpx.AsyncClient, code: str, state: str, **kw) -> httpx.Response:
+async def callback(http: httpx.AsyncClient, code: str, state: str, binder=_AUTO, **kw) -> httpx.Response:
+    """GET /api/auth/callback. The binder cookie defaults to the one the login of ``state`` issued (so many
+    parallel flows may share one client, whose cookie jar keeps only the last one). ``binder=None`` sends no
+    explicit cookie (the client's own jar still applies); a string sends exactly that value."""
+    if binder is _AUTO:
+        binder = _BINDERS.get(state)
+    if binder is not None:
+        kw["headers"] = {**kw.get("headers", {}), "Cookie": f"{BINDER_COOKIE}={binder}"}
     return await http.get("/api/auth/callback", params={"code": code, "state": state}, **kw)
 
 

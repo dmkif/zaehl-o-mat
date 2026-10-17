@@ -28,6 +28,7 @@ def load_openapi() -> dict:
     os.environ.setdefault("DATABASE_URL", "postgresql://dummy:dummy@127.0.0.1:1/dummy")
     import tempfile
     os.environ["UPLOAD_PATH"] = tempfile.mkdtemp(prefix="cov-uploads-")
+    os.environ["ENABLE_API_DOCS"] = "true"  # feature 010: docs are off by default; the table needs the OpenAPI
     os.environ["JWT_SECRET_KEY"] = "coverage-list-dummy-secret-0123456789abcdef"
     sys.path.insert(0, str(REPO / "backend"))
     from app.main import app  # noqa: E402

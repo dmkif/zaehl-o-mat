@@ -1,8 +1,8 @@
 # Security Review Report (feature 004)
 
-Status: review complete; high findings fixed in feature 004, medium findings F-004, F-005, F-006, F-009, F-010, F-011 fixed in feature 006 ("004b", `specs/006-security-medium-fixes/`), F-007 and F-008 in feature 007 (session hardening), F-012 and F-013 in feature 008 (bulk-scan limits), F-014, F-015 and F-016 in feature 009 (schema/deploy hardening); all released in 0.6.0 and verified by the rig (`review/rerun-3.md`); low findings F-028 (orphan files) and F-029 are fixed by feature 008. Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
+Status: review complete; high findings fixed in feature 004, medium findings F-004, F-005, F-006, F-009, F-010, F-011 fixed in feature 006 ("004b", `specs/006-security-medium-fixes/`), F-007 and F-008 in feature 007 (session hardening), F-012 and F-013 in feature 008 (bulk-scan limits), F-014, F-015 and F-016 in feature 009 (schema/deploy hardening); all released in 0.6.0 and verified by the rig (`review/rerun-3.md`); low findings F-028 (orphan files) and F-029 are fixed by feature 008, and in release 0.7.0 (features 010 auth/HTTP, 011 data/OCR, 012 hygiene) F-017 to F-027, F-029 to F-037, F-039, F-041, F-043 and F-046 to F-048 are fixed, F-042 is accepted, F-040, F-044 and F-049 partly fixed, verified by `review/rerun-4.md` (291 experiments: 290 passed, 0 failed, 1 skipped); open: F-038, F-050, the quota part of F-028, F-045 documented. Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
 Standard: OWASP Top 10:2025 (A01 Broken Access Control, A02 Security Misconfiguration, A03 Software Supply Chain Failures, A04 Cryptographic Failures, A05 Injection, A06 Insecure Design, A07 Authentication Failures, A08 Software or Data Integrity Failures, A09 Logging and Alerting Failures, A10 Mishandling of Exceptional Conditions).
-Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 277 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-3.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
+Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 291 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-4.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
 
 ## 1. Summary
 
@@ -13,11 +13,11 @@ Method: manual reading of every component (`security/review/*.md`), automated to
 | critical | 0 | 0 | 0 | 0 | fix in 004 |
 | high | 3 | 3 | 0 | 0 | fix in 004 |
 | medium | 13 | 8 | 4 | 1 | all 13 fixed (F-004, F-005, F-006, F-009, F-010, F-011 in 0.5.x; F-007, F-008, F-012, F-013, F-014, F-015, F-016 in 0.6.0) |
-| low | 29 | 15 | 13 | 1 | F-029 fixed and F-028 (orphan files) fixed in 0.6.0 (F-028 quota part open); rest proposed (operator decides) |
-| informational | 5 | 1 | 4 | 0 | proposed (operator decides) |
-| **total** | **50** | 27 | 21 | 2 | |
+| low | 29 | 16 | 13 | 0 | 23 fixed or closed (F-029 and F-028 orphan files in 0.6.0; F-017 to F-027, F-030 to F-037, F-039, F-041, F-043 in 0.7.0, F-036 closed), F-042 accepted, F-028 (quota), F-040, F-044 partly fixed, F-038 and F-050 proposed |
+| informational | 5 | 1 | 4 | 0 | F-046, F-047, F-048 fixed (0.7.0), F-049 partly fixed, F-045 documented, not changed |
+| **total** | **50** | 28 | 21 | 1 | |
 
-Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; all medium findings are `fixed`: F-004, F-005, F-006, F-009, F-010 and F-011 (feature 006, `review/rerun-2.md`) and F-007, F-008, F-012, F-013, F-014, F-015, F-016 (features 007, 008, 009, release 0.6.0, verified by the experiments listed in their sections, `review/rerun-3.md`); of the low findings F-029 is `fixed` and F-028 is `fixed` for the orphan-file part (per-user quota still open); all other low and informational findings stay `proposed`. The state of F-001 to F-003 (feature 004) is tracked in the next table and was not changed by feature 006.
+Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; all medium findings are `fixed`: F-004, F-005, F-006, F-009, F-010 and F-011 (feature 006, `review/rerun-2.md`) and F-007, F-008, F-012, F-013, F-014, F-015, F-016 (features 007, 008, 009, release 0.6.0, verified by the experiments listed in their sections, `review/rerun-3.md`); of the low findings F-029 is `fixed` and F-028 is `fixed` for the orphan-file part (per-user quota still open); in release 0.7.0 the low and informational findings listed in the status line above became `fixed` (F-042 `accepted`), see `review/rerun-4.md`; F-038 and F-050 stay `proposed`. The state of F-001 to F-003 (feature 004) is tracked in the next table and was not changed by feature 006.
 
 ### Critical and high findings (to be fixed in feature 004)
 
@@ -31,7 +31,7 @@ No critical finding was identified. The three high findings are being fixed in p
 
 ### Headline results
 
-* 277 experiments in the latest run (profile `--quick`, `review/rerun-3.md`, release 0.6.0 = features 006 to 009): 257 passed, 19 failed (plus the intermittent E-A10-001, which passed in the final run), 1 skipped. Rerun-2 had 206 passed and 40 failed (247 tests), rerun-1 151 passed and 94 failed. Every remaining failure is a real, still open low-severity weakness (no test or rig defect remains; no medium or high finding is open); they collapse into the unfixed findings F-017, F-022, F-023, F-031, F-032, F-033, F-034, F-035, F-026, F-037, F-046.
+* 291 experiments in the latest run (profile `--quick`, `review/rerun-4.md`, release 0.7.0 = features 010 to 012): **290 passed, 0 failed, 1 skipped** (A02 debug-off test needs `SEC_RIG_APP_DEBUG=false`). Rerun-3 had 257 passed and 19 failed (277 tests), rerun-2 206 passed and 40 failed (247 tests), rerun-1 151 passed and 94 failed. No experiment fails any more; the first run on 0.7.0 with the unadapted rig had 9 failures and 4 errors, all but one caused by the rig/experiments encoding the old behaviour (docs, health, binder cookie), and the rig found three small application defects that were fixed with regression tests (callback `state` with a NUL byte gave 500; parallel first sign-in of one identity could be answered 409; JWT header `zip` accepted, F-034).
 * The access-control core holds: direct access by ID, listings and the streaming bulk scan never leaked foreign objects, traversal and symlink variants are refused, JWT forgery variants (alg none, wrong key, algorithm confusion, tampering) are rejected, SQL and XSS payloads are stored inert, and the frontend has no raw HTML sinks.
 * The weaknesses cluster around: group claim handling and rate-limit key (F-001, F-002), a process-wide stall under parallel logins (F-003), tenant isolation of uploaded images (F-004), role boundaries (F-005, F-006), token lifecycle (F-007, F-008, fixed in 0.6.0), startup validation of secrets (F-009), missing audit logging (F-010) and input/resource limits (F-011, F-012, F-023; F-012 fixed in 0.6.0).
 * Tooling found no hard-coded real secrets (gitleaks history clean), no High/Critical SAST findings, no production npm advisories and no exploitable dependency path.
@@ -77,27 +77,27 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | fixed in feature 009 (migration 0008, 0.6.0), verified by E-A02-003 |
 | F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | fixed in feature 009 (0.6.0) |
 | F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | fixed in feature 009 (chart, 0.6.0) |
-| F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | fixed (010) |
-| F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | fixed (010) |
-| F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | fixed (010) |
-| F-020 | low | A10 | backend | `compare_digest` on non-ASCII strings raises TypeError (500 on superadmin login) | confirmed by experiment E-A07-004 | proposed |
-| F-021 | low | A08 | backend | Client-chosen `source` lets the retention job downsample and delete readings and image links | confirmed by reading | proposed |
-| F-022 | low | A06 | backend | Duplicate-image check is a check-then-insert race without a unique constraint | confirmed by experiment E-A06-002 | proposed |
-| F-023 | low | A05 | backend | Weak validation of numeric, string and structured input gives 500s and can poison data | confirmed by experiment E-A05-001 / E-A02-002 / E-A01-006 | proposed |
-| F-024 | low | A10 | backend | `delete_user` probably fails with 500 for users with property links | suspected | proposed |
-| F-025 | low | A10 | backend | Startup depends on an external fetch and unguarded oil-price DB writes | confirmed by reading | fixed (010) |
-| F-026 | low | A06 | backend | Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache | confirmed by experiment E-A10-002 | fixed (010) |
-| F-027 | low | A09 | backend | Oil-price API key can be written to the log | confirmed by reading | fixed (010) |
+| F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | fixed (010), verified by E-A06-004, E-A07-008 |
+| F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | fixed (010), verified by E-A07-009 |
+| F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | fixed (010), verified by E-A07-009 |
+| F-020 | low | A10 | backend | `compare_digest` on non-ASCII strings raises TypeError (500 on superadmin login) | confirmed by experiment E-A07-004 | fixed (before 0.7.0), E-A07-004 passes |
+| F-021 | low | A08 | backend | Client-chosen `source` lets the retention job downsample and delete readings and image links | confirmed by reading | fixed (011), verified by E-A01-008 |
+| F-022 | low | A06 | backend | Duplicate-image check is a check-then-insert race without a unique constraint | confirmed by experiment E-A06-002 | fixed (011), verified by E-A06-002 |
+| F-023 | low | A05 | backend | Weak validation of numeric, string and structured input gives 500s and can poison data | confirmed by experiment E-A05-001 / E-A02-002 / E-A01-006 | fixed (011; callback state NUL in 0.7.0), verified by E-A05-001, E-A02-002, E-A01-006 |
+| F-024 | low | A10 | backend | `delete_user` fails with 500 for users with property links | confirmed by experiment E-A01-007 (against v0.6.1) | fixed (011), verified by E-A01-007 |
+| F-025 | low | A10 | backend | Startup depends on an external fetch and unguarded oil-price DB writes | confirmed by reading | fixed (010; unit tests, not rig-verifiable) |
+| F-026 | low | A06 | backend | Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache | confirmed by experiment E-A10-002 | fixed (010), verified by E-A10-002 (rate limit: unit tests) |
+| F-027 | low | A09 | backend | Oil-price API key can be written to the log | confirmed by reading | fixed (010; unit tests, not rig-verifiable) |
 | F-028 | low | A10 | backend | Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files | confirmed by experiment E-A10-002 / E-A08-001 | partly fixed (feature 008, 0.6.0: orphan files) |
 | F-029 | low | A08 | backend, ocr-service | LLM and OCR-service output is not validated or bounded; malformed OCR JSON gives 500; EXIF date is free text | confirmed by experiment E-A08-001 / E-UP-001 | fixed (feature 008, 0.6.0) |
-| F-030 | low | A07 | ocr-service, chart | OCR service has no authentication and relies on network isolation | confirmed by reading | proposed |
-| F-031 | low | A02 | backend | API documentation and verbose health endpoint are public | confirmed by experiment E-A02-002 | fixed (010) |
-| F-032 | low | A08 | backend | Scan stores undecoded, truncated or broken images | confirmed by experiment E-UP-001 | proposed |
-| F-033 | low | A06 | backend | EXIF GPS data is retained in stored and served images | confirmed by experiment E-UP-001 | proposed |
-| F-034 | low | A04 | backend | JWT parsing robustness: non-string `alg` header or `sub` gives 500 | confirmed by experiment E-A04-001 | proposed |
-| F-035 | low | A10 | backend | Database outage mid-request: unhandled 500, acknowledgement lost after commit | confirmed by experiment E-A10-001 (intermittent) | proposed |
-| F-036 | low | A01 | backend | Unattached scan uploads are readable by every authenticated user | confirmed by experiment E-A01-002 | proposed |
-| F-037 | low | A01 | backend | `replaced_by_id` may reference another tenant's meter; `integration_config` stored in plaintext | confirmed by experiment E-A01-005 | proposed |
+| F-030 | low | A07 | ocr-service, chart | OCR service has no authentication and relies on network isolation | confirmed by reading | fixed (011), verified by E-A07-010 |
+| F-031 | low | A02 | backend | API documentation and verbose health endpoint are public | confirmed by experiment E-A02-002 | fixed (010), verified by E-A02-002 |
+| F-032 | low | A08 | backend | Scan stores undecoded, truncated or broken images | confirmed by experiment E-UP-001 | fixed (011), verified by E-UP-001 |
+| F-033 | low | A06 | backend | EXIF GPS data is retained in stored and served images | confirmed by experiment E-UP-001 | fixed (011), verified by E-UP-001 |
+| F-034 | low | A04 | backend | JWT parsing robustness: non-string `alg` header or `sub` gives 500 | confirmed by experiment E-A04-001 | fixed (0.7.0, rig finding), verified by E-A04-001 |
+| F-035 | low | A10 | backend | Database outage mid-request: unhandled 500, acknowledgement lost after commit | confirmed by experiment E-A10-001 (intermittent) | fixed (011), verified by E-A10-001, E-A10-005 |
+| F-036 | low | A01 | backend | Unattached scan uploads are readable by every authenticated user | confirmed by experiment E-A01-002 | closed (no longer reproducible since F-004; E-A01-002 passes) |
+| F-037 | low | A01 | backend | `replaced_by_id` may reference another tenant's meter; `integration_config` stored in plaintext | confirmed by experiment E-A01-005 | fixed (011), verified by E-A01-005 |
 | F-038 | low | A03 | images, compose, backend, ocr-service | Container build hygiene: floating tags, no hash-pinned dependencies, no .dockerignore, shell-form CMD, EasyOCR models without checksum | confirmed by reading | proposed |
 | F-039 | low | A03 | ci | GitHub Actions pinned to mutable tags; `test.yaml` has no `permissions:` block; no Dependabot/Renovate | confirmed by reading | fixed (pinning/permissions: 004b/009; Dependabot: feature 012) |
 | F-040 | low | A08 | ci, images, chart | Built images are mutable and unsigned; no SBOM/provenance; CI does not scan images or chart misconfiguration | confirmed by reading | partly fixed (feature 012: image + chart scan, pip/npm audit in CI; digests, cosign, SBOM open) |
@@ -107,7 +107,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-044 | low | A03 | backend, ocr-service, images | Dependency advisories without a reachable path: authlib 1.6.9, pydantic-settings 2.13.1, Mako, pip | confirmed by reading | partly fixed (feature 012: authlib 1.6.12, pydantic-settings 2.14.2; Mako/pip in image open) |
 | F-050 | low | A02 | images, compose, migrations | Frontend image runs as root outside the chart; images have no HEALTHCHECK; migrations run at container start with the application DB role | confirmed by reading | proposed |
 | F-045 | informational | A01 | backend | 404-before-403 ordering leaks existence of properties, meters and readings | confirmed by reading | proposed |
-| F-046 | informational | A05 | backend | `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines | confirmed by experiment E-A02-002 | fixed (010) |
+| F-046 | informational | A05 | backend | `X-Request-ID` is reflected unvalidated and unbounded; client-derived strings reach log lines | confirmed by experiment E-A02-002 | fixed (010), verified by E-A02-002 |
 | F-047 | informational | A02 | compose, scripts | Documentation does not match the implementation (ports, redirect URI, routing mode, default login) | confirmed by reading | fixed (feature 012) |
 | F-048 | informational | A02 | chart | Chart: secrets injected as env via `envFrom`; HSTS preload and includeSubdomains set unconditionally | confirmed by reading | fixed (feature 012: HSTS configurable, envFrom documented; default unchanged) |
 | F-049 | informational | A03 | frontend, ci, backend | Frontend and test-tooling hygiene: dev-only npm advisories, unused axios, python-jose in test requirements, error detail rendering | confirmed by reading | partly fixed (feature 012: axios removed, audit in CI; python-jose already test-only) |
@@ -387,7 +387,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A06 (Insecure Design)
 * **component**: backend
 * **severity (final)**: low. Low: small impact for this app, requires social engineering.
-* **status**: confirmed by experiment E-A06-004
+* **status**: confirmed by experiment E-A06-004; fix verified by E-A06-004, E-A07-008
 * **location**: backend/app/routers/auth.py:629-650,653-708
 * **description**: State and PKCE verifier are stored server side keyed by `state` only; no cookie or nonce ties the callback to the browser that called `/login`. Identity comes from userinfo, no `nonce` check.
 * **impact / likelihood**: An attacker can hand a victim a callback link and the victim's browser receives the attacker's session (data mixing).
@@ -395,7 +395,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: Browser B completes browser A's login. State replay, parallel reuse, expiry and forged state are rejected (pass).
 * **recommendation**: Short-lived HttpOnly cookie with random value stored (hashed) with the state row and required at callback; atomic consume with `DELETE ... RETURNING`.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (`/auth/login` sets a short-lived HttpOnly SameSite=Lax cookie `oidc_binder`; only its SHA-256 is stored with the state; callback consumes the state once and rejects a missing or foreign cookie with 400; an `nonce` derived from the state is sent and checked when an id_token is processed). Verified by `backend/tests/test_oidc_login_hardening.py` (`test_callback_without_binder_rejected`, `test_callback_with_foreign_binder_rejected`, `test_id_token_nonce_mismatch_rejected`).
+* **fix**: fixed in feature 010 (`/auth/login` sets a short-lived HttpOnly SameSite=Lax cookie `oidc_binder`; only its SHA-256 is stored with the state; callback consumes the state once and rejects a missing or foreign cookie with 400; an `nonce` derived from the state is sent and checked when an id_token is processed). Verified by `backend/tests/test_oidc_login_hardening.py` (`test_callback_without_binder_rejected`, `test_callback_with_foreign_binder_rejected`, `test_id_token_nonce_mismatch_rejected`). Rig verification (rerun-4): E-A06-004 `state_bound_to_initiating_browser` passes (400, no login code); E-A07-008 passes (cookie HttpOnly/SameSite=Lax/Path=/api/auth/no Domain/unique per login; missing, foreign and tampered cookie -> 400, no user row, state consumed by the failed attempt; id_token with wrong nonce -> 400). Both fail against v0.6.1.
 * **source**: backend B-13
 
 ### F-018 Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`)
@@ -404,7 +404,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A07 (Authentication Failures)
 * **component**: backend
 * **severity (final)**: low. Low: requires a misbehaving IdP.
-* **status**: confirmed by reading
+* **status**: confirmed by reading; fix verified by experiment E-A07-009
 * **location**: backend/app/auth.py:36,56
 * **description**: `sub` is never validated; `User.oidc_sub == None` becomes `IS NULL` and matches the break-glass row, whose role and e-mail are then rewritten.
 * **impact / likelihood**: A spec-violating or malicious IdP overwrites the superadmin account and logs in as it.
@@ -412,7 +412,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: -
 * **recommendation**: Require non-empty string `sub` (<= 255) else 502; never let OIDC login touch rows with NULL `oidc_sub`.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (missing, empty, non-string or over-long `sub` gives 502 before any lookup; OIDC login never reads `oidc_sub IS NULL` rows). Verified by `test_bad_sub_rejected_and_superadmin_untouched`, `test_callback_without_sub_is_502_not_500`.
+* **fix**: fixed in feature 010 (missing, empty, non-string or over-long `sub` gives 502 before any lookup; OIDC login never reads `oidc_sub IS NULL` rows). Verified by `test_bad_sub_rejected_and_superadmin_untouched`, `test_callback_without_sub_is_502_not_500`. Rig verification (rerun-4): E-A07-009 `userinfo_without_usable_sub` x9 (absent, null, empty, blank, int, list, object, bool, 300 chars) all answer 502, create no user and leave the superadmin row (id, role, e-mail, username) unchanged; all 9 fail against v0.6.1.
 * **source**: backend B-14
 
 ### F-019 Username/e-mail collisions give 500 on login or silent account confusion
@@ -421,7 +421,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A06 (Insecure Design)
 * **component**: backend
 * **severity (final)**: low. Low: availability of single accounts only.
-* **status**: confirmed by experiment (side effect in run 1; dedicated experiment pending)
+* **status**: confirmed by experiment E-A07-009 (500 on v0.6.1); fix verified
 * **location**: backend/app/auth.py:56-87; backend/app/routers/auth.py:726-737
 * **description**: `username` and `email` are UNIQUE; the retry path re-reads by `sub` and re-raises. Existing-user path overwrites e-mail without collision handling. `superadmin_login` selects by username, so an OIDC user named like `SUPERADMIN_USER` collides in both directions; first superadmin login has no race handling.
 * **impact / likelihood**: Login denial for legitimate users, targeted DoS if usernames are user-editable at the IdP, confusing identity at the break-glass account.
@@ -429,7 +429,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: HTTP 500 for every second identity with the same preferred username.
 * **recommendation**: Derive a unique local username on collision, do not key on e-mail, mark the superadmin by a dedicated column, catch IntegrityError on all paths; add a dedicated B-15 experiment.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (colliding username gets a deterministic suffix from the `sub` hash, never merges with an existing or the superadmin account; taken e-mail on first login is 409, on later login the old e-mail is kept; empty e-mail gets a placeholder; IntegrityError handled on all paths). Verified by `test_same_username_different_identity_gets_unique_name`, `test_username_like_superadmin_never_merges`, `test_email_collision_new_identity_is_409_no_merge`, `test_email_change_to_taken_address_keeps_old_email`. Not done: dedicated superadmin column (the break-glass row is still found by username).
+* **fix**: fixed in feature 010 (colliding username gets a deterministic suffix from the `sub` hash, never merges with an existing or the superadmin account; taken e-mail on first login is 409, on later login the old e-mail is kept; empty e-mail gets a placeholder; IntegrityError handled on all paths). Verified by `test_same_username_different_identity_gets_unique_name`, `test_username_like_superadmin_never_merges`, `test_email_collision_new_identity_is_409_no_merge`, `test_email_change_to_taken_address_keeps_old_email`. Not done: dedicated superadmin column (the break-glass row is still found by username). Rig verification (rerun-4): E-A07-009 `username_collisions_do_not_merge_or_crash` (same `preferred_username` twice, a username equal to `SUPERADMIN_USER`, e-mail already used by another account -> 409, victim untouched) passes; against v0.6.1 the first collision gives HTTP 500. The rig also found a regression in the new e-mail check: a parallel first sign-in of the SAME identity could be answered 409 (1 of 20 rounds of E-A06-001) because the e-mail check ran after the other request committed; `auth.py` now treats a holder with the same `sub` as the sign-in. Regression test `test_concurrent_first_login_of_same_identity_is_not_an_email_conflict`.
 * **source**: backend B-15; triage-group2 root cause 1
 
 ### F-020 `compare_digest` on non-ASCII strings raises TypeError (500 on superadmin login)
@@ -438,14 +438,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A10 (Mishandling of Exceptional Conditions)
 * **component**: backend
 * **severity (final)**: low. Low: robustness only.
-* **status**: confirmed by experiment E-A07-004
+* **status**: confirmed by experiment E-A07-004; no longer reproducible
 * **location**: backend/app/routers/auth.py:721-722 (168 in the checked-out tree)
 * **description**: `secrets.compare_digest(str, str)` raises on non-ASCII input; fields have no length bound. The unhandled error also drops the keep-alive connection.
 * **impact / likelihood**: 500 and stack trace in the log instead of 401; not a bypass.
 * **reproduction**: E-A07-004 `nonascii_and_malformed_credentials_no_5xx`.
 * **evidence**: 500 for the non-ASCII body; remaining bodies (100 kB password, null, wrong types) not yet evaluated after the connection drop.
 * **recommendation**: Compare `.encode()` bytes or HMAC digests, bound the field lengths.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (before 0.7.0)
+* **fix**: already fixed in the 0.6.x code: `superadmin-login` compares UTF-8 bytes (`routers/auth.py`, `secrets.compare_digest(body.username.encode(), ...)`). E-A07-004 `nonascii_and_malformed_credentials_no_5xx` passes in rerun-2 to rerun-4.
 * **source**: backend B-16
 
 ### F-021 Client-chosen `source` lets the retention job downsample and delete readings and image links
@@ -454,14 +455,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A08 (Software or Data Integrity Failures)
 * **component**: backend
 * **severity (final)**: low. Low: needs write access, but data loss.
-* **status**: confirmed by reading
+* **status**: confirmed by reading; fix verified by experiment E-A01-008
 * **location**: backend/app/schemas/readings.py:133; backend/app/routers/readings.py:342; backend/app/jobs/retention.py:107-135
 * **description**: Any manager/admin may create readings with `source` `auto` or `archived`; the nightly job averages them per bucket, deletes the originals and drops `image_path`, `note`, `image_hash`.
 * **impact / likelihood**: Silent loss or alteration of billing-relevant readings and evidence images, trivially triggered by mistake.
 * **reproduction**: Reading only.
 * **evidence**: -
 * **recommendation**: Force `source=manual` for API-created readings, advisory lock for the job, keep evidence fields when merging.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: readings created through the API are always `source=manual` (a client `auto`/`archived` is accepted for compatibility and ignored, unknown values are 422); the retention job additionally never touches rows with evidence (image, serial image, note). Verified by E-A01-008 (`auto`, `archived`, `manual`, none all stored as `manual`; `ocr` -> 422); against v0.6.1 the experiment fails (`auto` stored as `auto`). The retention-job part is verified by backend unit tests only.
 * **source**: backend B-17
 
 ### F-022 Duplicate-image check is a check-then-insert race without a unique constraint
@@ -470,14 +472,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A06 (Insecure Design)
 * **component**: backend
 * **severity (final)**: low. Low: integrity of manual data, no security boundary.
-* **status**: confirmed by experiment E-A06-002
+* **status**: confirmed by experiment E-A06-002; fix verified
 * **location**: backend/app/routers/readings.py:324-351; backend/app/models.py (Reading.image_hash index only)
 * **description**: Concurrent POSTs with the same image both pass the duplicate lookup and insert.
 * **impact / likelihood**: Double entry of the same photo, defeats the business control.
 * **reproduction**: E-A06-002 `parallel_same_image_hash` (2 params). The `parallel_identical_reading` variant (20 identical rows) reflects the absence of any uniqueness rule for readings without image: design decision, not counted separately.
 * **evidence**: 3 to 6 responses 201 for one hash per round; fails fast after 5 rounds.
 * **recommendation**: Partial unique index on `image_hash` where not null (per meter), map IntegrityError to 409.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: migration 0009 adds the partial unique index `(meter_id, image_hash) WHERE image_hash IS NOT NULL`; the `IntegrityError` of the losing request becomes 409 `duplicate_image`. Verified by E-A06-002 `parallel_same_image_hash` (distinct files with the same bytes, and the same path; 20 rounds x 20 parallel POSTs each: exactly one 201, rest 409, one stored row); both fail against v0.6.1 (2 to 7 x 201). Design decision (spec 011): readings WITHOUT an image have no uniqueness rule; `parallel_identical_reading` now asserts that rule (all 201, nothing lost) instead of one stored row.
 * **source**: backend B-18
 
 ### F-023 Weak validation of numeric, string and structured input gives 500s and can poison data
@@ -486,14 +489,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A05 (Injection)
 * **component**: backend
 * **severity (final)**: low. Low: availability/robustness of single requests, authenticated.
-* **status**: confirmed by experiment E-A05-001 / E-A02-002 / E-A01-006
+* **status**: confirmed by experiment E-A05-001 / E-A02-002 / E-A01-006; fix verified
 * **location**: backend/app/schemas/*.py, routers/meters.py:228-229, routers/properties.py:74-75, routers/readings.py:41,51, routers/auth.py:106, routers/ocr.py:386-388
 * **description**: Unbounded `Decimal` (overflow, NaN/Infinity), `null` on NOT NULL columns, `integration_config: Any` (dict -> psycopg cannot adapt), strings without `max_length`, NUL bytes (property name, callback `state`, hint-rescan path), huge OFFSET, lone UTF-16 surrogate in a body (FastAPI 422 serialisation fails), no global exception handler.
 * **impact / likelihood**: HTTP 500 instead of 4xx for many inputs; a stored NaN could break float arithmetic in the dashboard for the whole meter. No injection or data exposure found.
 * **reproduction**: E-A05-001 `json_body_fields_all_endpoints`, `query_and_path_parameters`, `multipart_form_fields`; E-A02-002 `authenticated_error_bodies_contain_no_internals`; E-A01-006 `stored_integration_config_never_triggers_requests`.
 * **evidence**: 5 of 10 probes in E-A02-002 give 500 (1e100000, 400-digit value, 100 000-char names, NUL in name); NUL in callback state and 40-digit offset give 500; no stack trace reaches the client.
 * **recommendation**: `Field(max_length)`, `condecimal(allow_inf_nan=False, max_digits=12, decimal_places=3)`, reject explicit null for required fields, type `integration_config`, `le=` bounds on offset/limit, reject NUL globally, catch `DataError`/`DBAPIError` -> 4xx/503, generic 500 handler.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: column-length, NUL/surrogate, finite-Decimal (3 places, < 10^9), `offset` and `integration_config` (object or null, max 8 KiB) validation give 422. Verified by E-A05-001 (json fields, query/path, multipart, enum), E-A02-002 `authenticated_error_bodies_contain_no_internals` and E-A01-006 (`json_string` form now 422, `dict` form 201) in rerun-4. Remaining case found by the rig and fixed in 0.7.0: `GET /api/auth/callback?state=a%00b` still reached PostgreSQL (NUL -> 500); the state is now checked before the query (regression test `test_malformed_state_rejected_before_any_db_query`).
 * **source**: backend B-19; triage-group1; rerun-1
 
 ### F-024 `delete_user` probably fails with 500 for users with property links
@@ -502,14 +506,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A10 (Mishandling of Exceptional Conditions)
 * **component**: backend
 * **severity (final)**: low. Low: admin-only function.
-* **status**: suspected
+* **status**: confirmed by experiment E-A01-007 (500 on v0.6.1); fix verified
 * **location**: backend/app/routers/admin.py:204-216; backend/app/models.py (User.property_users without cascade/passive_deletes)
 * **description**: ORM tries to null `property_users.user_id` (NOT NULL) instead of relying on the DB-level `ON DELETE CASCADE`.
 * **impact / likelihood**: Off-boarding by deletion fails for assigned users.
 * **reproduction**: Not yet run (needs PostgreSQL, a user with an assignment).
 * **evidence**: -
 * **recommendation**: `passive_deletes=True` or `cascade='all, delete-orphan'`, add a PostgreSQL test.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011 (`passive_deletes`, the DB cascade removes the membership rows). Verified by E-A01-007: a user who is member of two properties is deleted with 204, memberships gone, other memberships unchanged, the token of the deleted user answers 401; against v0.6.1 the DELETE answers 500.
 * **source**: backend B-20
 
 ### F-025 Startup depends on an external fetch and unguarded oil-price DB writes
@@ -526,7 +531,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: -
 * **recommendation**: try/except + rollback, upsert with ON CONFLICT, range check, run as background task.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (start-up runs the oil-price job as a background task, `_run_oil_price` never raises, DB errors are rolled back and logged, non-finite or implausible prices are ignored). Verified by `test_run_oil_price_never_raises`, `test_startup_survives_oil_price_failure`, `test_db_error_in_oil_price_is_guarded`, `test_absurd_price_not_stored`. Not done: ON CONFLICT upsert (a lost race is caught and logged instead).
+* **fix**: fixed in feature 010 (start-up runs the oil-price job as a background task, `_run_oil_price` never raises, DB errors are rolled back and logged, non-finite or implausible prices are ignored). Verified by `test_run_oil_price_never_raises`, `test_startup_survives_oil_price_failure`, `test_db_error_in_oil_price_is_guarded`, `test_absurd_price_not_stored`. Not done: ON CONFLICT upsert (a lost race is caught and logged instead). Not demonstrable by the rig (no external oil-price endpoint); verified by the backend unit tests named above, the rig only shows that start-up works with the oil job unreachable.
 * **source**: backend B-21
 
 ### F-026 Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache
@@ -535,7 +540,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A06 (Insecure Design)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A10-002
+* **status**: confirmed by experiment E-A10-002; fix verified
 * **location**: backend/app/routers/auth.py:53-55,124,629-637
 * **description**: Each anonymous `GET /api/auth/login` deletes expired states and inserts a row; discovery errors (`HTTPStatusError`, token exchange `ReadTimeout`) are unmapped (500) and not cached.
 * **impact / likelihood**: Cheap anonymous DB write amplification and 10 s outbound requests per call when the IdP is down.
@@ -543,7 +548,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: Login with IdP down and cold cache returns 500; slow IdP (17 s) at token exchange returns 500.
 * **recommendation**: Rate limit `/login` and `/callback`, cap pending states, map `httpx.HTTPError` to 502/503/504, 30-60 s negative cache.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (`/auth/login` and `/auth/callback` rate limited by `OIDC_RATE_LIMIT`, pending states capped by `OIDC_MAX_PENDING_STATES` with purge of expired rows, httpx errors mapped to 502/503/504, IdP calls bounded by `OIDC_HTTP_TIMEOUT_S` with connect <= 3 s, 30 s negative cache for discovery, stale discovery served when refresh fails). Verified by `test_login_rate_limited`, `test_pending_states_capped`, `test_discovery_failure_negative_cached`, `test_callback_idp_errors_mapped`.
+* **fix**: fixed in feature 010 (`/auth/login` and `/auth/callback` rate limited by `OIDC_RATE_LIMIT`, pending states capped by `OIDC_MAX_PENDING_STATES` with purge of expired rows, httpx errors mapped to 502/503/504, IdP calls bounded by `OIDC_HTTP_TIMEOUT_S` with connect <= 3 s, 30 s negative cache for discovery, stale discovery served when refresh fails). Verified by `test_login_rate_limited`, `test_pending_states_capped`, `test_discovery_failure_negative_cached`, `test_callback_idp_errors_mapped`. Rig verification (rerun-4): E-A10-002 `idp_slow` and `idp_down_at_login_with_cold_discovery_cache` pass (clean 502/504 within the bound, no 500). The rate limit on `/auth/login` and `/auth/callback` is verified by backend unit tests only (`test_login_rate_limited`, `test_callback_rate_limited`); the rig runs with `OIDC_RATE_LIMIT=100000/minute` so the sign-in floods are not throttled.
 * **source**: backend B-22; triage-group2
 
 ### F-027 Oil-price API key can be written to the log
@@ -560,7 +565,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: -
 * **recommendation**: Pass the key as header/params and log only exception class and status.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (API key sent as request parameter, failed fetches log only exception class and HTTP status, log filter masks `apikey`/`key`/`token` query values). Verified by `test_error_text_never_contains_key`, `test_tankerkoenig_key_sent_as_param_not_in_log`, `test_logging_filter_redacts_apikey`.
+* **fix**: fixed in feature 010 (API key sent as request parameter, failed fetches log only exception class and HTTP status, log filter masks `apikey`/`key`/`token` query values). Verified by `test_error_text_never_contains_key`, `test_tankerkoenig_key_sent_as_param_not_in_log`, `test_logging_filter_redacts_apikey`. Verified by the backend unit tests and reading only: the rig cannot trigger the oil-price fetch (E-A09-001 does not exercise it).
 * **source**: backend B-23
 
 ### F-028 Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files
@@ -603,15 +608,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A07 (Authentication Failures)
 * **component**: ocr-service, chart
 * **severity (final)**: low. Low: reachable only inside the cluster/Compose network.
-* **status**: confirmed by reading
+* **status**: confirmed by reading; fix verified by experiment E-A07-010
 * **location**: ocr-service/app/main.py:61-85; docker-compose.yaml:38-41; chart/templates/deployment-ocr.yaml
 * **description**: Anyone who can reach port 8100 can run EasyOCR/denoise on arbitrary images (F-011); the service binds 0.0.0.0 by design; the Compose port is not published, the chart NetworkPolicy is off by default (F-016).
 * **impact / likelihood**: Free GPU/CPU use and DoS from inside the cluster network.
 * **reproduction**: Reading; bandit B104 triaged as by design.
 * **evidence**: -
 * **recommendation**: Shared-secret header check (backend already sends `OCR_API_KEY`), size limit, enable NetworkPolicy by default.
-* **planned disposition**: proposed (mitigated by the F-016 fix)
-* **fix**: not fixed. Feature 009 (F-016) adds NetworkPolicy defaults for the chart, which narrows who can reach the OCR service (reading only); the service still has no authentication of its own.
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: `ocr-service` requires `Authorization: Bearer <OCR_API_KEY>` on `/scan` and `/serial` when the key is set (constant time on UTF-8 bytes, 401 otherwise, `/health` open, startup warning without key); Compose requires the key, the chart requires `ocr.existingSecret` unless `ocr.allowUnauthenticated=true`. Verified by E-A07-010: the real `ocr-service` app (EasyOCR pipeline stubbed) is started on loopback and answers 401 (never 500) for no key, wrong key, wrong scheme, bare `Bearer`, key without scheme, longer/shorter key and a non-ASCII key on both routes, 200 for the right key, `/health` open; and the backend with a wrong `OCR_API_KEY` ends a scan as 502/503 against the key-checking OCR stand-in (the rig runs with a key, so every scan of the other experiments also proves that the backend sends it). Chart and Compose wiring: by reading of the spec/diff only, not re-rendered in this run.
 * **source**: backend B-25; deployment DEP-10
 
 ### F-031 API documentation and verbose health endpoint are public
@@ -620,7 +625,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A02 (Security Misconfiguration)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A02-002
+* **status**: confirmed by experiment E-A02-002; fix verified
 * **location**: backend/app/main.py:62-69,132-,434-441,503-554
 * **description**: `/api/docs` and `/api/openapi.json` are served in production regardless of `debug`; anonymous `/api/health` returns version, model name and DB/OCR/LLM/scheduler state and makes up to three outbound calls (the gateway call sends the API key); DB session closes only on success.
 * **impact / likelihood**: Attack-surface disclosure and request amplification.
@@ -628,7 +633,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: Anonymous 200 on docs and openapi.json; health detail returned.
 * **recommendation**: Disable docs unless `debug`, anonymous health = status only, detail on a cluster-internal path, cache health results, close the DB in `finally`.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (`/api/docs`, `/api/redoc`, `/api/openapi.json` only with `ENABLE_API_DOCS=true`; anonymous `/api/health` returns `{status}` and makes no outbound calls; detail on `/api/health/details` for admins with a 30 s cache; DB session closed in `finally`; probes and healthchecks unchanged in path, chart probes got `timeoutSeconds: 3`). Verified by `backend/tests/test_health_docs_misc.py`. Not done: separate cluster-internal path (admin auth is used instead).
+* **fix**: fixed in feature 010 (`/api/docs`, `/api/redoc`, `/api/openapi.json` only with `ENABLE_API_DOCS=true`; anonymous `/api/health` returns `{status}` and makes no outbound calls; detail on `/api/health/details` for admins with a 30 s cache; DB session closed in `finally`; probes and healthchecks unchanged in path, chart probes got `timeoutSeconds: 3`). Verified by `backend/tests/test_health_docs_misc.py`. Not done: separate cluster-internal path (admin auth is used instead). Rig verification (rerun-4): E-A02-002 `api_documentation_not_public` restarts the backend with `ENABLE_API_DOCS` unset and gets 404 for all 7 documentation paths (control: `true` -> 200); `health_endpoint_minimal_to_anonymous` (exactly `{status}`) and `health_details_need_login_and_hide_version_from_non_admins` (401 anonymous, no `version`/`llm_model` for a user, `db` for an admin) pass.
 * **source**: backend B-26; triage-group1
 
 ### F-032 Scan stores undecoded, truncated or broken images
@@ -637,14 +642,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A08 (Software or Data Integrity Failures)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-UP-001
+* **status**: confirmed by experiment E-UP-001; fix verified
 * **location**: backend/app/routers/ocr.py:286-288,329
 * **description**: Only `filetype.guess_mime` (header) is checked; truncated JPEG/PNG, signature-only and zeroed bodies are stored and later served as `image/*`.
 * **impact / likelihood**: Garbage persistence and disk fill, downstream decode errors are swallowed.
 * **reproduction**: E-UP-001 `truncated_and_broken_images`.
 * **evidence**: All five broken inputs accepted with 200.
 * **recommendation**: `Image.open().verify()` plus bounded `load()` before writing, reject undecodable data with 400.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: scan, serial crop and bulk scan decode the whole image (`PIL load`) before anything is stored; undecodable or truncated -> 400 (bulk: item error), nothing stored. Verified by E-UP-001 (`truncated/broken images` tests pass in rerun-4).
 * **source**: triage-group3
 
 ### F-033 EXIF GPS data is retained in stored and served images
@@ -653,14 +659,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A06 (Insecure Design)
 * **component**: backend
 * **severity (final)**: low. Low (privacy).
-* **status**: confirmed by experiment E-UP-001
+* **status**: confirmed by experiment E-UP-001; fix verified
 * **location**: backend/app/routers/ocr.py:329
 * **description**: The upload is written verbatim; the stored copy keeps the GPS IFD and is served to every property member (and to any authenticated user while unattached).
 * **impact / likelihood**: Privacy: location of the user's home leaks to other members.
 * **reproduction**: E-UP-001 `exif_gps_not_retained`.
 * **evidence**: GPS IFD present in the stored file.
 * **recommendation**: Strip metadata on store (re-encode or remove IFD 0x8825) after extracting the EXIF date; keep hashing the original bytes.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: stored images keep only orientation and date tags (GPS, maker notes, XMP, text chunks removed by a lossless segment/chunk rewrite; TIFF re-encoded); the image hash is computed over the stored bytes. Verified by E-UP-001 (EXIF GPS test passes in rerun-4). Side effect: a re-uploaded photo no longer matches hashes of readings stored by older versions.
 * **source**: triage-group3
 
 ### F-034 JWT parsing robustness: non-string `alg` header or `sub` gives 500
@@ -669,14 +676,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A04 (Cryptographic Failures)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A04-001
+* **status**: confirmed by experiment E-A04-001; fix verified
 * **location**: backend/app/auth.py:29-32,96-107
 * **description**: Only `JoseError` and `ValueError` are caught; header `alg` as a list and `sub` as int/bool/list/dict raise other exception types.
 * **impact / likelihood**: 500 instead of 401; needs a validly signed token, so only with a leaked key.
 * **reproduction**: E-A04-001 `unusual_headers_rejected`, `missing_or_malformed_sub_rejected` (4 params).
 * **evidence**: 5 failures; alg=none, wrong key, HS/RS confusion, tampering, role claim, bearer-only, expired, not-yet-valid all pass (46 passing A04 tests).
 * **recommendation**: Catch `Exception` around decode+validate -> 401; require `isinstance(sub, str)`; `claims_options` essential `exp` and `sub`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (0.7.0, found by the rig)
+* **fix**: the non-string `alg` and `sub` cases were fixed earlier; the residual `zip: DEF` header (a correctly signed token with an extension header was accepted) is fixed in 0.7.0: `decode_access_token` refuses any header other than `alg`, `typ`, `kid`. Verified by E-A04-001 `unusual_headers_rejected` (all 58 items pass in rerun-4) and `test_decode_rejects_extension_headers`.
 * **source**: triage-group1
 
 ### F-035 Database outage mid-request: unhandled 500, acknowledgement lost after commit
@@ -685,14 +693,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A10 (Mishandling of Exceptional Conditions)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A10-001 (intermittent)
+* **status**: confirmed by experiment E-A10-001 (intermittent); fix verified by E-A10-001, E-A10-005
 * **location**: backend/app/routers/readings.py:100 (`db.refresh()` after `commit()`); backend/app/database.py
 * **description**: With PostgreSQL stopped every request ends in unhandled `OperationalError`; a reading can be stored while the 500 is returned (client retry duplicates it); uvicorn closes the connection after unhandled 500s.
 * **impact / likelihood**: Duplicate or uncertain writes during DB failover; no 503 mapping.
 * **reproduction**: E-A10-001 `postgres_stopped_midrequest` (failed in 1 of 2 runs).
 * **evidence**: Bounded latency and recovery after restart hold; the failing part is the response mapping and the acknowledgement window.
 * **recommendation**: Global handler for `OperationalError`/`DBAPIError` -> 503, short `pool_timeout`, return data built before the commit.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: database connection errors map to `503 {"detail": "Service temporarily unavailable"}` + `Retry-After` (`DataError` -> 422, unexpected `IntegrityError` -> 409, anything else a generic 500 JSON); write endpoints build their response before `commit` and do not `refresh` afterwards. Verified by E-A10-005 (PostgreSQL stopped: GET list/one/readings, POST, PATCH, `/auth/me` all answer exactly that 503 with Retry-After and no internals; service recovers without restart; fails against v0.6.1) and E-A10-001 (no partial write, health `{status: degraded}` 503, liveness 200).
 * **source**: rerun-1; triage-group2
 
 ### F-036 Unattached scan uploads are readable by every authenticated user
@@ -701,14 +710,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A01 (Broken Access Control)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A01-002
+* **status**: confirmed by experiment E-A01-002; not reproducible since F-004
 * **location**: backend/app/routers/uploads.py:40-55
 * **description**: A file with no referencing reading is served to any authenticated user who knows the UUID name; accepted in a code comment.
 * **impact / likelihood**: Weak owner binding; protection rests on the unguessable name.
 * **reproduction**: E-A01-002 `unattached_scan_upload_not_readable_by_other_user`.
 * **evidence**: Other user receives 200.
 * **recommendation**: Upload ownership table (see F-004); serve unattached files only to uploader and global admins, or record as accepted risk.
-* **planned disposition**: proposed
+* **planned disposition**: closed (no change in 011, documented)
+* **fix**: no code change in feature 011: since the upload registry of F-004 (feature 006) an unattached scan upload is served only to its uploader and global admins; E-A01-002 `unattached_scan_upload_not_readable_by_other_user` passes in rerun-4.
 * **source**: triage-group1
 
 ### F-037 `replaced_by_id` may reference another tenant's meter; `integration_config` stored in plaintext
@@ -717,14 +727,15 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **category**: A01 (Broken Access Control)
 * **component**: backend
 * **severity (final)**: low. Low.
-* **status**: confirmed by experiment E-A01-005
+* **status**: confirmed by experiment E-A01-005; fix verified
 * **location**: backend/app/schemas/meters.py:27,55; backend/app/routers/meters.py:77-78,228-229; backend/app/models.py (Meter.integration_config)
 * **description**: Only an FK guards `replaced_by_id`; replaced meters become un-editable (409), so a mistaken or hostile PATCH is irreversible. `integration_config` (url, token, entity) is plaintext text although the API redacts it on output and no consumer exists in `backend/app`.
 * **impact / likelihood**: Cross-property reference, irreversible state, dormant secret store in DB and backups.
 * **reproduction**: E-A01-005 `meter_patch_cannot_reference_foreign_property_meter`.
 * **evidence**: Manager stored a foreign-property meter id (200).
 * **recommendation**: Validate same property and not self; encrypt or drop `integration_config` until used.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 011, 0.7.0)
+* **fix**: fixed in feature 011: `replaced_by_id` must reference a different meter of the same property (422 otherwise). `integration_config` stays plaintext in the column, is an object or null (max 8 KiB) and is never returned (documented, accepted; no consumer exists). Verified by E-A01-005 (`meter_patch_cannot_reference_foreign_property_meter` passes in rerun-4) and E-A01-006.
 * **source**: backend B-31; triage-group1
 
 ### F-038 Container build hygiene: floating tags, no hash-pinned dependencies, no .dockerignore, shell-form CMD, EasyOCR models without checksum
@@ -756,7 +767,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading, tooling TL-7.
 * **evidence**: Triggers are push/pull_request only, no `pull_request_target` / `workflow_run`, no untrusted expression in `run:`.
 * **recommendation**: Pin by SHA via Renovate, `permissions: contents: read` at the top of `test.yaml`, pass the token via `env:`, add dependency update automation.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (pinning/permissions 004b/009; Dependabot feature 012)
 * **source**: deployment DEP-08; tooling TL-7
 
 ### F-040 Built images are mutable and unsigned; no SBOM/provenance; CI does not scan images or chart misconfiguration
@@ -772,7 +783,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading, tooling sections 8 and 10.
 * **evidence**: -
 * **recommendation**: Digest pinning in the GitOps repo, cosign + provenance, `trivy image` before push, enable `vuln,secret,misconfig`, add the missing audit steps.
-* **planned disposition**: proposed
+* **planned disposition**: partly fixed (feature 012: image + chart scan, pip/npm audit in CI; digests, cosign, SBOM open)
+* **fix**: partly fixed in feature 012 (new CI jobs `image-scan`, `chart-scan`, `dependency-audit`; existing job names unchanged). Verified by reading the workflows only. Open: digest pinning, signing, SBOM.
 * **source**: deployment DEP-07/DEP-09; tooling TL-9
 
 ### F-041 CSP lacks `object-src`/`base-uri`/`form-action`; header sets differ between Compose proxy and chart; static server sets none
@@ -788,7 +800,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading; header check `E-A02-002 security_headers_set_by_app_or_documented_ingress` passes.
 * **evidence**: -
 * **recommendation**: Add `object-src 'none'; base-uri 'self'; form-action 'self'`, one source of truth for headers, drop `X-XSS-Protection`.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 012)
+* **fix**: fixed in feature 012: CSP gains `object-src 'none'; base-uri 'self'; form-action 'self'`, the nginx header set matches the chart Middleware. Verified by reading `nginx.conf` and the chart; the rig experiment E-A02-002 `security_headers_set_by_app_or_documented_ingress` passes in rerun-4.
 * **source**: frontend FE-03
 
 ### F-042 JWT kept in `sessionStorage`
@@ -804,7 +817,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading; E-A05-002 `frontend_has_no_raw_html_sinks` passes.
 * **evidence**: -
 * **recommendation**: Accepted trade-off for an SPA with strict CSP: document it, or move to an HttpOnly cookie together with F-008.
-* **planned disposition**: proposed
+* **planned disposition**: accepted, documented (feature 012)
+* **fix**: accepted: `sessionStorage` is kept; logout and 401 clear it (vitest `stores/__tests__/auth.test.ts`), documented in the README. Not rig-verifiable.
 * **source**: frontend FE-02
 
 ### F-043 Operational scripts contain hard-coded default credentials, internal addresses and disabled SSH host-key checking
@@ -820,7 +834,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading; gitleaks does not flag them.
 * **evidence**: Other scripts use env vars, list-arg `subprocess`, bound SQL parameters.
 * **recommendation**: Read credentials from env, `StrictHostKeyChecking=accept-new`, mark dev tooling clearly.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 012)
+* **fix**: fixed in feature 012: scripts read credentials and targets from the environment and fail with clear errors; `StrictHostKeyChecking=accept-new`. Verified by reading only.
 * **source**: deployment DEP-11
 
 ### F-044 Dependency advisories without a reachable path: authlib 1.6.9, pydantic-settings 2.13.1, Mako, pip
@@ -836,7 +851,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: pip-audit, trivy fs and image scan; `grep` of `backend/app` for `OAuth(`, `cache=`, `secrets_nested`.
 * **evidence**: -
 * **recommendation**: Bump authlib >= 1.6.12 and pydantic-settings >= 2.14.2 via Renovate; rebuild images with `--pull`.
-* **planned disposition**: proposed
+* **planned disposition**: partly fixed (feature 012: authlib 1.6.12, pydantic-settings 2.14.2; Mako/pip in image open)
+* **fix**: partly fixed in feature 012 (authlib 1.6.12, pydantic-settings 2.14.2; pip-audit clean for both requirement files per the feature record). Not re-run in this rerun; Mako/pip in the image stay open.
 * **source**: tooling TL-2/TL-3/TL-9
 
 ### F-050 Frontend image runs as root outside the chart; images have no HEALTHCHECK; migrations run at container start with the application DB role
@@ -868,7 +884,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only.
 * **evidence**: -
 * **recommendation**: Answer 404 for both when the caller lacks access.
-* **planned disposition**: proposed (documented, not changed)
+* **planned disposition**: documented (feature 010), not changed
 * **fix**: not changed in feature 010 (informational, documented only): existence is checked before access; UUIDs make probing impractical and the integer reading id oracle (`rescan/{reading_id}`) stays a candidate for accepted risk or a 404-for-both change in the router owner's feature.
 * **source**: backend B-29
 
@@ -886,7 +902,7 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **evidence**: 8000 characters returned.
 * **recommendation**: Accept `^[A-Za-z0-9._-]{1,64}$` else generate a UUID; `repr()` client-derived log arguments.
 * **planned disposition**: fixed
-* **fix**: fixed in feature 010 (`X-Request-ID` must match `^[A-Za-z0-9._-]{1,64}$`, else a UUID is generated). Verified by `test_request_id_validated`. Client-derived filenames/model strings in `routers/ocr.py` and `services/llm_client.py` are outside this feature's files and still logged raw.
+* **fix**: fixed in feature 010 (`X-Request-ID` must match `^[A-Za-z0-9._-]{1,64}$`, else a UUID is generated). Verified by `test_request_id_validated`. Client-derived filenames/model strings in `routers/ocr.py` and `services/llm_client.py` are outside this feature's files and still logged raw. Rig verification (rerun-4): E-A02-002 `request_id_header_not_reflected_unbounded` passes (8000 chars, spaces/markup, quotes, 65 chars, `/`, empty replaced by a UUID-shaped token; a valid id is propagated).
 * **source**: backend B-30
 
 ### F-047 Documentation does not match the implementation (ports, redirect URI, routing mode, default login)
@@ -902,7 +918,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading.
 * **evidence**: -
 * **recommendation**: Correct the README and document the secret requirements.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 012)
+* **fix**: fixed in feature 012: README port 8081, redirect URI `/api/auth/callback`, history routing. Verified by reading only.
 * **source**: deployment DEP-12
 
 ### F-048 Chart: secrets injected as env via `envFrom`; HSTS preload and includeSubdomains set unconditionally
@@ -918,7 +935,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading.
 * **evidence**: No Secret objects or credentials in templates or values (positive).
 * **recommendation**: Prefer the secret volume mode, make HSTS preload opt-in.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 012: HSTS configurable, envFrom documented; default unchanged)
+* **fix**: fixed in feature 012: `ingress.hsts.{seconds,includeSubdomains,preload}` values (defaults unchanged), envFrom/secretVolume documented. Verified by reading only.
 * **source**: deployment DEP-13
 
 ### F-049 Frontend and test-tooling hygiene: dev-only npm advisories, unused axios, python-jose in test requirements, error detail rendering
@@ -934,30 +952,31 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: npm audit, pip-audit, eslint-security, `grep axios`.
 * **evidence**: Production dependency audit is clean.
 * **recommendation**: Add `npm audit --omit=dev --audit-level=high` to CI, remove axios, reuse the OcrCapture detail pattern, map 429 to a lockout message.
-* **planned disposition**: proposed
+* **planned disposition**: partly fixed (feature 012: axios removed, audit in CI; python-jose already test-only)
+* **fix**: partly fixed in feature 012 (unused axios removed, `npm audit --omit=dev` gate in CI). Verified by reading only.
 * **source**: tooling TL-4/TL-8; frontend FE-04/FE-06/FE-07
 
 ## 4. Experiments
 
-Latest run: `scripts/security-rig.sh --quick` (rerun-3, release 0.6.0 = features 006 to 009): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter, E-A10-003 restarts with small bulk limits), backend started with `--no-proxy-headers` and `TRUSTED_PROXIES=10.255.255.0/24` like the production image. 277 tests, **257 passed, 19 failed (plus E-A10-001, intermittent: failed in one run, passed in the final one), 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), about 8 min pytest. Every failure is a real application weakness of a low finding that is still open (`review/rerun-3.md`); the rig and experiment helpers were adapted to feature 007 (token minting reads `users.token_version`, sign-in exchanges the one-time code).
+Latest run: `scripts/security-rig.sh --quick` (rerun-4, release 0.7.0 = features 010 to 012): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter, E-A10-003 restarts with small bulk limits), `OIDC_RATE_LIMIT=100000/minute`, `ENABLE_API_DOCS=true` (E-A02-002 restarts with it unset), `OCR_API_KEY` set on backend and OCR stand-in, backend started with `--no-proxy-headers` and `TRUSTED_PROXIES=10.255.255.0/24` like the production image. 291 tests, **290 passed, 0 failed, 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), about 9.5 min pytest. The rig and experiment helpers were adapted to feature 010/011 (`oidc_binder` cookie kept per login in `idp_helpers`, docs/health/request-id assertions, `integration_config` object); no assertion was weakened. Against the v0.6.1 backend (`SEC_BACKEND_DIR`, same experiments) 26 of the 33 re-run/new experiments fail, i.e. they detect the fixed weaknesses.
 
-| ID | Goal | Result (rerun-2) | Failing tests (fail / total items) | Findings |
+| ID | Goal | Result (rerun-4) | Failing tests (fail / total items) | Findings |
 |---|---|---|---|---|
 | E-A01-001 | Every endpoint requires authentication (OpenAPI enumeration) | pass (`POST /auth/exchange` added to the public allow-list: it needs no bearer token, the one-time code is the credential) | 0 / 1 | - |
 | E-A01-002 | Cross-tenant access by ID, listings, streaming bulk scan, filename reference, unattached upload, hint-rescan | pass (was FAIL, 6 failed) | 0 / 10 | F-004 fixed, F-036 |
 | E-A01-003 | Role matrix for admin and property levels, manager escalation, admin vs superadmin | pass (was FAIL, 2 failed) | 0 / 22 (property-level matrix now expects 403 for manager on property PATCH and membership changes) | F-005, F-006 fixed |
 | E-A01-004 | Upload path traversal, symlink, stored image path cannot reach other files | pass | 0 / 3 | - |
-| E-A01-005 | Extra fields, foreign `replaced_by_id`, privileged fields on own account | FAIL | 1 failed (foreign meter reference) | F-037 |
-| E-A01-006 | Outbound URLs never request controlled, stored integration config | FAIL (now 2 items: `dict` and `json_string` form of `integration_config`) | 1 failed: `dict` gives 500 (schema `Optional[Any]` vs `Text` column: psycopg2 cannot adapt a dict); `json_string` passes, so the SSRF half (never fetched, never echoed) now runs and holds; the enum cause (F-014) is gone | F-023 |
+| E-A01-005 | Extra fields, foreign `replaced_by_id`, privileged fields on own account | pass (was FAIL) | 0 / 3 | F-037 fixed |
+| E-A01-006 | Outbound URLs never request controlled, stored integration config | pass (was FAIL; `json_string` form is now a strict 422, `dict` form 201, SSRF half holds for both) | 0 / 4 | F-023 fixed |
 | E-A02-001 | Startup refuses unsafe configuration | pass (was FAIL, 19 failed) | 0 / 24 | F-009 fixed |
-| E-A02-002 | Public docs, headers, banners, health detail, error bodies, CORS, request id | FAIL | 5 failed (docs x2, health detail, authenticated error bodies, request id reflection); the remaining items pass | F-031, F-023, F-046 |
-| E-A04-001 | JWT forgery and malformed tokens | FAIL (tokens built with `tv`/`iat` like the app issues them; new `token_version_claim_enforced` x5 passes) | 1 failed (header `zip: DEF` accepted, token still verifies); 57 pass | F-034, F-007 (fixed) |
-| E-A05-001 | Injection in JSON, query, path, multipart, headers, enums; SQL payloads inert | FAIL | 3 failed (json fields, query/path, multipart); `enum_members_do_not_crash` now passes (F-014 fixed); header injection and SQL-inert pass | F-023 |
+| E-A02-002 | Docs (default config, restart with `ENABLE_API_DOCS` unset; control with `true`), headers, banners, anonymous health `{status}` only, `/health/details` login/admin split, error bodies, CORS, request id | pass (was FAIL, 5 failed) | 0 / 10 (+1 skip) | F-031, F-023, F-046 fixed |
+| E-A04-001 | JWT forgery and malformed tokens | pass (was FAIL: `zip: DEF` header accepted, fixed in 0.7.0) | 0 / 58 | F-034 fixed, F-007 (fixed) |
+| E-A05-001 | Injection in JSON, query, path, multipart, headers, enums; SQL payloads inert | pass (was FAIL, 3 failed; the rig also found `callback?state=a%00b` -> 500, fixed in 0.7.0) | 0 / 6 | F-023 fixed |
 | E-A05-002 | Stored XSS round trip, error bodies, SSE echo, frontend sinks | pass (markup in `image_path` is now refused with 4xx, markup in `note` etc. is stored inert) | 0 / 4 | - |
-| E-A06-001 | Parallel first sign-in yields one user | pass (30 sign-ins); fails at 32+ (ad-hoc), see F-003 | 0 / 1 | F-003 |
-| E-A06-002 | Races: same image hash, identical readings | FAIL | 3 failed (same_hash x2: 2 to 4 responses 201 for one hash; identical reading: 20 rows); fail-fast after 5 failing rounds | F-022 |
+| E-A06-001 | Parallel first sign-in yields one user | pass (30 sign-ins x 20 rounds; the rig found a 409 for the same identity in 1 of 20 rounds, fixed in 0.7.0); fails at 32+ (ad-hoc), see F-003 | 0 / 1 | F-003, F-019 |
+| E-A06-002 | Races: same image hash (distinct files, same path), identical readings without image | pass (was FAIL: 2 to 7 x 201 for one hash); identical readings now assert the spec 011 decision (all 201, none lost) | 0 / 3 | F-022 fixed |
 | E-A06-003 | Role change vs sign-in, privilege after IdP removal | pass (was FAIL: privilege kept after IdP removal; role change vs sign-in 20 rounds) | 0 / 2 | F-007 fixed |
-| E-A06-004 | State replay, parallel reuse, expiry/forgery, browser binding | FAIL | 1 failed (state not bound to browser); replay, parallel reuse (20 rounds) and forged/expired state pass | F-017 |
+| E-A06-004 | State replay, parallel reuse, expiry/forgery, browser binding | pass (was FAIL: binding) | 0 / 4 | F-017 fixed |
 | E-A07-001 | Brute-force limiter, X-Forwarded-For bypass, trusted-proxy rightmost rule | pass (3 tests incl. new `trusted_proxy_rightmost_untrusted_entry_is_the_key`) | 0 / 3 | F-002 (fixed in 004) |
 | E-A07-002 | PKCE parameters, verifier mismatch | pass | 0 / 2 | - |
 | E-A07-003 | Group claim shapes (36 parameter sets) | pass | 0 / 36 | F-001 (fixed in 004) |
@@ -968,15 +987,22 @@ Latest run: `scripts/security-rig.sh --quick` (rerun-3, release 0.6.0 = features
 | E-A08-001 | Hostile gateway/OCR responses, failure mapping, orphan files, stream well-formedness | pass (was FAIL, 10 failed) | 0 / 23 | F-029, F-028 fixed |
 | E-A09-001 | No secrets in logs, security events present | pass (also covers the one-time login code and the exchanged JWT as log needles) | 0 / 1 | F-010 fixed |
 | E-A02-003 | Every meter type x unit (9) and every integration type (4) creatable on the migration-built database | pass (new) | 0 / 13 | F-014 fixed |
-| E-A10-001 | PostgreSQL stopped mid-request | FAIL in some runs (intermittent: failed in the first rerun-3 run, passed in the final one) | 0 or 1 | F-035 |
-| E-A10-002 | IdP and gateway/OCR failure modes, slow backends, unconfigured subsystems | FAIL | 2 failed (IdP slow, cold-cache login); orphan x4, OCR garbage, unconfigured x2 and OCR failure modes now pass | F-026; F-028, F-029 fixed |
+| E-A10-001 | PostgreSQL stopped mid-request | pass (anonymous health now `{status: degraded}` 503; intermittent failure of rerun-3 not seen) | 0 / 1 | F-035 fixed |
+| E-A10-002 | IdP and gateway/OCR failure modes, slow backends, unconfigured subsystems | pass (was FAIL, 2 failed; unconfigured-subsystem checks read `ocr` from `/health/details`) | 0 / 12 | F-026 fixed; F-028, F-029 fixed |
 | E-A10-003 | Bulk scan limits with small `MAX_BULK_TOTAL_BYTES`/`MAX_BULK_FILES`: 413 over budget, 400 over count, 413 for declared and chunked oversize bodies, nothing stored, no OCR/LLM call, control streams | pass (new; the chunked case found a 400 instead of 413, fixed in `body_limit.py`) | 0 / 1 | F-012 fixed |
 | E-A10-004 | No `idle in transaction` database session while a bulk scan waits 9 s for the gateway | pass (new) | 0 / 1 | F-013 fixed |
-| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | FAIL | 2 failed (truncated/broken images stored, EXIF GPS kept); EXIF date abuse passes (was failing), 13 pass | F-032, F-033; F-029, F-011, F-004 fixed |
+| E-A01-007 | Delete a user who is member of two properties: 204, memberships gone, others unchanged, token dead | pass (new; 500 on v0.6.1) | 0 / 1 | F-024 fixed |
+| E-A01-008 | Client-chosen reading `source` (`auto`, `archived`) is stored as `manual`, unknown value 422 | pass (new; fails on v0.6.1) | 0 / 1 | F-021 fixed |
+| E-A02-004 | Trailing-slash redirect keeps `https://` behind a trusted proxy (`X-Forwarded-Proto`), ignores the header from an untrusted peer, unknown schemes and the wrong hop | pass (new; also passes on v0.6.1, which already had the fix: regression guard) | 0 / 1 | - (0.6.1 hotfix) |
+| E-A07-008 | Login CSRF: `oidc_binder` cookie attributes, callback without/foreign/tampered cookie -> 400 with no user and state consumed, id_token with wrong nonce -> 400 | pass (new, 3 tests; fails on v0.6.1) | 0 / 3 | F-017 fixed |
+| E-A07-009 | `sub` absent/null/empty/blank/int/list/object/bool/300 chars -> 502 and superadmin row unchanged (9 tests); username collisions (same name, superadmin name) -> distinct users, e-mail collision -> 409 | pass (new, 10 tests; fails on v0.6.1 with 500 for collisions) | 0 / 10 | F-018, F-019 fixed |
+| E-A07-010 | Real `ocr-service` app (pipeline stubbed) requires the Bearer key on `/scan` and `/serial` (401 for 8 bad variants, 200 for the key, `/health` open, no key = open control); backend with a wrong `OCR_API_KEY` ends a scan as 502/503 | pass (new, 2 tests) | 0 / 2 | F-030 fixed |
+| E-A10-005 | PostgreSQL stopped: GET/POST/PATCH with auth answer `503 {"detail": "Service temporarily unavailable"}` + Retry-After, no internals; recovers without restart | pass (new; fails on v0.6.1) | 0 / 1 | F-035 fixed |
+| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | pass (was FAIL, 2 failed) | 0 / 15 | F-032, F-033 fixed; F-029, F-011, F-004 fixed |
 
-Per file (pass / fail), rerun-3: A01 39/2, A02 34/5 (+1 skip), A04 57/1, A05 7/3, A06 6/4, A07 42/0 plus new session file (E-A07-005..007, E-A10-003/004, E-A02-003) 24/0, A08 23/0, A09 1/0, A10 11/2 (E-A10-001 intermittent, counted passing), uploads 13/2. Sum 257 passed, 19 failed, 1 skipped (277). Rerun-2: A01 38/2, A02 34/5 (+1 skip), A04 52/1, A05 6/4, A06 5/5, A07 42/0, A08 13/10, A09 1/0, A10 3/10, uploads 12/3 (247 tests). Rerun-1: A01 30/10, A02 15/24, A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9, uploads 10/5 (246 tests).
+Per file (pass / fail), rerun-4: A01 43/0, A02 35/0 (+1 skip), A04 58/0, A05 10/0, A06 10/0, A07 57/0 plus session file (E-A07-005..007, E-A10-003/004, E-A02-003) 24/0, A08 23/0, A09 1/0, A10 14/0, uploads 15/0. Sum 290 passed, 0 failed, 1 skipped (291). Rerun-3: A01 39/2, A02 34/5 (+1 skip), A04 57/1, A05 7/3, A06 6/4, A07 42/0 plus session file 24/0, A08 23/0, A09 1/0, A10 11/2, uploads 13/2 (277 tests). Rerun-2: A01 38/2, A02 34/5 (+1 skip), A04 52/1, A05 6/4, A06 5/5, A07 42/0, A08 13/10, A09 1/0, A10 3/10, uploads 12/3 (247 tests). Rerun-1: A01 30/10, A02 15/24, A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9, uploads 10/5 (246 tests).
 Slowest tests (rerun-2 `--durations`): A05-001 json fields 82 s, A05-001 query 55 s, A06-001 40 s, A08 ocr_slow 30 s; all others below 20 s.
-Race experiments: quick profile 20 rounds with 30 parallel sign-ins / 20 parallel writes; the specification's 100-repetition profile is `scripts/security-rig.sh` without `--quick`. Failure rates observed: A06-002 same hash produced 2 to 4 successful creations for one hash (fail-fast after 5 failing rounds, F-022 unfixed); A06-001, A06-003 role change and A06-004 replay/parallel reuse had 0 failing rounds out of 20.
+Race experiments: quick profile 20 rounds with 30 parallel sign-ins / 20 parallel writes; the specification's 100-repetition profile is `scripts/security-rig.sh` without `--quick`. Failure rates observed in rerun-4: all race experiments 0 failing rounds out of 20 (A06-002 same hash: exactly one 201 per round; on v0.6.1 5 of 20 rounds produced 2 to 7 creations for one hash). The one flaky round seen during rerun-4 development (A06-001, 409 for the same identity) was an application defect and is fixed.
 
 ### Mutant checks (SC-006)
 
@@ -1038,6 +1064,11 @@ Accepted risks and operator decisions are recorded here with reason and owner. A
 | F-007, F-008, F-012, F-013, F-014, F-015, F-016 | fixed (features 007, 008, 009, release 0.6.0) | the last open medium findings; verified by E-A07-005 to E-A07-007, E-A10-003, E-A10-004, E-A02-003 (rig) and by reading/`helm template` for the Compose and chart parts (F-015, F-016, Traefik middleware of F-012) | repository owner | 2026-10-17 | features 007, 008, 009 |
 | F-028 (orphan files), F-029 | fixed (feature 008, release 0.6.0) | verified by E-A08-001, E-A10-002, E-UP-001; the per-user quota part of F-028 stays proposed | repository owner | 2026-10-17 | feature 008 |
 | F-039, F-040, F-041, F-042, F-043, F-044, F-047, F-048, F-049 | fixed / accepted in part (feature 012, `specs/012-low-hygiene/`) | hygiene batch; F-042 accepted (sessionStorage kept, documented in README, cleared on logout and 401, vitest `stores/__tests__/auth.test.ts`); F-039 pinning and permissions were already done by 004b/009; F-040 digests, signing, SBOM and F-044 Mako/pip stay open | repository owner | 2026-10-17 | feature 012 |
-| F-017 to F-050 except F-028, F-029 (low / informational) | operator decides | candidates for accepted risk: F-042 (sessionStorage), F-045, F-046, F-047, F-048, F-049 | repository owner | - | - |
+| F-017, F-018, F-019, F-025, F-026, F-027, F-031, F-046 | fixed (feature 010, release 0.7.0) | auth/HTTP hardening; verified by E-A06-004, E-A07-008, E-A07-009, E-A10-002, E-A02-002 (F-025/F-027 and the rate limit of F-026 by backend unit tests only) | repository owner | 2026-10-17 | feature 010 |
+| F-021, F-022, F-023, F-024, F-030, F-032, F-033, F-035, F-037 | fixed (feature 011, release 0.7.0) | data/upload/OCR hardening; verified by E-A01-007, E-A01-008, E-A01-005, E-A06-002, E-A05-001, E-A02-002, E-A01-006, E-A07-010, E-UP-001, E-A10-001, E-A10-005. Design decision: readings without an image have no uniqueness rule (equal value and time are legitimate: re-read, correction, two household members); the image hash is the only de-duplication key | repository owner | 2026-10-17 | feature 011 |
+| F-036 | closed, documented (feature 011) | no longer reproducible since the upload registry of F-004; E-A01-002 passes | repository owner | 2026-10-17 | feature 011 |
+| F-020, F-034 | fixed (F-020 before 0.7.0, F-034 residual in 0.7.0) | E-A07-004 and E-A04-001 pass; the `zip` header case was found and fixed by this rerun | repository owner | 2026-10-17 | rerun-4 |
+| F-045 | documented, not changed (feature 010) | informational, UUIDs make probing impractical | repository owner | 2026-10-17 | feature 010 |
+| F-038, F-050, F-028 (quota), F-040 (digests, signing, SBOM), F-044 (Mako/pip in image) | open, operator decides | not part of features 010 to 012 | repository owner | - | - |
 
 Review limits: the rig runs the backend on a loopback address against synthetic stand-ins (IdP, gateway, OCR); results for infrastructure items are by reading only. Experiment IDs are stable and can be re-run with `scripts/security-rig.sh` after each fix.

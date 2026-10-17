@@ -201,6 +201,9 @@ def _consume_pkce_state(db: Session, state: str, binder: Optional[str] = None) -
     The row is consumed first (single use, even on a binder mismatch); then the
     browser binding (F-017) is checked.
     """
+    # A NUL byte makes PostgreSQL raise (500); real states are ~43 URL-safe characters.
+    if "\x00" in state or len(state) > 256:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
     pkce_row = db.query(OidcPkceState).filter(OidcPkceState.state == state).first()
     if not pkce_row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")

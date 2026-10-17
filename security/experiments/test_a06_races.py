@@ -141,9 +141,13 @@ async def test_E_A06_002_parallel_same_image_hash(rig, client, barrier_gather, r
 
 
 async def test_E_A06_002_parallel_identical_reading(rig, client, barrier_gather, repeat):
-    """E-A06-002 (same reading): parallel POST of byte-identical readings (same meter, value,
-    read_at, source). Secure: one stored or a defined conflict response (409); no 5xx, no
-    duplicate rows. Note: the app has no uniqueness rule for readings without image."""
+    """E-A06-002 (same reading, no image): parallel POST of byte-identical readings (same meter, value,
+    read_at, source).
+
+    Design decision (spec 011, F-022): readings without an image have NO uniqueness rule -- two readings with equal
+    value and time are legitimate (re-read, correction, two household members); the image hash is the only
+    de-duplication key (covered strictly by the same-image-hash variants above). Expected: every POST is answered 201,
+    nothing is lost, no 5xx, and the rows are exactly the acknowledged ones (no phantom or half-written rows)."""
     admin = await get_client(client, "admin")
     pid, mid = await make_meter(admin, "dup-reading")
 
@@ -159,9 +163,12 @@ async def test_E_A06_002_parallel_identical_reading(rig, client, barrier_gather,
         )
         codes = [status_of(r) for r in results]
         assert not [c for c in codes if c >= 500 or c == -1], f"5xx/errors: {sorted(set(codes))}"
+        assert all(c == 201 for c in codes), f"identical readings must all be accepted (decision): {sorted(set(codes))}"
         lst = await admin.get(f"/api/properties/{pid}/meters/{mid}/readings/?limit=10000")
         same = [rd for rd in lst.json() if float(rd["value"]) == float(value)]
-        assert len(same) == 1, f"{len(same)} identical readings stored from {PARALLEL_WRITES} parallel posts"
+        ids = {r.json()["id"] for r in results}
+        assert len(same) == PARALLEL_WRITES == len(ids), f"{len(same)} rows stored for {PARALLEL_WRITES} acknowledged posts"
+        assert {rd["id"] for rd in same} == ids
 
     try:
         failures = await run_rounds(repeat, ROUNDS, one_round, "E-A06-002[identical]")
@@ -280,5 +287,6 @@ async def test_E_A06_004_state_bound_to_initiating_browser(rig, oidc):
     await set_claims(oidc, [USER_GROUP], sub, email)
     async with new_http(rig, timeout=20) as browser_a, new_http(rig, timeout=20) as browser_b:
         flow = await authorize(browser_a, await start_flow(browser_a))
-        r = await callback(browser_b, flow.code, flow.returned_state)
-        assert not token_of(r), "callback completed by a different browser than the one that started the login"
+        # binder=None: browser B sends only what its own (empty) cookie jar holds, not A's oidc_binder cookie
+        r = await callback(browser_b, flow.code, flow.returned_state, binder=None)
+        assert r.status_code == 400 and not token_of(r), "callback completed by a different browser than the one that started the login"

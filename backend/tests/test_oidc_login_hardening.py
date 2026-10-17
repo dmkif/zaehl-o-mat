@@ -289,3 +289,48 @@ def test_callback_idp_errors_mapped(client, db, kw, code):
 def test_idp_timeouts_are_bounded():
     t = ra._idp_timeout()
     assert t.connect <= 5 and t.read <= settings.oidc_http_timeout_s
+
+
+@pytest.mark.parametrize("state", ["a\x00b", "\x00", "x" * 257])
+def test_malformed_state_rejected_before_any_db_query(state):
+    """Security rig E-A05-001: `state=a%00b` reached PostgreSQL (NUL byte -> DataError -> 500)."""
+    from unittest.mock import MagicMock
+
+    db = MagicMock()
+    with pytest.raises(HTTPException) as e:
+        ra._consume_pkce_state(db, state, "binder")
+    assert e.value.status_code == 400
+    db.query.assert_not_called()
+
+
+def test_concurrent_first_login_of_same_identity_is_not_an_email_conflict(db):
+    """Security rig E-A06-001 (1 in 20 rounds): a parallel first login of the SAME identity commits between this
+    request's sub lookup and its e-mail check. The e-mail then belongs to the same identity: sign in, no 409."""
+    first = get_or_create_user_from_oidc(db, _data("race-sub", email="race@example.com"))
+
+    class _Blind:
+        """Session proxy: the first `query(User)` (the sub lookup) does not see the row, like a snapshot taken
+        just before the other request committed."""
+
+        def __init__(self, real):
+            self._real, self._hid = real, False
+
+        def query(self, *entities):
+            if len(entities) == 1 and entities[0] is User and not self._hid:
+                self._hid = True
+
+                class _Empty:
+                    def filter(self, *a, **k):
+                        return self
+
+                    def first(self):
+                        return None
+
+                return _Empty()
+            return self._real.query(*entities)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    again = get_or_create_user_from_oidc(_Blind(db), _data("race-sub", email="race@example.com"))
+    assert again.id == first.id and db.query(User).count() == 1
