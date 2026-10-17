@@ -16,6 +16,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.body_limit import BodyLimitMiddleware
+from app.forwarded_proto import ForwardedProtoMiddleware
 from app.config import settings
 from app.database import SessionLocal
 from app.limiter import limiter
@@ -103,6 +104,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(BodyLimitMiddleware)  # F-012: bulk-scan body size, before the form is parsed
+app.add_middleware(ForwardedProtoMiddleware)  # https behind the proxy, only from TRUSTED_PROXIES
 
 
 @app.exception_handler(RequestValidationError)
