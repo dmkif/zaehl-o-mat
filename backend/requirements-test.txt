@@ -4,4 +4,4 @@ pytest-anyio>=0.0.0
 anyio[trio]>=4.0
 python-jose[cryptography]>=3.3
 pytest-cov>=5.0
-coverage>=7.0
+coverage>=7.16.2
