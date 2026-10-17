@@ -1,0 +1,37 @@
+diff -ruN a/backend/app/routers/ocr.py b/backend/app/routers/ocr.py
+--- a/backend/app/routers/ocr.py	2026-10-09 10:24:02.075353583 +0200
++++ b/backend/app/routers/ocr.py	2026-10-09 10:24:02.075652876 +0200
+@@ -278,9 +278,7 @@
+     if not file.content_type or not file.content_type.startswith("image/"):
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File must be an image")
+ 
+-    contents = await file.read(_MAX_UPLOAD_BYTES + 1)
+-    if len(contents) > _MAX_UPLOAD_BYTES:
+-        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Image too large (max 10 MB)")
++    contents = await file.read()
+ 
+     # Magic-bytes validation: distrust the client-supplied Content-Type
+     detected_mime = filetype.guess_mime(contents)
+@@ -292,9 +290,7 @@
+     if serial_file is not None:
+         if not serial_file.content_type or not serial_file.content_type.startswith("image/"):
+             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be an image")
+-        serial_contents = await serial_file.read(_MAX_UPLOAD_BYTES + 1)
+-        if len(serial_contents) > _MAX_UPLOAD_BYTES:
+-            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Serial image too large (max 10 MB)")
++        serial_contents = await serial_file.read()
+         serial_detected_mime = filetype.guess_mime(serial_contents)
+         if serial_detected_mime not in _ALLOWED_IMAGE_MIMES:
+             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Serial file must be a supported image")
+@@ -516,11 +512,6 @@
+                 yield f"data: {json.dumps(item)}\n\n"
+                 continue
+             try:
+-                if len(contents) > _MAX_UPLOAD_BYTES:
+-                    item["error"] = "File too large (max 10 MB)"
+-                    yield f"data: {json.dumps(item)}\n\n"
+-                    continue
+-
+                 detected_mime = filetype.guess_mime(contents)
+                 if detected_mime not in _ALLOWED_IMAGE_MIMES:
+                     item["error"] = "Not a supported image format (JPEG, PNG, WEBP, BMP, TIFF)"

@@ -49,7 +49,9 @@ services:
       ollama:
         condition: service_started
     ports:
-      - "8000:8000"
+      # Loopback only: a direct hit on :8000 would come from a private (trusted)
+      # peer address and could spoof X-Forwarded-For. Use the proxy on :8081.
+      - "127.0.0.1:8000:8000"
     volumes:
       - uploads:/data/uploads
     environment:
@@ -61,6 +63,9 @@ services:
       OIL_PRICE_SOURCE: heizoel-aktuell
       APP_BASE_URL: http://localhost:5173
       DEBUG: "true"
+      # Peers whose X-Forwarded-For is believed by the rate limiter (CIDRs).
+      # Narrow to the compose network subnet if known; never '*'.
+      TRUSTED_PROXIES: "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: "qwen3-vl:8b"
       # Optional — leave empty (or remove) to run without the `ocr` service above.

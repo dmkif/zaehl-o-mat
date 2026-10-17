@@ -305,3 +305,80 @@ class TestOilReichweite:
         r = client.get("/api/dashboard/summary", headers=auth_headers(admin))
         assert r.status_code == 200
         assert r.json()["oil_reichweite"][str(prop.id)] is None
+
+
+# The operator's real tank readings (litres, UTC) in 2026 — see specs/005-oil-deliveries.
+_REAL_OIL = [
+    (1374, datetime(2026, 4, 2, 13, 51, tzinfo=timezone.utc)),
+    (1353, datetime(2026, 4, 3, 18, 25, tzinfo=timezone.utc)),
+    (1365, datetime(2026, 4, 4, 22, 13, tzinfo=timezone.utc)),
+    (1289, datetime(2026, 4, 16, 19, 36, tzinfo=timezone.utc)),
+    (1207, datetime(2026, 4, 26, 12, 16, tzinfo=timezone.utc)),
+    (1074, datetime(2026, 5, 23, 13, 23, tzinfo=timezone.utc)),
+    (945, datetime(2026, 7, 16, 18, 40, tzinfo=timezone.utc)),
+    (816, datetime(2026, 9, 13, 11, 27, tzinfo=timezone.utc)),
+]
+
+
+def _freeze_now(monkeypatch, moment):
+    """Pin the 'now' that the oil calculation receives from the dashboard code."""
+    import app.routers.dashboard as dash
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment if tz is None else moment.astimezone(tz)
+
+    monkeypatch.setattr(dash, "datetime", _Clock)
+
+
+class TestOilRealData:
+    @pytest.fixture
+    def real_oil(self, db, monkeypatch):
+        _freeze_now(monkeypatch, datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc))
+        prop = make_property(db)
+        meter = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="Öltank")
+        for value, at in _REAL_OIL:
+            make_reading(db, meter.id, float(value), at)
+        return prop, meter
+
+    def test_tile_shows_real_daily_average(self, client, db, real_oil):
+        admin = make_user(db, role=UserRole.admin)
+        r = client.get("/api/dashboard/summary", headers=auth_headers(admin))
+        avg = r.json()["meters"][0]["avg_daily_consumption_365d"]
+        assert 3.2 <= avg <= 3.6
+
+    def test_reichweite_is_level_over_displayed_rate(self, client, db, real_oil):
+        prop, _ = real_oil
+        admin = make_user(db, role=UserRole.admin)
+        body = client.get("/api/dashboard/summary", headers=auth_headers(admin)).json()
+        avg = body["meters"][0]["avg_daily_consumption_365d"]
+        assert body["oil_reichweite"][str(prop.id)] == int(816 / avg)
+
+    def test_cost_forecast_uses_same_rate_times_30(self, client, db, real_oil):
+        _, meter = real_oil
+        admin = make_user(db, role=UserRole.admin)
+        summary = client.get("/api/dashboard/summary", headers=auth_headers(admin)).json()
+        avg = summary["meters"][0]["avg_daily_consumption_365d"]
+        r = client.get(f"/api/dashboard/cost-forecast/{meter.id}", headers=auth_headers(admin))
+        assert r.status_code == 200
+        body = r.json()
+        assert body["insufficient_data"] is False
+        assert body["forecast"][0]["estimated_consumption"] == pytest.approx(avg * 30, abs=0.01)
+
+    def test_type_aggregate_is_net_consumption(self, client, db, real_oil):
+        prop, _ = real_oil
+        admin = make_user(db, role=UserRole.admin)
+        r = client.get(f"/api/dashboard/property/{prop.id}/type-aggregates", headers=auth_headers(admin))
+        oil = {a["meter_type"]: a for a in r.json()["aggregates"]}["oil"]
+        assert oil["total_consumption"] == pytest.approx(1374 - 816)
+
+    def test_non_oil_meters_unchanged(self, client, db, real_oil):
+        prop, _ = real_oil
+        water = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3, name="Wasser")
+        make_reading(db, water.id, 0.0, datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc))
+        make_reading(db, water.id, 300.0, datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc))
+        admin = make_user(db, role=UserRole.admin)
+        meters = client.get("/api/dashboard/summary", headers=auth_headers(admin)).json()["meters"]
+        w = next(m for m in meters if m["meter_type"] == "water")
+        assert w["avg_daily_consumption_365d"] == pytest.approx(10.0, rel=0.01)

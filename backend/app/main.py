@@ -7,6 +7,8 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -73,6 +75,15 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(_request: Request, exc: RequestValidationError):
+    # FastAPI's default echoes the rejected input, which cannot be serialized for
+    # NaN/Infinity (-> 500) and would reflect arbitrary client data. Keep type/loc/msg.
+    detail = [{"type": e["type"], "loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": detail})
+
+
 # The Vite dev server origin is only trusted in debug mode — never in production.
 _cors_origins = [settings.app_base_url]
 if settings.debug:
@@ -96,7 +107,7 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 # Routers
-from app.routers import auth, properties, meters, readings, ocr, dashboard, admin, uploads  # noqa: E402
+from app.routers import auth, properties, meters, readings, ocr, dashboard, admin, uploads, oil_deliveries  # noqa: E402
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(properties.router, prefix="/api")
@@ -106,6 +117,7 @@ app.include_router(ocr.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(uploads.router, prefix="/api")
+app.include_router(oil_deliveries.router, prefix="/api")
 
 # Ensure upload directory exists
 uploads_dir = Path(settings.upload_path)

@@ -9,7 +9,9 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, JSONResponse
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -96,13 +98,16 @@ async def login(db: Session = Depends(get_db)):
     return RedirectResponse(url=url)
 
 
-@router.get("/callback")
-async def callback(
-    code: str = Query(...),
-    state: str = Query(...),
-    db: Session = Depends(get_db),
-):
-    """Exchange authorization code for tokens, return JWT."""
+def _pool_busy() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Service busy, try again",
+        headers={"Retry-After": "5"},
+    )
+
+
+def _consume_pkce_state(db: Session, state: str) -> str:
+    """Validate and delete the PKCE row, return its code_verifier (sync, DB)."""
     pkce_row = db.query(OidcPkceState).filter(OidcPkceState.state == state).first()
     if not pkce_row:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
@@ -117,6 +122,26 @@ async def callback(
     verifier = pkce_row.code_verifier
     db.delete(pkce_row)
     db.commit()
+    return verifier
+
+
+def _sign_in(db: Session, userinfo: dict) -> str:
+    """Create/update the user and issue the app JWT (sync, DB)."""
+    user = get_or_create_user_from_oidc(db, userinfo)
+    return create_access_token({"sub": str(user.id), "role": user.role.value})
+
+
+@router.get("/callback")
+async def callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Exchange authorization code for tokens, return JWT."""
+    try:
+        verifier = await run_in_threadpool(_consume_pkce_state, db, state)
+    except PoolTimeoutError:
+        raise _pool_busy()
 
     cfg = await _oidc_config()
     async with httpx.AsyncClient(timeout=15) as client:
@@ -146,8 +171,12 @@ async def callback(
         userinfo_resp.raise_for_status()
         userinfo = userinfo_resp.json()
 
-    user = get_or_create_user_from_oidc(db, userinfo)
-    access_token = create_access_token({"sub": str(user.id), "role": user.role.value})
+    # Sync DB work must not run on the event loop: with the pool exhausted it
+    # would block every request incl. /health (B-32). Pool timeout -> 503.
+    try:
+        access_token = await run_in_threadpool(_sign_in, db, userinfo)
+    except PoolTimeoutError:
+        raise _pool_busy()
     # Redirect to the SPA route /auth/token (history-mode router, no hash) which
     # picks up the token from the query string and stores it client-side.
     frontend_url = settings.app_base_url.rstrip("/")
@@ -164,8 +193,9 @@ async def superadmin_login(
     """Local login for superadmin account (bypasses OIDC)."""
     if not settings.superadmin_password:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    username_ok = secrets.compare_digest(body.username, settings.superadmin_user)
-    password_ok = secrets.compare_digest(body.password, settings.superadmin_password)
+    # compare_digest raises TypeError on non-ASCII str; compare UTF-8 bytes.
+    username_ok = secrets.compare_digest(body.username.encode(), settings.superadmin_user.encode())
+    password_ok = secrets.compare_digest(body.password.encode(), settings.superadmin_password.encode())
     if not (username_ok and password_ok):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 

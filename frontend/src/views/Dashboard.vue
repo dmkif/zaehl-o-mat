@@ -39,6 +39,33 @@
         </MeterCard>
       </div>
 
+      <!-- Probable oil deliveries (level rose between two readings) -->
+      <div
+        v-for="p in probableDeliveries"
+        :key="`${p.from_reading_id}-${p.to_reading_id}`"
+        class="mt-6 p-4 rounded-lg border border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-900/20"
+        role="status"
+      >
+        <h2 class="text-lg font-semibold mb-1">⛽ {{ $t('oil.probable_title') }}</h2>
+        <p class="text-sm text-gray-700 dark:text-gray-200">
+          {{ $t('oil.probable_text', { from: formatDate(p.from_at), to: formatDate(p.to_at), liters: formatConsumption(p.estimated_liters) }) }}
+        </p>
+        <p v-if="probableError?.key === probableKey(p)" class="text-sm text-red-600 dark:text-red-400 mt-1" role="alert">
+          {{ probableError.message }}
+        </p>
+        <div v-if="authStore.isManager && propertyIdOf(p)" class="flex gap-2 mt-3 flex-wrap">
+          <button
+            @click="confirmProbable(p)"
+            class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium transition"
+          >{{ $t('oil.probable_confirm') }}</button>
+          <button
+            :disabled="dismissing === probableKey(p)"
+            @click="dismissProbable(p)"
+            class="px-3 py-1.5 rounded-lg border dark:border-gray-600 text-sm font-medium"
+          >{{ $t('oil.probable_dismiss') }}</button>
+        </div>
+      </div>
+
       <!-- Heizöltank section per property -->
       <template v-for="(days, propId) in summary?.oil_reichweite" :key="propId">
         <div v-if="days != null" class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -98,6 +125,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { formatApiError } from '@/utils/oilDeliveries'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import StatCard from '@/components/StatCard.vue'
@@ -105,6 +135,8 @@ import MeterCard from '@/components/MeterCard.vue'
 import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()
+const router = useRouter()
+const { t } = useI18n()
 const loading = ref(true)
 const summary = ref<any>(null)
 const typeAggregates = ref<Record<string, any>>({})
@@ -167,6 +199,61 @@ const oilChartOptions = computed(() => ({
   legend: { show: true },
   grid: { borderColor: '#e5e7eb' },
 }))
+
+// ── Probable oil deliveries ───────────────────────────────────────────────────
+
+const probableDeliveries = computed<any[]>(() => summary.value?.oil_probable_deliveries ?? [])
+const dismissing = ref('')
+const probableError = ref<{ key: string; message: string } | null>(null)
+
+function probableKey(p: any): string {
+  return `${p.from_reading_id}-${p.to_reading_id}`
+}
+
+/** property_id from the entry if the API sends it, else via the meter in the summary. */
+function propertyIdOf(p: any): string | undefined {
+  return p.property_id ?? summary.value?.meters?.find((m: any) => m.meter_id === p.meter_id)?.property_id
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE')
+}
+
+function confirmProbable(p: any) {
+  const pid = propertyIdOf(p)
+  if (!pid) return
+  router.push({
+    path: `/properties/${pid}/oil-deliveries`,
+    query: { prefill_at: p.to_at, prefill_liters: String(p.estimated_liters) },
+  })
+}
+
+async function dismissProbable(p: any) {
+  const pid = propertyIdOf(p)
+  if (!pid) return
+  const key = probableKey(p)
+  dismissing.value = key
+  probableError.value = null
+  try {
+    const res = await apiFetch(`/api/properties/${encodeURIComponent(pid)}/oil-deliveries/probable/dismiss`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authStore.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from_reading_id: p.from_reading_id, to_reading_id: p.to_reading_id }),
+    })
+    if (res.ok) {
+      summary.value.oil_probable_deliveries = probableDeliveries.value.filter((x) => probableKey(x) !== key)
+    } else {
+      let detail: unknown = null
+      try { detail = (await res.json())?.detail } catch { /* no body */ }
+      probableError.value = { key, message: formatApiError(detail, t('oil.probable_error')) }
+    }
+  } catch (e) {
+    probableError.value = { key, message: e instanceof Error ? e.message : t('oil.probable_error') }
+  } finally {
+    dismissing.value = ''
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,35 @@
+diff -ruN a/backend/app/services/ocr_pipeline.py b/backend/app/services/ocr_pipeline.py
+--- a/backend/app/services/ocr_pipeline.py	2026-10-09 10:24:02.081257609 +0200
++++ b/backend/app/services/ocr_pipeline.py	2026-10-09 10:24:02.081424524 +0200
+@@ -189,8 +189,9 @@
+                 data = {}
+ 
+         def _clean_reading(v: object) -> str | None:
+-            if not v or not isinstance(v, str):
++            if not v:
+                 return None
++            return v
+             cleaned = re.sub(r"[^\d.,]", "", v).replace(",", ".").strip(".")
+             # If the model returned multiple periods (e.g. "03.1009.9"),
+             # only the last period can be the decimal separator — merge the rest.
+@@ -229,7 +230,7 @@
+         if reading and serial:
+             r_digits = re.sub(r"\D", "", reading)
+             s_digits = re.sub(r"\D", "", serial)
+-            if len(r_digits) >= 6 and r_digits == s_digits:
++            if False:
+                 logger.warning("LLM reading equals serial (%s) — discarding reading", serial)
+                 reading = None
+         return reading, serial
+@@ -244,10 +245,7 @@
+ 
+ def _clean_serial_value(v: object) -> str | None:
+     """Strip whitespace/hyphens from an LLM serial answer; None for null-ish."""
+-    if not v or not isinstance(v, str):
+-        return None
+-    s = re.sub(r'[\s\-]', '', v).strip()
+-    return None if not s or s.lower() == "null" else s
++    return v or None
+ 
+ 
+ _SERIAL_ZOOM_PROMPT = (
