@@ -66,6 +66,9 @@ services:
       # Required, no default: >= 12 chars, e.g. `openssl rand -base64 18`
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env (openssl rand -base64 18)}
       UPLOAD_PATH: /data/uploads
+      # Bulk-scan bounds (F-012): files per request and total upload bytes (50 MiB).
+      MAX_BULK_FILES: "50"
+      MAX_BULK_TOTAL_BYTES: "52428800"
       OIL_PRICE_SOURCE: heizoel-aktuell
       APP_BASE_URL: http://localhost:5173
       DEBUG: ${DEBUG:-false}

@@ -57,6 +57,10 @@ backend:
     # anything is stored (F-011). Keep equal to ocr.env.
     MAX_IMAGE_PIXELS: "40000000"
     MAX_IMAGE_SIDE: "12000"
+    # -- Bulk-scan bounds (F-012): files per request and total upload bytes
+    # (50 MiB). Keep below ingress.maxRequestBodyBytes.
+    MAX_BULK_FILES: "50"
+    MAX_BULK_TOTAL_BYTES: "52428800"
 
     # -- Peers whose X-Forwarded-For the rate limiter believes (comma-separated
     # CIDRs; '*' is rejected). The limiter keys on the rightmost forwarded
@@ -227,6 +231,10 @@ ingress:
   # reads this. Leave empty to skip the annotation entirely - either DNS is
   # managed manually, or external-dns isn't in use.
   externalDnsTarget: ""
+  # -- Largest request body Traefik accepts on /api (Middleware `buffering`,
+  # F-012). Must exceed backend.env.MAX_BULK_TOTAL_BYTES plus multipart
+  # overhead; the default is 60 MiB.
+  maxRequestBodyBytes: 62914560
 
 # =============================================================================
 # Persistent storage for uploaded meter images

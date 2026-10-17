@@ -82,6 +82,99 @@ def check_image_dimensions(contents: bytes) -> tuple[int, int]:
         raise ImageTooLarge(f"image {width}x{height} exceeds the allowed size")
     return width, height
 
+# F-029: bounds for values that come from the model / OCR service.
+MAX_READING_DIGITS = 12
+MAX_SERIAL_CHARS = 64
+MAX_RAW_TEXTS = 50
+MAX_RAW_TEXT_CHARS = 200
+_MAX_VALUE_INPUT_CHARS = 64          # reading strings longer than this are not a reading
+_MAX_OCR_RESPONSE_BYTES = 64 * 1024
+_SERIAL_RE = re.compile(r"[A-Za-z0-9./]{1,64}")
+_EXIF_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?")
+
+
+class OcrServiceError(Exception):
+    """The OCR service answered, but not with a usable response (-> HTTP 502)."""
+
+
+def sanitize_reading(v: object) -> str | None:
+    """Numeric string with 3..12 digits, or None (never raises)."""
+    if not v or not isinstance(v, str) or len(v) > _MAX_VALUE_INPUT_CHARS:
+        return None
+    cleaned = re.sub(r"[^\d.,]", "", v).replace(",", ".").strip(".")
+    # Several periods (e.g. "03.1009.9"): only the last can be the decimal separator.
+    parts = cleaned.split(".")
+    if len(parts) > 2:
+        cleaned = "".join(parts[:-1]) + "." + parts[-1]
+    digits = len(re.sub(r"\D", "", cleaned))
+    if digits < 3 or digits > MAX_READING_DIGITS:
+        return None
+    return cleaned
+
+
+def sanitize_serial(v: object) -> str | None:
+    """Serial of at most 64 characters from [A-Za-z0-9./], or None."""
+    if not v or not isinstance(v, str) or len(v) > 4 * MAX_SERIAL_CHARS:
+        return None
+    s = re.sub(r"[\s\-]", "", v)
+    if not s or s.lower() == "null" or not _SERIAL_RE.fullmatch(s):
+        return None
+    return s
+
+
+def sanitize_raw_texts(v: object) -> list[dict]:
+    """At most 50 entries of {text <= 200 chars, conf 0..1}; anything else is dropped."""
+    if not isinstance(v, list):
+        return []
+    out: list[dict] = []
+    for entry in v:
+        if len(out) >= MAX_RAW_TEXTS:
+            break
+        if not isinstance(entry, dict) or not isinstance(entry.get("text"), str):
+            continue
+        conf = entry.get("conf")
+        if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not 0 <= conf <= 1:
+            continue
+        out.append({"text": entry["text"][:MAX_RAW_TEXT_CHARS], "conf": float(conf)})
+    return out
+
+
+def drop_reading_equal_to_serial(reading: str | None, serial: str | None) -> str | None:
+    """Observed failure mode: the model returns the printed serial as the reading."""
+    if reading and serial:
+        r_digits = re.sub(r"\D", "", reading)
+        s_digits = re.sub(r"\D", "", serial)
+        if len(r_digits) >= 6 and r_digits == s_digits:
+            logger.warning("reading equals serial - discarding reading")
+            return None
+    return reading
+
+
+def sanitize_ocr_result(body: object) -> dict:
+    """Bounded, typed result dict from an untrusted OCR-service /scan body."""
+    if not isinstance(body, dict):
+        raise OcrServiceError("unexpected response shape")
+    serial = sanitize_serial(body.get("detected_serial"))
+    reading = drop_reading_equal_to_serial(sanitize_reading(body.get("detected_value")), serial)
+    method = body.get("detection_method")
+    return {
+        "raw_texts": sanitize_raw_texts(body.get("raw_texts")),
+        "detected_value": reading,
+        "detected_serial": serial,
+        "detection_method": method if method in ("ocr", "llm") else "ocr",
+    }
+
+
+def _parse_ocr_response(resp: httpx.Response) -> object:
+    """JSON body of an OCR-service answer; size-capped, never raises anything but OcrServiceError."""
+    if len(resp.content) > _MAX_OCR_RESPONSE_BYTES:
+        raise OcrServiceError("response too large")
+    try:
+        return resp.json()
+    except (ValueError, RecursionError) as exc:
+        raise OcrServiceError("response is not valid JSON") from exc
+
+
 # Outbound calls to the optional OCR service MUST be bounded (FR-011) so a
 # stuck/unreachable service cannot degrade the rest of the application.
 _OCR_SERVICE_TIMEOUT = 30.0
@@ -120,9 +213,13 @@ def _extract_exif_datetime(filepath: Path) -> str | None:
                 _val = _exif.get(306)
             if _val:
                 # EXIF format "YYYY:MM:DD HH:MM:SS" → "YYYY-MM-DDTHH:MM"
+                if not isinstance(_val, str):
+                    return None
                 if len(_val) >= 19:
-                    return _val[:10].replace(':', '-') + 'T' + _val[11:16]
-                return _val[:10].replace(':', '-')
+                    out = _val[:10].replace(':', '-') + 'T' + _val[11:16]
+                else:
+                    out = _val[:10].replace(':', '-')
+                return out if _EXIF_DATE_RE.fullmatch(out) else None
     except Exception:  # nosec B110 - best-effort EXIF read; absence of a date must not fail the upload
         pass
     return None
@@ -216,25 +313,22 @@ def _llm_fallback(
             prompt += _GATEWAY_JSON_LINE
         text = llm_client.complete(b64, prompt, _READING_SCHEMA, profile, 180.0)
 
-        # Parse JSON response from LLM
+        # Parse JSON response from LLM (text is already length-capped by llm_client)
         try:
             data = json.loads(text)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             m = re.search(r'\{[^}]+\}', text, re.DOTALL)
             try:
                 data = json.loads(m.group()) if m else {}
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 data = {}
+        if not isinstance(data, dict):
+            data = {}
 
         def _clean_reading(v: object) -> str | None:
-            if not v or not isinstance(v, str):
+            cleaned = sanitize_reading(v)
+            if cleaned is None:
                 return None
-            cleaned = re.sub(r"[^\d.,]", "", v).replace(",", ".").strip(".")
-            # If the model returned multiple periods (e.g. "03.1009.9"),
-            # only the last period can be the decimal separator — merge the rest.
-            parts = cleaned.split(".")
-            if len(parts) > 2:
-                cleaned = "".join(parts[:-1]) + "." + parts[-1]
             # Separator-less output although the meter type prescribes
             # fractional digits: 7-segment decimal points are often invisible
             # on photos (verified 2026-07-16: e4b reads all 7 Holley drums
@@ -264,12 +358,7 @@ def _llm_fallback(
         # returns the printed serial as the reading (verified 2026-07-16 on
         # Optiline: reading=24519788 = its serial). Better no value (client
         # asks the user / retry paths kick in) than a wrong stored reading.
-        if reading and serial:
-            r_digits = re.sub(r"\D", "", reading)
-            s_digits = re.sub(r"\D", "", serial)
-            if len(r_digits) >= 6 and r_digits == s_digits:
-                logger.warning("LLM reading equals serial (%s) — discarding reading", serial)
-                reading = None
+        reading = drop_reading_equal_to_serial(reading, serial)
         return reading, serial
     except llm_client.LLMError:
         # Gateway path: "model unavailable" / "bad config" must reach the
@@ -281,11 +370,8 @@ def _llm_fallback(
 
 
 def _clean_serial_value(v: object) -> str | None:
-    """Strip whitespace/hyphens from an LLM serial answer; None for null-ish."""
-    if not v or not isinstance(v, str):
-        return None
-    s = re.sub(r'[\s\-]', '', v).strip()
-    return None if not s or s.lower() == "null" else s
+    """Strip whitespace/hyphens from an LLM serial answer; None for null-ish or out-of-bounds."""
+    return sanitize_serial(v)
 
 
 _SERIAL_ZOOM_PROMPT = (
@@ -333,7 +419,9 @@ def _llm_serial_zoom(filepath: Path) -> list[str]:
             raw = llm_client.complete(b64, prompt, _SERIAL_SCHEMA, profile, 90.0)
             try:
                 data = json.loads(raw)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
+                continue
+            if not isinstance(data, dict):
                 continue
             s = _clean_serial_value(data.get("serial"))
             if s and s not in candidates:
@@ -452,13 +540,7 @@ def _ocr_service_scan(filepath: Path, already_cropped: bool = False) -> dict:
             timeout=_OCR_SERVICE_TIMEOUT,
         )
     resp.raise_for_status()
-    body = resp.json()
-    return {
-        "raw_texts": body.get("raw_texts", []),
-        "detected_value": body.get("detected_value"),
-        "detected_serial": body.get("detected_serial"),
-        "detection_method": body.get("detection_method", "ocr"),
-    }
+    return sanitize_ocr_result(_parse_ocr_response(resp))
 
 
 def _ocr_service_serial(filepath: Path) -> str | None:
@@ -476,4 +558,7 @@ def _ocr_service_serial(filepath: Path) -> str | None:
             timeout=_OCR_SERVICE_TIMEOUT,
         )
     resp.raise_for_status()
-    return resp.json().get("detected_serial")
+    body = _parse_ocr_response(resp)
+    if not isinstance(body, dict):
+        raise OcrServiceError("unexpected response shape")
+    return sanitize_serial(body.get("detected_serial"))

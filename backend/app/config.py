@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     max_image_pixels: int = Field(default=40_000_000, gt=0)
     max_image_side: int = Field(default=12_000, gt=0)
 
+    # Bulk-scan bounds (spec 008, F-012): number of files and the total upload
+    # budget per request (the per-file limit stays 10 MB).
+    max_bulk_files: int = Field(default=50, gt=0, le=500)
+    max_bulk_total_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+
     @model_validator(mode="after")
     def _validate_security_settings(self) -> "Settings":
         if self.database_url == "postgresql://zaehlwart:zaehlwart@localhost:5432/zaehlwart":
