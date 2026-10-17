@@ -19,7 +19,8 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.body_limit import BodyLimitMiddleware
 from app.forwarded_proto import ForwardedProtoMiddleware
-from app.auth import require_admin
+from app.auth import get_current_user
+from app.models import User, UserRole
 from app.config import settings
 from app.database import SessionLocal
 from app.error_handlers import install as install_error_handlers
@@ -263,17 +264,25 @@ def _external_checks() -> dict:
 
 
 @app.get("/api/health/details", tags=["health"])
-def health_details(response: Response, _admin=Depends(require_admin)):
-    """Subsystem detail for admins (DB, scheduler, OCR, LLM). OCR/LLM do not affect status."""
+def health_details(response: Response, user: User = Depends(get_current_user)):
+    """Subsystem state for signed-in users (status footer): DB, scheduler, OCR, LLM.
+
+    Version and model name are only returned to admins. OCR/LLM do not affect status.
+    """
     db_ok = _db_ok()
     scheduler_ok = scheduler.running
     core_ok = db_ok and scheduler_ok
     if not core_ok:
         response.status_code = 503
-    return {
+    ext = _external_checks()
+    body = {
         "status": "ok" if core_ok else "degraded",
-        "version": app.version,
         "db": db_ok,
         "scheduler": scheduler_ok,
-        **_external_checks(),
+        "ocr": ext["ocr"],
+        "llm": ext["llm"],
     }
+    if user.role in (UserRole.superadmin, UserRole.admin):
+        body["version"] = app.version
+        body["llm_model"] = ext["llm_model"]
+    return body

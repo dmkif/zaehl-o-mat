@@ -51,10 +51,12 @@ def test_health_live_unchanged(client):
     assert client.get("/api/health/live").json() == {"status": "ok"}
 
 
-def test_details_requires_admin(client, db):
+def test_details_require_login_but_not_admin(client, db):
+    # Changed in release 0.7.0: signed-in users may read the status flags (status footer);
+    # version and model name stay admin-only (see test_health.py::TestHealthDetailsAccess).
     assert client.get("/api/health/details").status_code == 401
     u = make_user(db, role=UserRole.user)
-    assert client.get("/api/health/details", headers=auth_headers(u)).status_code == 403
+    assert client.get("/api/health/details", headers=auth_headers(u)).status_code == 200
 
 
 def test_details_for_admin_and_cached(client, db, monkeypatch):
