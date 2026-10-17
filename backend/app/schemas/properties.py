@@ -1,19 +1,27 @@
 import uuid
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from app.models import PropertyType, PropertyUserRole
+from app.schemas.common import str_with_limit
 
 
 class PropertyCreate(BaseModel):
-    name: str
-    address: Optional[str] = None
+    name: str_with_limit(255)
+    address: Optional[str_with_limit(2000)] = None
     property_type: PropertyType = PropertyType.residential
 
 
 class PropertyUpdate(BaseModel):
-    name: Optional[str] = None
-    address: Optional[str] = None
+    name: Optional[str_with_limit(255)] = None
+    address: Optional[str_with_limit(2000)] = None
     property_type: Optional[PropertyType] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _name_not_null(cls, v):
+        if v is None:
+            raise ValueError("must not be null")
+        return v
 
 
 class PropertyResponse(BaseModel):

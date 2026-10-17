@@ -207,13 +207,17 @@ ocr:
       memory: 512Mi
     limits:
       memory: 2Gi
-  # -- Name of a Secret holding a bearer token for the OCR service. The OCR
-  # service itself implements no authentication (same as Ollama) - this
-  # token is only meaningful if you front it with an authenticating reverse
-  # proxy. Leave empty for a local, unauthenticated OCR service (the common
-  # case). Required key: value of secretApiKeyKey below (default OCR_API_KEY).
+  # -- Name of a Secret holding the shared bearer token (F-030). It is mounted
+  # as OCR_API_KEY into the backend (sent as `Authorization: Bearer`) and into
+  # the OCR service (required on /scan and /serial). Required whenever
+  # ocr.enabled, unless allowUnauthenticated is set. Generate:
+  #   kubectl create secret generic zaehl-o-mat-ocr --from-literal=OCR_API_KEY="$(openssl rand -base64 32)"
+  # Required key: value of secretApiKeyKey below (default OCR_API_KEY).
   existingSecret: ""
   secretApiKeyKey: OCR_API_KEY
+  # -- Run the OCR service without authentication (only if the network
+  # already isolates it, see networkPolicy). The service logs a warning.
+  allowUnauthenticated: false
   # -- Non-secret OCR service configuration (decoded image limits, F-011).
   env:
     MAX_IMAGE_PIXELS: "40000000"

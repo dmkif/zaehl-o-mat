@@ -2,12 +2,15 @@
 OCR service — standalone, optional container.
 
 Exposes POST /scan, POST /serial, GET /health per
-specs/001-ocr-optional-container/contracts/ocr-service-api.md. No
-authentication is implemented here (same as Ollama today) — an operator
-who wants to secure this link fronts it with an authenticating reverse
-proxy (see contracts/ocr-service-api.md and research.md Decision 3).
+specs/001-ocr-optional-container/contracts/ocr-service-api.md.
+
+Authentication (F-030): when OCR_API_KEY is set, /scan and /serial require
+``Authorization: Bearer <OCR_API_KEY>`` (constant-time comparison, the backend
+sends the same variable).  /health stays open for container probes.  Without a
+key the service is unauthenticated and logs a warning at startup.
 """
 import asyncio
+import hmac
 import io
 import logging
 import tempfile
@@ -15,14 +18,44 @@ import uuid
 from pathlib import Path
 
 import filetype
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 
 from app.config import settings
 from app.pipeline import _extract_serial_sync, _run_ocr_on_file_sync
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Zähl-O-Mat OCR Service")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    if not settings.ocr_api_key:
+        logger.warning(
+            "OCR_API_KEY is not set: /scan and /serial accept unauthenticated requests. "
+            "Set OCR_API_KEY (same value as the backend) unless the network already isolates this service."
+        )
+    yield
+
+
+def require_api_key(request: Request) -> None:
+    """Bearer-token check for /scan and /serial; no-op while no key is configured."""
+    key = settings.ocr_api_key
+    if not key:
+        return
+    scheme, _, token = request.headers.get("authorization", "").partition(" ")
+    # Compare UTF-8 bytes: compare_digest raises on non-ASCII str.
+    ok = scheme.lower() == "bearer" and hmac.compare_digest(token.encode("utf-8"), key.encode("utf-8"))
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+app = FastAPI(title="Zähl-O-Mat OCR Service", lifespan=_lifespan)
 
 _ALLOWED_IMAGE_MIMES = frozenset({
     "image/jpeg",
@@ -79,7 +112,7 @@ def _save_upload(contents: bytes) -> Path:
     return filepath
 
 
-@app.post("/scan")
+@app.post("/scan", dependencies=[Depends(require_api_key)])
 async def scan(file: UploadFile = File(...), already_cropped: bool = Form(False)):
     contents = await file.read()
     filepath = _save_upload(contents)
@@ -95,7 +128,7 @@ async def scan(file: UploadFile = File(...), already_cropped: bool = Form(False)
         filepath.unlink(missing_ok=True)
 
 
-@app.post("/serial")
+@app.post("/serial", dependencies=[Depends(require_api_key)])
 async def serial(file: UploadFile = File(...)):
     contents = await file.read()
     filepath = _save_upload(contents)

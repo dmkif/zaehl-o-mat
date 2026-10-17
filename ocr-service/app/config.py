@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +16,9 @@ class Settings(BaseSettings):
     # F-011: decoded-size limits, checked from the image header before any decoding.
     max_image_pixels: int = 40_000_000
     max_image_side: int = 12_000
+    # F-030: shared secret. When set, /scan and /serial require `Authorization: Bearer <key>`;
+    # when empty the service runs unauthenticated (and says so at startup).
+    ocr_api_key: Optional[str] = None
 
 
 settings = Settings()

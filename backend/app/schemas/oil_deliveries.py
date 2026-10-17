@@ -5,6 +5,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.schemas.common import str_with_limit
+
 MIN_DELIVERY_DATE = datetime(2000, 1, 1, tzinfo=timezone.utc)
 MAX_LITERS = Decimal("100000")
 MAX_TOTAL_PRICE = Decimal("10000000")
@@ -64,8 +66,8 @@ class OilDeliveryCreate(_DeliveryFields):
     liters: Decimal = _liters()
     total_price: Optional[Decimal] = _total()
     price_per_liter: Optional[Decimal] = _per_liter()
-    supplier: Optional[str] = Field(None, max_length=255)
-    note: Optional[str] = Field(None, max_length=2000)
+    supplier: Optional[str_with_limit(255)] = None
+    note: Optional[str_with_limit(2000)] = None
 
     @model_validator(mode="after")
     def _derive(self):
@@ -79,8 +81,8 @@ class OilDeliveryUpdate(_DeliveryFields):
     liters: Optional[Decimal] = _liters(None)
     total_price: Optional[Decimal] = _total()
     price_per_liter: Optional[Decimal] = _per_liter()
-    supplier: Optional[str] = Field(None, max_length=255)
-    note: Optional[str] = Field(None, max_length=2000)
+    supplier: Optional[str_with_limit(255)] = None
+    note: Optional[str_with_limit(2000)] = None
 
     @model_validator(mode="after")
     def _required_not_null(self):

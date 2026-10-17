@@ -19,6 +19,7 @@ from app.body_limit import BodyLimitMiddleware
 from app.forwarded_proto import ForwardedProtoMiddleware
 from app.config import settings
 from app.database import SessionLocal
+from app.error_handlers import install as install_error_handlers
 from app.limiter import limiter
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
@@ -113,6 +114,9 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
     # NaN/Infinity (-> 500) and would reflect arbitrary client data. Keep type/loc/msg.
     detail = [{"type": e["type"], "loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": detail})
+
+
+install_error_handlers(app)  # F-035: DB outage -> 503, generic 500 (see app/error_handlers.py)
 
 
 # The Vite dev server origin is only trusted in debug mode — never in production.
