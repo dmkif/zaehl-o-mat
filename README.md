@@ -286,6 +286,13 @@ npm run dev
 
 The frontend dev server runs on port 5173 and proxies `/api` to the backend on port 8000.
 
+### Browser end-to-end tests
+
+`scripts/e2e.sh` runs a Playwright (Chromium) suite against the real SPA build and the backend, behind an HTTPS
+edge that reproduces the production header set (CSP, `X-Forwarded-Proto`). It covers what the API tests cannot see:
+the SSO round trip, CSP violations, `http://` redirects, the status footer and role dependent UI. Needs podman,
+node 22 and python3; about 70 seconds. Details: [`e2e/README.md`](e2e/README.md).
+
 ### Pre-commit checks
 
 Local security checks mirroring the CI gates (bandit, gitleaks,

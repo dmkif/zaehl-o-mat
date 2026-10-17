@@ -1,0 +1,12 @@
+--- a/backend/app/main.py
++++ b/backend/app/main.py
+@@ -119,7 +119,8 @@
+ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+ app.add_middleware(SlowAPIMiddleware)
+ app.add_middleware(BodyLimitMiddleware)  # F-012: bulk-scan body size, before the form is parsed
+-app.add_middleware(ForwardedProtoMiddleware)  # https behind the proxy, only from TRUSTED_PROXIES
++# MUTANT no-forwarded-proto: scheme stays http behind the TLS proxy
++#app.add_middleware(ForwardedProtoMiddleware)
+ 
+ 
+ @app.exception_handler(RequestValidationError)

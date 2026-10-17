@@ -53,8 +53,10 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  // On a page load the stored session (token + role from /auth/me) must be known before guarding.
+  await auth.tryRestoreSession()
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
     return '/login'
   }
