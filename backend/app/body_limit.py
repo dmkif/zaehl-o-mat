@@ -7,7 +7,7 @@ Only ``POST /api/ocr/bulk-scan`` is affected.
 """
 import json
 
-from fastapi import HTTPException, status
+from fastapi import status
 
 from app.config import settings
 
@@ -38,17 +38,38 @@ class BodyLimitMiddleware:
                 return
 
         received = 0
+        exceeded = False
+        sent_413 = False
 
         async def limited_receive():
-            nonlocal received
+            # Past the limit the stream ends as a client disconnect. The framework turns whatever the
+            # parser raises into a 400, so the response is replaced by a 413 in ``guarded_send``.
+            nonlocal received, exceeded
+            if exceeded:
+                return {"type": "http.disconnect"}
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > limit:
-                    raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=_DETAIL)
+                    exceeded = True
+                    return {"type": "http.disconnect"}
             return message
 
-        await self.app(scope, limited_receive, send)
+        async def guarded_send(message):
+            nonlocal sent_413
+            if not exceeded:
+                await send(message)
+            elif not sent_413:
+                sent_413 = True
+                await self._reject(send)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            if not exceeded:
+                raise
+        if exceeded and not sent_413:  # the app finished without answering
+            await self._reject(send)
 
     @staticmethod
     async def _reject(send):

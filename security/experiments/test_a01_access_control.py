@@ -126,9 +126,11 @@ PUBLIC = {  # (method, path) that are public by design; everything else needs a 
     ("GET", "/api/auth/callback"),
     ("POST", "/api/auth/superadmin-login"),
     ("POST", "/api/auth/logout"),
+    ("POST", "/api/auth/exchange"),  # feature 007: single-use login code -> JWT; the code is the credential
 }
 # probing these would burn the login rate limit / start a login flow; they are exercised by A06/A07
-SKIP_PROBE = {("GET", "/api/auth/login"), ("GET", "/api/auth/callback"), ("POST", "/api/auth/superadmin-login")}
+SKIP_PROBE = {("GET", "/api/auth/login"), ("GET", "/api/auth/callback"), ("POST", "/api/auth/superadmin-login"),
+              ("POST", "/api/auth/exchange")}  # exchange is covered by E-A07-005
 
 
 def _fetch_openapi(rig) -> dict:
@@ -917,7 +919,8 @@ def test_E_A01_006_outbound_urls_are_never_request_controlled():
 
 
 @pytest.mark.security
-async def test_E_A01_006_stored_integration_config_never_triggers_requests(rig, seed, actors):
+@pytest.mark.parametrize("form", ["dict", "json_string"])
+async def test_E_A01_006_stored_integration_config_never_triggers_requests(rig, seed, actors, form):
     """E-A01-006 dynamic: ``integration_config`` / ``integration_type`` (shelly, homeassistant ...) are user-writable.
 
     A meter is given an ``integration_config`` pointing at the OCR stand-in (loopback) and at the cloud
@@ -931,8 +934,11 @@ async def test_E_A01_006_stored_integration_config_never_triggers_requests(rig, 
     marker = f"/ssrf-{uuid.uuid4().hex[:8]}"
     cfg = {"url": f"{rig['OCR_URL']}{marker}", "host": "169.254.169.254", "base_url": f"http://169.254.169.254{marker}",
            "token": "t0k3n-should-not-echo"}
+    # `dict`: what the schema (Optional[Any]) advertises; the Text column cannot adapt it (500, F-023).
+    # `json_string`: what the column accepts, so the SSRF half (never fetched, never echoed) is exercised either way.
+    value = cfg if form == "dict" else json.dumps(cfg)
     r = await admin.post(f"/api/properties/{pa}/meters/", json={
-        "meter_type": "electricity", "unit": "kWh", "name": "rig-ssrf", "integration_type": "shelly", "integration_config": cfg})
+        "meter_type": "electricity", "unit": "kWh", "name": "rig-ssrf", "integration_type": "shelly", "integration_config": value})
     assert r.status_code == 201, r.text
     mid = r.json()["id"]
     try:

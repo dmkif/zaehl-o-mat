@@ -202,3 +202,21 @@ def test_bulk_llm_error_leaves_no_file(client, db, uploads):
     assert _items(r)[0]["temp_image_path"] is None
     assert _stored(uploads) == []
     assert db.query(UploadFile).count() == 0
+
+
+def test_chunked_body_over_route_limit_is_413(client, db, uploads, monkeypatch):
+    """Security rig E-A10-003: a body without Content-Length that grows past the limit is refused with 413 too."""
+    monkeypatch.setattr("app.config.settings.max_bulk_total_bytes", 5000, raising=False)
+    monkeypatch.setattr("app.body_limit.MULTIPART_SLACK", 1000)
+    user = make_user(db)
+
+    def gen():
+        yield (b'--x\r\nContent-Disposition: form-data; name="files"; filename="a.jpg"\r\n'
+               b"Content-Type: image/jpeg\r\n\r\n")
+        for _ in range(40):
+            yield b"\x00" * 1000
+
+    headers = {**auth_headers(user), "content-type": "multipart/form-data; boundary=x"}
+    r = client.post("/api/ocr/bulk-scan", content=gen(), headers=headers)
+    assert r.status_code == 413, (r.status_code, r.text)
+    assert _stored(uploads) == []

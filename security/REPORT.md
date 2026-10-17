@@ -1,8 +1,8 @@
 # Security Review Report (feature 004)
 
-Status: review complete; high findings fixed in feature 004, medium findings F-004, F-005, F-006, F-009, F-010, F-011 fixed in feature 006 ("004b", `specs/006-security-medium-fixes/`). Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
+Status: review complete; high findings fixed in feature 004, medium findings F-004, F-005, F-006, F-009, F-010, F-011 fixed in feature 006 ("004b", `specs/006-security-medium-fixes/`), F-007 and F-008 in feature 007 (session hardening), F-012 and F-013 in feature 008 (bulk-scan limits), F-014, F-015 and F-016 in feature 009 (schema/deploy hardening); all released in 0.6.0 and verified by the rig (`review/rerun-3.md`); low findings F-028 (orphan files) and F-029 are fixed by feature 008. Format: `specs/004-security-review/contracts/report-format.md`, finding fields from `specs/004-security-review/data-model.md`.
 Standard: OWASP Top 10:2025 (A01 Broken Access Control, A02 Security Misconfiguration, A03 Software Supply Chain Failures, A04 Cryptographic Failures, A05 Injection, A06 Insecure Design, A07 Authentication Failures, A08 Software or Data Integrity Failures, A09 Logging and Alerting Failures, A10 Mishandling of Exceptional Conditions).
-Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 247 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-2.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
+Method: manual reading of every component (`security/review/*.md`), automated tooling (`review/tooling.md`), and 277 attack experiments against a loopback rig with synthetic data (`security/experiments/`, latest run `review/rerun-3.md`). Nothing in this report is derived from a production system; no secrets, tokens, personal data or real images are included. Locations (`path:line`) refer to the tree before the feature-004 fixes and drift as fixes merge.
 
 ## 1. Summary
 
@@ -12,12 +12,12 @@ Method: manual reading of every component (`security/review/*.md`), automated to
 |---|---|---|---|---|---|
 | critical | 0 | 0 | 0 | 0 | fix in 004 |
 | high | 3 | 3 | 0 | 0 | fix in 004 |
-| medium | 13 | 8 | 4 | 1 | 6 fixed (F-004, F-005, F-006, F-009, F-010, F-011), 7 proposed (operator decides) |
-| low | 29 | 15 | 13 | 1 | proposed (operator decides) |
+| medium | 13 | 8 | 4 | 1 | all 13 fixed (F-004, F-005, F-006, F-009, F-010, F-011 in 0.5.x; F-007, F-008, F-012, F-013, F-014, F-015, F-016 in 0.6.0) |
+| low | 29 | 15 | 13 | 1 | F-029 fixed and F-028 (orphan files) fixed in 0.6.0 (F-028 quota part open); rest proposed (operator decides) |
 | informational | 5 | 1 | 4 | 0 | proposed (operator decides) |
 | **total** | **50** | 27 | 21 | 2 | |
 
-Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; medium findings F-004, F-005, F-006, F-009, F-010 and F-011 are `fixed` (feature 006, verified by the experiments listed in their sections, `review/rerun-2.md`); all other medium, low and informational findings stay `proposed`. The state of F-001 to F-003 (feature 004) is tracked in the next table and was not changed by feature 006.
+Lifecycle status values of the data model (`fixed`, `tracked`, `accepted`) are set in section 7 and in the findings table once the operator has decided; all medium findings are `fixed`: F-004, F-005, F-006, F-009, F-010 and F-011 (feature 006, `review/rerun-2.md`) and F-007, F-008, F-012, F-013, F-014, F-015, F-016 (features 007, 008, 009, release 0.6.0, verified by the experiments listed in their sections, `review/rerun-3.md`); of the low findings F-029 is `fixed` and F-028 is `fixed` for the orphan-file part (per-user quota still open); all other low and informational findings stay `proposed`. The state of F-001 to F-003 (feature 004) is tracked in the next table and was not changed by feature 006.
 
 ### Critical and high findings (to be fixed in feature 004)
 
@@ -31,9 +31,9 @@ No critical finding was identified. The three high findings are being fixed in p
 
 ### Headline results
 
-* 247 experiments in the latest run (profile `--quick`, `review/rerun-2.md`, after the fixes of feature 006): 206 passed, 40 failed (39 stable plus the intermittent E-A10-001), 1 skipped. The previous run (`review/rerun-1.md`, before any fix) had 151 passed and 94 failed. Every remaining failure is a real, still open weakness (no test or rig defect remains); they collapse into the unfixed findings below (F-007, F-014, F-017, F-022, F-023, F-028, F-029, F-031, F-032, F-033, F-034, F-035, F-037, F-046 and the OCR/IdP failure-mapping parts of F-026).
+* 277 experiments in the latest run (profile `--quick`, `review/rerun-3.md`, release 0.6.0 = features 006 to 009): 257 passed, 19 failed (plus the intermittent E-A10-001, which passed in the final run), 1 skipped. Rerun-2 had 206 passed and 40 failed (247 tests), rerun-1 151 passed and 94 failed. Every remaining failure is a real, still open low-severity weakness (no test or rig defect remains; no medium or high finding is open); they collapse into the unfixed findings F-017, F-022, F-023, F-031, F-032, F-033, F-034, F-035, F-026, F-037, F-046.
 * The access-control core holds: direct access by ID, listings and the streaming bulk scan never leaked foreign objects, traversal and symlink variants are refused, JWT forgery variants (alg none, wrong key, algorithm confusion, tampering) are rejected, SQL and XSS payloads are stored inert, and the frontend has no raw HTML sinks.
-* The weaknesses cluster around: group claim handling and rate-limit key (F-001, F-002), a process-wide stall under parallel logins (F-003), tenant isolation of uploaded images (F-004), role boundaries (F-005, F-006), token lifecycle (F-007, F-008), startup validation of secrets (F-009), missing audit logging (F-010) and input/resource limits (F-011, F-012, F-023).
+* The weaknesses cluster around: group claim handling and rate-limit key (F-001, F-002), a process-wide stall under parallel logins (F-003), tenant isolation of uploaded images (F-004), role boundaries (F-005, F-006), token lifecycle (F-007, F-008, fixed in 0.6.0), startup validation of secrets (F-009), missing audit logging (F-010) and input/resource limits (F-011, F-012, F-023; F-012 fixed in 0.6.0).
 * Tooling found no hard-coded real secrets (gitleaks history clean), no High/Critical SAST findings, no production npm advisories and no exploitable dependency path.
 
 ## 2. Coverage matrix
@@ -67,16 +67,16 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-004 | medium | A01 | backend | Client supplied `image_path` is trusted: cross-tenant file reference, foreign OCR, delete and serve-check bypass | confirmed by experiment E-A01-002 / E-UP-001 | fixed (spec 006) |
 | F-005 | medium | A01 | backend | Property role `manager` can manage membership and promote itself to property admin | confirmed by experiment E-A01-003 | fixed (spec 006) |
 | F-006 | medium | A01 | backend | Global admin can demote the superadmin; break-glass role is never restored | confirmed by experiment E-A01-003 | fixed (spec 006) |
-| F-007 | medium | A07 | backend, frontend | No token revocation, logout is a no-op, `exp` not required, stale privileges after IdP removal | confirmed by experiment E-A06-003 / E-A04-001 | proposed |
-| F-008 | medium | A07 | backend, frontend | Session JWT is delivered in the URL query string (`/auth/token?token=...`) | confirmed by reading | proposed |
+| F-007 | medium | A07 | backend, frontend | No token revocation, logout is a no-op, `exp` not required, stale privileges after IdP removal | confirmed by experiment E-A06-003 / E-A04-001 | fixed (feature 007, 0.6.0) |
+| F-008 | medium | A07 | backend, frontend | Session JWT is delivered in the URL query string (`/auth/token?token=...`) | confirmed by reading | fixed (feature 007, 0.6.0) |
 | F-009 | medium | A02 | backend, compose | Weak JWT secret and weak or half-configured superadmin credentials are accepted at startup | confirmed by experiment E-A02-001 | fixed (spec 006) |
 | F-010 | medium | A09 | backend | No security event logging; callback code and state appear in the access log | confirmed by experiment E-A09-001 | fixed (spec 006) |
 | F-011 | medium | A10 | backend, ocr-service | Image decompression and 4x upscale memory amplification; no pixel cap | confirmed by experiment E-UP-001 (acceptance); resource effect not measured | fixed (spec 006) |
-| F-012 | medium | A10 | backend, chart | Bulk scan reads all uploaded files into memory before any size check; no body limit on the Kubernetes path | confirmed by reading | proposed |
-| F-013 | medium | A10 | backend | DB connection pinned for the whole streamed LLM run in bulk scan | suspected | proposed |
-| F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | fixed in feature 009 (migration 0008) |
-| F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | fixed in feature 009 |
-| F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | fixed in feature 009 (chart) |
+| F-012 | medium | A10 | backend, chart | Bulk scan reads all uploaded files into memory before any size check; no body limit on the Kubernetes path | confirmed by reading | fixed (feature 008, 0.6.0) |
+| F-013 | medium | A10 | backend | DB connection pinned for the whole streamed LLM run in bulk scan | suspected, verified fixed by E-A10-004 | fixed (feature 008, 0.6.0) |
+| F-014 | medium | A02 | backend, migrations | Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database | confirmed by experiment E-A05-001 | fixed in feature 009 (migration 0008, 0.6.0), verified by E-A02-003 |
+| F-015 | medium | A02 | compose | Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces | confirmed by reading | fixed in feature 009 (0.6.0) |
+| F-016 | medium | A02 | chart | NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy | confirmed by reading | fixed in feature 009 (chart, 0.6.0) |
 | F-017 | low | A06 | backend | OIDC login CSRF: state is not bound to the initiating browser | confirmed by experiment E-A06-004 | proposed |
 | F-018 | low | A07 | backend | Missing or empty `sub` claim matches the superadmin row (`oidc_sub IS NULL`) | confirmed by reading | proposed |
 | F-019 | low | A06 | backend | Username/e-mail collisions give 500 on login or silent account confusion | confirmed by experiment (side effect in run 1; dedicated experiment pending) | proposed |
@@ -88,8 +88,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 | F-025 | low | A10 | backend | Startup depends on an external fetch and unguarded oil-price DB writes | confirmed by reading | proposed |
 | F-026 | low | A06 | backend | Unauthenticated `/auth/login` writes to the database per call; IdP outage gives 500 and no negative cache | confirmed by experiment E-A10-002 | proposed |
 | F-027 | low | A09 | backend | Oil-price API key can be written to the log | confirmed by reading | proposed |
-| F-028 | low | A10 | backend | Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files | confirmed by experiment E-A10-002 / E-A08-001 | proposed |
-| F-029 | low | A08 | backend, ocr-service | LLM and OCR-service output is not validated or bounded; malformed OCR JSON gives 500; EXIF date is free text | confirmed by experiment E-A08-001 / E-UP-001 | proposed |
+| F-028 | low | A10 | backend | Any authenticated user can consume LLM/OCR resources; failed scans leave orphan files | confirmed by experiment E-A10-002 / E-A08-001 | partly fixed (feature 008, 0.6.0: orphan files) |
+| F-029 | low | A08 | backend, ocr-service | LLM and OCR-service output is not validated or bounded; malformed OCR JSON gives 500; EXIF date is free text | confirmed by experiment E-A08-001 / E-UP-001 | fixed (feature 008, 0.6.0) |
 | F-030 | low | A07 | ocr-service, chart | OCR service has no authentication and relies on network isolation | confirmed by reading | proposed |
 | F-031 | low | A02 | backend | API documentation and verbose health endpoint are public | confirmed by experiment E-A02-002 | proposed |
 | F-032 | low | A08 | backend | Scan stores undecoded, truncated or broken images | confirmed by experiment E-UP-001 | proposed |
@@ -224,7 +224,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A06-003 `privilege_not_kept_after_idp_removal`; E-A04-001 `token_without_expiry_rejected`, `malformed_exp_rejected[inf]`.
 * **evidence**: Second sign-in after group removal is refused but old token and DB role remain; token without `exp` and with infinite `exp` are accepted (HTTP 200). Role claim in the token is ignored (pass).
 * **recommendation**: Require `exp` (`claims_options`), reject non-finite and absurd lifetimes, add `iat`/`jti` plus per-user `token_valid_after`, make logout bump it, deactivate or demote on group rejection, add an admin endpoint for `is_active`, consider shorter lifetime with refresh rotation.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 007, 0.6.0)
+* **fix**: fixed in feature 007 (release 0.6.0): users.token_version counter; every JWT carries `tv` and `iat` and `get_current_user` rejects a token whose `tv` differs from the database (missing, stale, future and wrong-typed `tv` all give 401); `POST /auth/logout` bumps the counter; role change by an admin, role change at sign-in and removal of all permitted IdP groups bump it too. Verified by E-A07-006 (`logout_revokes_token`, `logout_does_not_touch_other_users`), E-A07-007 (`admin_role_change_revokes_sessions`, `role_change_at_signin_revokes_older_token`, `idp_group_removal_revokes_sessions`), E-A06-003 (`privilege_not_kept_after_idp_removal`, now passing), E-A04-001 (`token_version_claim_enforced` x5, `token_without_expiry_rejected`, `malformed_exp_rejected`). Not done: `is_active` admin endpoint and refresh rotation (the lifetime stays 60 minutes).
 * **source**: backend B-04, frontend FE-02, triage-group1/2
 
 ### F-008 Session JWT is delivered in the URL query string (`/auth/token?token=...`)
@@ -240,7 +241,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only. E-A09-001 covers the sibling exposure (callback `code`/`state` in the access log); a rig grep for `token=eyJ` after a login would confirm it.
 * **evidence**: Code path is explicit; E-A09-001 fails because the access log carries the callback URL.
 * **recommendation**: Deliver the token in the URL fragment or via an HttpOnly Secure SameSite=Lax cookie / one-time code exchanged by POST; until then strip query strings from ingress and static-server access logs.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 007, 0.6.0)
+* **fix**: fixed in feature 007 (release 0.6.0): the callback redirects to `<app>/auth/token#code=<one-time code>`; the code (60 s, only its SHA-256 stored in `login_codes`) is exchanged by `POST /auth/exchange` for the JWT; the SPA reads the fragment, which is never sent to a server. Verified by E-A07-005 (`redirect_carries_code_not_jwt`: no `eyJ`/`token=` in the Location header; `code_is_single_use`, `expired_and_unknown_codes_refused`, `parallel_replay_exactly_one_winner`: 15 parallel exchanges, exactly one 200) and E-A09-001 (no JWT or login code in the backend log).
 * **source**: backend B-03, frontend FE-01
 
 ### F-009 Weak JWT secret and weak or half-configured superadmin credentials are accepted at startup
@@ -307,7 +309,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading only; E-UP-001 `size_limit_enforced` (single scan, mutant `size-check-removed`) passes and confirms the single-file path is bounded.
 * **evidence**: Single scan is bounded with `read(MAX+1)`; bulk path is not.
 * **recommendation**: Traefik `buffering` middleware with `maxRequestBodyBytes`, `Content-Length` check, bounded per-file read with early reject, process one file at a time.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 008, 0.6.0)
+* **fix**: fixed in feature 008 (release 0.6.0): bulk scan reads in chunks against a cumulative budget (`MAX_BULK_TOTAL_BYTES`, default 50 MiB, 413) and file count (`MAX_BULK_FILES`, 400), a route-level ASGI limit refuses a declared or streamed body over budget plus 1 MiB with 413 before the form is parsed, and the chart adds a Traefik buffering middleware. Verified by E-A10-003 `bulk_scan_limits` (over budget 413 without stored file or OCR/gateway call, too many files 400, declared Content-Length 413 from the headers alone, chunked body 413, control request streams) and E-UP-001 `size_limit_enforced`. The rig exercise found that the streamed (chunked) case answered 400 "error parsing the body" instead of 413; fixed in `backend/app/body_limit.py` with the regression test `backend/tests/test_bulk_scan_limits.py::test_chunked_body_over_route_limit_is_413`. The Traefik middleware is verified by reading/`helm template` only.
 * **source**: backend B-08
 
 ### F-013 DB connection pinned for the whole streamed LLM run in bulk scan
@@ -323,7 +326,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Not yet run: needs a gateway stand-in with 120 s latency and 35 parallel bulk scans (planned in the experiment priorities).
 * **evidence**: -
 * **recommendation**: Do DB work up front, close or commit before streaming, open short sessions inside the generator, cap concurrent bulk jobs per user and globally.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 008, 0.6.0)
+* **fix**: fixed in feature 008 (release 0.6.0): the request session is released before streaming and every step of the generator opens its own short session. Verified by the new experiment E-A10-004 (`bulk_scan_holds_no_db_transaction_while_gateway_is_slow`: with the gateway answering after 9 s no `idle in transaction` session of the application role exists) and by `backend/tests/test_bulk_scan_limits.py::test_no_db_session_open_while_llm_runs`. Status upgraded from suspected to confirmed fixed.
 * **source**: backend B-09
 
 ### F-014 Enum drift between SQLAlchemy models and the initial migration breaks meter creation on a migration-built database
@@ -339,7 +343,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A05-001 `enum_members_do_not_crash`.
 * **evidence**: 500 with `invalid input value for enum meterunit: "kwh"` / `integrationtype: "smart_meter"` on the rig database (migration built).
 * **recommendation**: Check how production was created, then add a migration aligning the enum types with the models (or change the models), add a test on PostgreSQL built by Alembic.
-* **planned disposition**: proposed
+* **planned disposition**: fixed in feature 009 (0.6.0)
+* **fix**: fixed in feature 009 (migration 0008, release 0.6.0). Verified on the migration-built rig database by E-A02-003 (all 9 meter type x unit pairs including kWh and L are created and take a reading; all 4 integration types including `smart_meter` are stored and read back) and E-A05-001 `enum_members_do_not_crash` (now passing).
 * **source**: rerun-1 new candidate; backend.md Alembic note
 
 ### F-015 Docker Compose ships weak defaults and publishes the backend and Ollama on all interfaces
@@ -355,7 +360,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading; tooling TL-6 and trivy misconfig; consequences of the secrets are experiment-confirmed in F-009.
 * **evidence**: Documented as development stack, README documents `admin123`.
 * **recommendation**: Bind to `127.0.0.1:`, drop `ports` for ollama/backend, require variables via `.env` (`${VAR:?}`), `DEBUG` false, pin image tags, add hardening options and healthchecks.
-* **planned disposition**: proposed
+* **planned disposition**: fixed in feature 009 (0.6.0)
+* **fix**: fixed in feature 009 (release 0.6.0): Compose binds to loopback, no published Ollama/backend ports, required variables via `${VAR:?}`, hardening options and healthchecks. Verified by reading and `docker compose config` only; no rig experiment exists for Compose.
 * **source**: deployment DEP-01, tooling TL-6/section 9
 
 ### F-016 NetworkPolicy off by default; when on, ingress source defaults to every pod in the cluster; no egress policy
@@ -371,7 +377,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading and `helm template`; live enforcement not verifiable from the repository.
 * **evidence**: Postgres policy is correct (backend only); chart pods are hardened (non-root, read-only root fs, drop ALL).
 * **recommendation**: Make `ingressFrom` required, add egress rules (DNS, postgres, gateway, OIDC), enable by default when `ocr.enabled`; verify enforcement on the cluster.
-* **planned disposition**: proposed
+* **planned disposition**: fixed in feature 009 (0.6.0)
+* **fix**: fixed in feature 009 (chart, release 0.6.0): NetworkPolicy with safe defaults and egress rules. Verified by reading and `helm template` only; live enforcement is not verifiable from the repository. Reduces the exposure of F-030 but does not add authentication to the OCR service.
 * **source**: deployment DEP-06, DEP-10
 
 ### F-017 OIDC login CSRF: state is not bound to the initiating browser
@@ -563,7 +570,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A08-001 `failed_scan_leaves_no_orphan_file` (gateway_down, gateway_unauthorized); E-A10-002 `gateway_ocr_failure_modes_fail_closed` (4 params), `optional_subsystems_unconfigured` (2 params).
 * **evidence**: 503/502 returned but the PNG remains in the upload directory in all 8 cases.
 * **recommendation**: try/finally unlink (also serial crops), check engine availability before writing, per-user quota and global concurrency limit, require property assignment, disk quota.
-* **planned disposition**: proposed
+* **planned disposition**: partly fixed (feature 008, 0.6.0); quota part proposed
+* **fix**: orphan-file part fixed in feature 008 (release 0.6.0): files and registry rows of failed scans are removed. Verified by E-A08-001 `failed_scan_leaves_no_orphan_file` x2 and E-A10-002 `gateway_ocr_failure_modes_fail_closed` x6, `optional_subsystems_unconfigured` x2 (all passing; rerun-2: 8 failing). Still open: per-user quota and global concurrency limit for authenticated users (design decision).
 * **source**: backend B-24; triage-group2/3
 
 ### F-029 LLM and OCR-service output is not validated or bounded; malformed OCR JSON gives 500; EXIF date is free text
@@ -579,7 +587,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: E-A08-001 `gateway_hostile_response_validated`, `ocr_hostile_response_validated` (huge, nested, types, reading_equals_serial, garbage), `hostile_output_never_stored`, `bulk_scan_hostile_stream_wellformed`; E-UP-001 `exif_date_abuse_and_oversize_exif`. Mutant `gateway-output-trusted`.
 * **evidence**: 10 + 1 tests fail; gateway down/unauthorized/slow, serial-to-foreign-meter and ok controls pass.
 * **recommendation**: Shared `_sanitize_result` (value regex, serial `^[A-Za-z0-9]{1,64}$`, equality guard), pydantic model for the OCR response with size cap, map ValueError/RecursionError to 503, validate EXIF date with a strict pattern.
-* **planned disposition**: proposed
+* **planned disposition**: fixed (feature 008, 0.6.0)
+* **fix**: fixed in feature 008 (release 0.6.0): shared sanitizers (reading 3 to 12 digits, serial `[A-Za-z0-9./]{1,64}`, equality guard on both paths), OCR-service response validated, garbage answers map to 502, EXIF date validated. Verified by E-A08-001 (`gateway_hostile_response_validated`, `ocr_hostile_response_validated` x5, `hostile_output_never_stored`, `bulk_scan_hostile_stream_wellformed`, `model_serial_cannot_reach_foreign_meters`), E-A10-002 `gateway_ocr_failure_modes_fail_closed` (garbage), E-UP-001 `exif_date_abuse_and_oversize_exif`; all passing (rerun-2: 11 failing).
 * **source**: backend B-25/B-28; triage-group3
 
 ### F-030 OCR service has no authentication and relies on network isolation
@@ -595,7 +604,8 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 * **reproduction**: Reading; bandit B104 triaged as by design.
 * **evidence**: -
 * **recommendation**: Shared-secret header check (backend already sends `OCR_API_KEY`), size limit, enable NetworkPolicy by default.
-* **planned disposition**: proposed
+* **planned disposition**: proposed (mitigated by the F-016 fix)
+* **fix**: not fixed. Feature 009 (F-016) adds NetworkPolicy defaults for the chart, which narrows who can reach the OCR service (reading only); the service still has no authentication of its own.
 * **source**: backend B-25; deployment DEP-10
 
 ### F-031 API documentation and verbose health endpoint are public
@@ -920,36 +930,42 @@ Ordered by severity, then ID. Planned disposition: `fix in 004` for critical/hig
 
 ## 4. Experiments
 
-Latest run: `scripts/security-rig.sh --quick` (rerun-2, after the fixes of feature 006): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter), backend started with `--no-proxy-headers` and `TRUSTED_PROXIES=10.255.255.0/24` like the production image. 247 tests, **206 passed, 40 failed (39 stable, plus E-A10-001 which is intermittent), 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), 7 min 44 s pytest. Every failure is a real application weakness. History: full-run-1 had 119 failures of which 33 were test/rig defects (fixed in rerun-1); rerun-1 had 94 failures (151 passed, 246 tests); the first run after the feature-006 fixes had 43 failures, 6 of which were test/rig defects caused by the stricter rules (fixed in rerun-2, see `review/rerun-2.md`).
+Latest run: `scripts/security-rig.sh --quick` (rerun-3, release 0.6.0 = features 006 to 009): races 20 rounds, 30 parallel sign-ins, limiter disabled rig-wide (only E-A07-001 restarts with the real limiter, E-A10-003 restarts with small bulk limits), backend started with `--no-proxy-headers` and `TRUSTED_PROXIES=10.255.255.0/24` like the production image. 277 tests, **257 passed, 19 failed (plus E-A10-001, intermittent: failed in one run, passed in the final one), 1 skipped** (A02 needs `SEC_RIG_APP_DEBUG=false`), about 8 min pytest. Every failure is a real application weakness of a low finding that is still open (`review/rerun-3.md`); the rig and experiment helpers were adapted to feature 007 (token minting reads `users.token_version`, sign-in exchanges the one-time code).
 
 | ID | Goal | Result (rerun-2) | Failing tests (fail / total items) | Findings |
 |---|---|---|---|---|
-| E-A01-001 | Every endpoint requires authentication (OpenAPI enumeration) | pass | 0 / 1 | - |
+| E-A01-001 | Every endpoint requires authentication (OpenAPI enumeration) | pass (`POST /auth/exchange` added to the public allow-list: it needs no bearer token, the one-time code is the credential) | 0 / 1 | - |
 | E-A01-002 | Cross-tenant access by ID, listings, streaming bulk scan, filename reference, unattached upload, hint-rescan | pass (was FAIL, 6 failed) | 0 / 10 | F-004 fixed, F-036 |
 | E-A01-003 | Role matrix for admin and property levels, manager escalation, admin vs superadmin | pass (was FAIL, 2 failed) | 0 / 22 (property-level matrix now expects 403 for manager on property PATCH and membership changes) | F-005, F-006 fixed |
 | E-A01-004 | Upload path traversal, symlink, stored image path cannot reach other files | pass | 0 / 3 | - |
 | E-A01-005 | Extra fields, foreign `replaced_by_id`, privileged fields on own account | FAIL | 1 failed (foreign meter reference) | F-037 |
-| E-A01-006 | Outbound URLs never request controlled, stored integration config | FAIL | 1 failed (`unit` kWh gives 500 on a migration-built DB, SSRF half not reached) | F-014, F-023 |
+| E-A01-006 | Outbound URLs never request controlled, stored integration config | FAIL (now 2 items: `dict` and `json_string` form of `integration_config`) | 1 failed: `dict` gives 500 (schema `Optional[Any]` vs `Text` column: psycopg2 cannot adapt a dict); `json_string` passes, so the SSRF half (never fetched, never echoed) now runs and holds; the enum cause (F-014) is gone | F-023 |
 | E-A02-001 | Startup refuses unsafe configuration | pass (was FAIL, 19 failed) | 0 / 24 | F-009 fixed |
 | E-A02-002 | Public docs, headers, banners, health detail, error bodies, CORS, request id | FAIL | 5 failed (docs x2, health detail, authenticated error bodies, request id reflection); the remaining items pass | F-031, F-023, F-046 |
-| E-A04-001 | JWT forgery and malformed tokens | FAIL | 1 failed (header `zip: DEF` accepted, token still verifies); alg list header, missing `exp`, `exp` infinity and `sub` int/bool/list/dict now pass (were 7 failed; fixed in the backend since rerun-1: mandatory finite `exp`, string-only `sub`, malformed headers mapped to 401), 52 pass | F-034, F-007 |
-| E-A05-001 | Injection in JSON, query, path, multipart, headers, enums; SQL payloads inert | FAIL | 4 failed (json fields, query/path, multipart, enum members); header injection and SQL-inert pass | F-023, F-014 |
+| E-A04-001 | JWT forgery and malformed tokens | FAIL (tokens built with `tv`/`iat` like the app issues them; new `token_version_claim_enforced` x5 passes) | 1 failed (header `zip: DEF` accepted, token still verifies); 57 pass | F-034, F-007 (fixed) |
+| E-A05-001 | Injection in JSON, query, path, multipart, headers, enums; SQL payloads inert | FAIL | 3 failed (json fields, query/path, multipart); `enum_members_do_not_crash` now passes (F-014 fixed); header injection and SQL-inert pass | F-023 |
 | E-A05-002 | Stored XSS round trip, error bodies, SSE echo, frontend sinks | pass (markup in `image_path` is now refused with 4xx, markup in `note` etc. is stored inert) | 0 / 4 | - |
 | E-A06-001 | Parallel first sign-in yields one user | pass (30 sign-ins); fails at 32+ (ad-hoc), see F-003 | 0 / 1 | F-003 |
 | E-A06-002 | Races: same image hash, identical readings | FAIL | 3 failed (same_hash x2: 2 to 4 responses 201 for one hash; identical reading: 20 rows); fail-fast after 5 failing rounds | F-022 |
-| E-A06-003 | Role change vs sign-in, privilege after IdP removal | FAIL | 1 failed (privilege kept after IdP removal); role change vs sign-in passes (20 rounds) | F-007 |
+| E-A06-003 | Role change vs sign-in, privilege after IdP removal | pass (was FAIL: privilege kept after IdP removal; role change vs sign-in 20 rounds) | 0 / 2 | F-007 fixed |
 | E-A06-004 | State replay, parallel reuse, expiry/forgery, browser binding | FAIL | 1 failed (state not bound to browser); replay, parallel reuse (20 rounds) and forged/expired state pass | F-017 |
 | E-A07-001 | Brute-force limiter, X-Forwarded-For bypass, trusted-proxy rightmost rule | pass (3 tests incl. new `trusted_proxy_rightmost_untrusted_entry_is_the_key`) | 0 / 3 | F-002 (fixed in 004) |
 | E-A07-002 | PKCE parameters, verifier mismatch | pass | 0 / 2 | - |
 | E-A07-003 | Group claim shapes (36 parameter sets) | pass | 0 / 36 | F-001 (fixed in 004) |
 | E-A07-004 | Non-ASCII and malformed superadmin credentials | pass | 0 / 1 | F-020 |
-| E-A08-001 | Hostile gateway/OCR responses, failure mapping, orphan files, stream well-formedness | FAIL | 10 failed (gateway huge; OCR huge, nested, types, reading==serial, garbage; never-stored; orphan x2; bulk stream); controls, down/unauthorized/slow and foreign-serial pass | F-029, F-028 |
-| E-A09-001 | No secrets in logs, security events present | pass (was FAIL) | 0 / 1 | F-010 fixed |
-| E-A10-001 | PostgreSQL stopped mid-request | FAIL in this run (intermittent: passed in the previous run of the same code) | 0 or 1 | F-035 |
-| E-A10-002 | IdP and gateway/OCR failure modes, slow backends, unconfigured subsystems | FAIL | 9 failed (IdP slow, cold-cache login, orphan x4, OCR garbage, unconfigured x2); IdP down and slow gateway/OCR bounded pass | F-026, F-028, F-029 |
-| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | FAIL | 3 failed (truncated, EXIF GPS, EXIF date); decompression bomb and foreign adoption now pass (was 5 failed), 12 pass | F-032, F-033, F-029; F-011, F-004 fixed |
+| E-A07-005 | Login code exchange: JWT never in the redirect, code in the fragment, single use, expired/unknown/malformed codes, 15 parallel redeems | pass (new) | 0 / 4 | F-008 fixed |
+| E-A07-006 | Logout revokes the token and all other tokens of the user, harmless with invalid token, other users unaffected | pass (new) | 0 / 2 | F-007 fixed |
+| E-A07-007 | Admin role change, role change at sign-in and IdP group removal revoke older tokens; unchanged role does not | pass (new) | 0 / 3 | F-007 fixed |
+| E-A08-001 | Hostile gateway/OCR responses, failure mapping, orphan files, stream well-formedness | pass (was FAIL, 10 failed) | 0 / 23 | F-029, F-028 fixed |
+| E-A09-001 | No secrets in logs, security events present | pass (also covers the one-time login code and the exchanged JWT as log needles) | 0 / 1 | F-010 fixed |
+| E-A02-003 | Every meter type x unit (9) and every integration type (4) creatable on the migration-built database | pass (new) | 0 / 13 | F-014 fixed |
+| E-A10-001 | PostgreSQL stopped mid-request | FAIL in some runs (intermittent: failed in the first rerun-3 run, passed in the final one) | 0 or 1 | F-035 |
+| E-A10-002 | IdP and gateway/OCR failure modes, slow backends, unconfigured subsystems | FAIL | 2 failed (IdP slow, cold-cache login); orphan x4, OCR garbage, unconfigured x2 and OCR failure modes now pass | F-026; F-028, F-029 fixed |
+| E-A10-003 | Bulk scan limits with small `MAX_BULK_TOTAL_BYTES`/`MAX_BULK_FILES`: 413 over budget, 400 over count, 413 for declared and chunked oversize bodies, nothing stored, no OCR/LLM call, control streams | pass (new; the chunked case found a 400 instead of 413, fixed in `body_limit.py`) | 0 / 1 | F-012 fixed |
+| E-A10-004 | No `idle in transaction` database session while a bulk scan waits 9 s for the gateway | pass (new) | 0 / 1 | F-013 fixed |
+| E-UP-001 | Uploads: magic bytes, polyglots, size, bombs, truncated, EXIF, filenames, duplicates, adoption | FAIL | 2 failed (truncated/broken images stored, EXIF GPS kept); EXIF date abuse passes (was failing), 13 pass | F-032, F-033; F-029, F-011, F-004 fixed |
 
-Per file (pass / fail): A01 38/2, A02 34/5 (+1 skip), A04 52/1, A05 6/4, A06 5/5, A07 42/0, A08 13/10, A09 1/0, A10 3/10 (counting E-A10-001), uploads 12/3. Sum 206 passed, 40 failed, 1 skipped (247). Rerun-1 for comparison: A01 30/10, A02 15/24, A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9, uploads 10/5 (246 tests).
+Per file (pass / fail), rerun-3: A01 39/2, A02 34/5 (+1 skip), A04 57/1, A05 7/3, A06 6/4, A07 42/0 plus new session file (E-A07-005..007, E-A10-003/004, E-A02-003) 24/0, A08 23/0, A09 1/0, A10 11/2 (E-A10-001 intermittent, counted passing), uploads 13/2. Sum 257 passed, 19 failed, 1 skipped (277). Rerun-2: A01 38/2, A02 34/5 (+1 skip), A04 52/1, A05 6/4, A06 5/5, A07 42/0, A08 13/10, A09 1/0, A10 3/10, uploads 12/3 (247 tests). Rerun-1: A01 30/10, A02 15/24, A04 46/7, A05 6/4, A06 5/5, A07 22/19, A08 13/10, A09 0/1, A10 4/9, uploads 10/5 (246 tests).
 Slowest tests (rerun-2 `--durations`): A05-001 json fields 82 s, A05-001 query 55 s, A06-001 40 s, A08 ocr_slow 30 s; all others below 20 s.
 Race experiments: quick profile 20 rounds with 30 parallel sign-ins / 20 parallel writes; the specification's 100-repetition profile is `scripts/security-rig.sh` without `--quick`. Failure rates observed: A06-002 same hash produced 2 to 4 successful creations for one hash (fail-fast after 5 failing rounds, F-022 unfixed); A06-001, A06-003 role change and A06-004 replay/parallel reuse had 0 failing rounds out of 20.
 
@@ -1010,7 +1026,8 @@ Accepted risks and operator decisions are recorded here with reason and owner. A
 | F-002 | fix in 004 | severity high | repository owner | - | fixed in v0.4.1 (PR #12) |
 | F-003 | fix in 004 | severity high | repository owner | - | fixed in v0.4.1 (PR #12) |
 | F-004, F-005, F-006, F-009, F-010, F-011 | fixed (feature 006, spec `specs/006-security-medium-fixes/`) | small, well understood, protect tenant isolation, privileges, secrets and availability; verified by the experiments named in section 3 (rerun-2) | repository owner | 2026-10-17 | feature 006 |
-| F-007, F-008, F-012 to F-016 (medium) | operator decides | see section 3, one row per ID when decided | repository owner | - | - |
-| F-017 to F-050 (low / informational) | operator decides | candidates for accepted risk: F-042 (sessionStorage), F-045, F-046, F-047, F-048, F-049 | repository owner | - | - |
+| F-007, F-008, F-012, F-013, F-014, F-015, F-016 | fixed (features 007, 008, 009, release 0.6.0) | the last open medium findings; verified by E-A07-005 to E-A07-007, E-A10-003, E-A10-004, E-A02-003 (rig) and by reading/`helm template` for the Compose and chart parts (F-015, F-016, Traefik middleware of F-012) | repository owner | 2026-10-17 | features 007, 008, 009 |
+| F-028 (orphan files), F-029 | fixed (feature 008, release 0.6.0) | verified by E-A08-001, E-A10-002, E-UP-001; the per-user quota part of F-028 stays proposed | repository owner | 2026-10-17 | feature 008 |
+| F-017 to F-050 except F-028, F-029 (low / informational) | operator decides | candidates for accepted risk: F-042 (sessionStorage), F-045, F-046, F-047, F-048, F-049 | repository owner | - | - |
 
 Review limits: the rig runs the backend on a loopback address against synthetic stand-ins (IdP, gateway, OCR); results for infrastructure items are by reading only. Experiment IDs are stable and can be re-run with `scripts/security-rig.sh` after each fix.

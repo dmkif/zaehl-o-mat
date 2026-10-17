@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, text
 from idp_helpers import (
     ADMIN_GROUP, USER_GROUP, authorize, barrier, callback, cfg, get_client, make_meter, me,
     new_http, run_rounds, set_claims, signin, start_flow, status_of, token_of, unique_identity,
-    users_by_email,
+    users_by_email, exchange_token,
 )
 
 ROUNDS = int(os.environ.get("RIG_RACE_ROUNDS", "100"))
@@ -73,8 +73,9 @@ async def test_E_A06_001_parallel_first_signin_one_user(rig, client, oidc, barri
             assert not [c for c in codes if c >= 500 or c == -1], f"5xx/errors among sign-ins: {sorted(set(codes))}; {[r for r in results if not hasattr(r, 'status_code')][:2]}"
             assert all(c in (302, 303, 307) for c in codes), f"legit first sign-ins not all succeeded: {sorted(set(codes))}"
             tokens = [token_of(r) for r in results]
-            assert all(tokens), "sign-in without token"
-            ids = {(await me(http, tokens[i])).json()["id"] for i in (0, len(tokens) // 2, -1)}
+            assert all(tokens), "sign-in without login code"
+            jwts = [await exchange_token(http, tokens[i]) for i in (0, len(tokens) // 2, -1)]
+            ids = {(await me(http, t)).json()["id"] for t in jwts}
             rows = await users_by_email(admin, email)
             assert len(rows) == 1, f"{len(rows)} user rows for one identity"
             assert ids == {rows[0]["id"]}, "tokens belong to different users"

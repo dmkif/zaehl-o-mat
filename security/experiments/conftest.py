@@ -79,9 +79,27 @@ def seed(rig) -> dict:
     return json.loads(f.read_text())
 
 
+def db_token_version(rig, sub: str) -> int:
+    """users.token_version of ``sub`` straight from the rig DB (feature 007: get_current_user rejects a
+    token whose ``tv`` differs from this value)."""
+    from sqlalchemy import create_engine, text
+
+    eng = create_engine(rig["DATABASE_URL"])
+    try:
+        with eng.connect() as c:
+            row = c.execute(text("SELECT token_version FROM users WHERE id = :i"), {"i": sub}).first()
+    finally:
+        eng.dispose()
+    assert row is not None, f"no users row for {sub}"
+    return int(row[0])
+
+
 def mint_token(rig, sub: str, role: str | None = None, lifetime: timedelta = TOKEN_LIFETIME, **extra) -> str:
-    """Same as backend/app/auth.py create_access_token: HS256, claims sub/role/exp (int)."""
+    """Same as backend/app/auth.py issue_user_token: HS256, claims sub/role/tv/iat/exp (int); ``tv`` is read
+    from the rig DB unless the caller passes one (pass tv=<n> to forge a stale/foreign counter)."""
     payload = {"sub": sub, **({"role": role} if role else {}), **extra}
+    payload.setdefault("tv", db_token_version(rig, sub))
+    payload.setdefault("iat", int(datetime.now(timezone.utc).timestamp()))
     payload["exp"] = int((datetime.now(timezone.utc) + lifetime).timestamp())
     return JsonWebToken(["HS256"]).encode({"alg": "HS256"}, payload, rig["JWT_SECRET_KEY"]).decode()
 

@@ -47,7 +47,17 @@ def forge(header, payload, key: bytes | str | None, hash_name: str = "sha256", s
 
 
 def claims(sub: str, **extra) -> dict:
-    d = {"sub": sub, "role": "user", "exp": int(time.time()) + 600}
+    """Valid claim set as the app issues it (feature 007): sub/role/exp plus iat and the user's current ``tv``
+    (read from the rig DB); pass tv=<n> to override, so a forged variant differs in exactly one property."""
+    d = {"sub": sub, "role": "user", "exp": int(time.time()) + 600, "iat": int(time.time())}
+    if "tv" not in extra and isinstance(sub, str):
+        from conftest import STATE, _parse_env
+        from sec_common import token_version_of
+
+        if (STATE / "rig.env").exists():
+            tv = token_version_of(_parse_env(STATE / "rig.env"), sub)
+            if tv is not None:
+                d["tv"] = tv
     d.update(extra)
     return d
 
@@ -217,9 +227,32 @@ async def test_E_A04_001_token_without_expiry_rejected(http, rig, user_a_id):
     Expected (secure): 401. (Suspected weakness: the app calls `claims.validate()` without
     requiring `exp`, so a non-expiring token with a valid signature would be accepted.)
     """
-    payload = {"sub": user_a_id, "role": "user"}
+    payload = claims(user_a_id)  # complete incl. tv/iat, only `exp` is missing
+    del payload["exp"]
     tok = forge({"alg": "HS256"}, payload, rig["JWT_SECRET_KEY"])
     await _assert_rejected(http, tok, "no exp claim")
+
+
+@pytest.mark.security
+@pytest.mark.parametrize("variant", ["missing_tv", "stale_tv", "future_tv", "string_tv", "null_tv"])
+async def test_E_A04_001_token_version_claim_enforced(http, rig, user_a_id, variant):
+    """E-A04-001 / F-007 (feature 007): a correctly signed token whose `tv` is absent, differs from users.token_version
+    or has the wrong type is rejected with 401; the control with the exact `tv` is accepted."""
+    good = claims(user_a_id)
+    assert (await _call(http, forge({"alg": "HS256"}, good, rig["JWT_SECRET_KEY"]))).status_code == 200, "control failed"
+    bad = dict(good)
+    tv = good["tv"]
+    if variant == "missing_tv":
+        del bad["tv"]
+    elif variant == "stale_tv":
+        bad["tv"] = tv - 1
+    elif variant == "future_tv":
+        bad["tv"] = tv + 1
+    elif variant == "string_tv":
+        bad["tv"] = str(tv)
+    else:
+        bad["tv"] = None
+    await _assert_rejected(http, forge({"alg": "HS256"}, bad, rig["JWT_SECRET_KEY"]), f"tv variant {variant}")
 
 
 @pytest.mark.security
@@ -275,7 +308,9 @@ async def test_E_A04_001_tampered_token_rejected(http, rig, seed, user_a_id):
     await _assert_rejected(http, f"{p}.{h}.{s}", "swapped header/payload")
     await _assert_rejected(http, f"{good}.extra", "extra segment")
     await _assert_rejected(http, f"{h}.{p}", "two segments")
-    await _assert_rejected(http, good[:-1] + ("A" if good[-1] != "A" else "B"), "last char changed")
+    # the LAST base64url char of a 32-byte HMAC carries 2 padding bits: changing it can leave the decoded signature
+    # identical (a valid token, 1 in 4 runs) -> change the second to last char, which always alters the bytes
+    await _assert_rejected(http, good[:-2] + ("A" if good[-2] != "A" else "B") + good[-1], "inner signature char changed")
 
 
 @pytest.mark.security

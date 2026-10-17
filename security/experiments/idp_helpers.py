@@ -120,18 +120,42 @@ async def callback(http: httpx.AsyncClient, code: str, state: str, **kw) -> http
     return await http.get("/api/auth/callback", params={"code": code, "state": state}, **kw)
 
 
-def token_of(resp: httpx.Response) -> str | None:
+def code_of(resp: httpx.Response) -> str | None:
+    """Feature 007 (F-008): the callback redirects to <app>/auth/token#code=<one-time code>; the JWT is
+    never in the URL. Returns the code from the fragment (None if the response is no redirect with a code)."""
     if resp.status_code not in (301, 302, 303, 307, 308):
         return None
-    q = parse_qs(urlparse(resp.headers.get("location", "")).query)
-    return (q.get("token") or [None])[0]
+    loc = resp.headers.get("location", "")
+    return (parse_qs(urlparse(loc).fragment).get("code") or [None])[0]
+
+
+# a presence check ("a session was issued") now means "a login code was issued"; use exchange() for the JWT
+token_of = code_of
+
+
+def jwt_in_url(resp: httpx.Response) -> bool:
+    """True if a JWT (eyJ...) shows up anywhere in the redirect target (query or fragment)."""
+    loc = resp.headers.get("location", "") if resp.status_code in (301, 302, 303, 307, 308) else ""
+    return "eyJ" in loc or "token=" in urlparse(loc).query
+
+
+async def exchange(http: httpx.AsyncClient, code: str) -> httpx.Response:
+    return await http.post("/api/auth/exchange", json={"code": code})
+
+
+async def exchange_token(http: httpx.AsyncClient, code: str) -> str:
+    r = await exchange(http, code)
+    assert r.status_code == 200, f"/auth/exchange -> {r.status_code} {r.text[:200]}"
+    return r.json()["access_token"]
 
 
 async def signin(http: httpx.AsyncClient):
-    """Full flow; returns (callback_response, token_or_None, flow)."""
+    """Full flow; returns (callback_response, session_jwt_or_None, flow). The JWT comes from POST /auth/exchange."""
     flow = await authorize(http, await start_flow(http))
     resp = await callback(http, flow.code, flow.returned_state)
-    return resp, token_of(resp), flow
+    code = code_of(resp)
+    token = await exchange_token(http, code) if code else None
+    return resp, token, flow
 
 
 async def me(http: httpx.AsyncClient, token: str) -> httpx.Response:
