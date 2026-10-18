@@ -87,3 +87,15 @@ def accessible_property_ids(user: User):
         .where(PropertyUser.user_id == user.id)
         .scalar_subquery()
     )
+
+
+def property_roles(db: Session, user: User, property_ids: list[uuid.UUID]) -> dict[uuid.UUID, PropertyUserRole]:
+    """The caller's effective role per property (global admins: admin everywhere). Missing key = no role."""
+    if is_global_admin(user):
+        return {pid: PropertyUserRole.admin for pid in property_ids}
+    rows = (
+        db.query(PropertyUser.property_id, PropertyUser.role)
+        .filter(PropertyUser.user_id == user.id, PropertyUser.property_id.in_(property_ids))
+        .all()
+    )
+    return {pid: role for pid, role in rows}

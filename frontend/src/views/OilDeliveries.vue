@@ -7,7 +7,7 @@
       <span class="text-gray-400">/</span>
       <h1 class="text-2xl font-bold">{{ $t('oil.title') }}</h1>
       <button
-        v-if="authStore.isManager"
+        v-if="canWrite"
         @click="openCreate()"
         class="ml-auto px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium transition"
       >
@@ -17,7 +17,7 @@
 
     <p v-if="pageError" class="mb-4 text-sm text-red-600 dark:text-red-400">{{ pageError }}</p>
     <div v-if="loading" class="text-gray-500 dark:text-gray-400">{{ $t('common.loading') }}</div>
-    <div v-else-if="!deliveries.length" class="text-gray-500 dark:text-gray-400">{{ $t('oil.empty') }}</div>
+    <div v-else-if="!deliveries.length && !pageError" class="text-gray-500 dark:text-gray-400">{{ $t('oil.empty') }}</div>
 
     <div v-else class="flex flex-col gap-3">
       <div
@@ -37,13 +37,13 @@
         </div>
         <div class="flex gap-1 shrink-0">
           <button
-            v-if="authStore.isManager"
+            v-if="canWrite"
             class="text-gray-400 hover:text-yellow-500 transition-colors p-1"
             :title="$t('oil.edit')"
             @click="openEdit(d)"
           >✎</button>
           <button
-            v-if="authStore.isAdmin"
+            v-if="canDelete"
             class="text-gray-400 hover:text-red-500 transition-colors p-1"
             :title="$t('common.delete')"
             @click="deleteTarget = d"
@@ -127,7 +127,8 @@ import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
-import { buildDeliveryPayload, formatApiError, toLocalInput, type DeliveryForm } from '@/utils/oilDeliveries'
+import { buildDeliveryPayload, formatApiError, formatInputNumber, toLocalInput, type DeliveryForm } from '@/utils/oilDeliveries'
+import { usePropertyPerms } from '@/utils/usePropertyPerms'
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -136,6 +137,7 @@ const { t } = useI18n()
 
 const propertyId = route.params.propertyId as string
 const base = `/api/properties/${encodeURIComponent(propertyId)}/oil-deliveries`
+const { canWrite, canDelete, loadRole } = usePropertyPerms(propertyId)
 
 const loading = ref(true)
 const pageError = ref('')
@@ -201,9 +203,9 @@ function openEdit(d: any) {
   editId.value = d.id
   form.value = {
     delivered_at: toLocalInput(d.delivered_at),
-    liters: d.liters != null ? String(d.liters) : '',
-    total_price: d.total_price != null ? String(d.total_price) : '',
-    price_per_liter: d.price_per_liter != null ? String(d.price_per_liter) : '',
+    liters: formatInputNumber(d.liters),
+    total_price: formatInputNumber(d.total_price),
+    price_per_liter: formatInputNumber(d.price_per_liter),
     supplier: d.supplier ?? '',
     note: d.note ?? '',
   }
@@ -258,11 +260,11 @@ async function doDelete() {
 }
 
 onMounted(async () => {
-  await fetchDeliveries()
+  await Promise.all([fetchDeliveries(), loadRole()])
   // Pre-fill from the dashboard's "probable delivery" notice (?prefill_at=<iso>&prefill_liters=<n>)
   const at = route.query.prefill_at
   const liters = route.query.prefill_liters
-  if (authStore.isManager && typeof at === 'string') {
+  if (canWrite.value && typeof at === 'string') {
     const n = typeof liters === 'string' ? Number(liters) : NaN
     openCreate({
       delivered_at: toLocalInput(at),

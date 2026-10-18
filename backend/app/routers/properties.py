@@ -12,6 +12,7 @@ from app.permissions import (
     get_property_or_404,
     has_property_access,
     is_global_admin,
+    property_roles,
     require_property_access,
 )
 from app.schemas.properties import (
@@ -23,6 +24,16 @@ from app.schemas.properties import (
 )
 
 router = APIRouter(prefix="/properties", tags=["properties"])
+
+
+def _with_role(db: Session, user: User, props: list[Property]) -> list[PropertyResponse]:
+    roles = property_roles(db, user, [p.id for p in props])
+    out = []
+    for p in props:
+        item = PropertyResponse.model_validate(p)
+        item.my_role = roles.get(p.id)
+        out.append(item)
+    return out
 
 
 def _ip(request: Request):
@@ -61,12 +72,12 @@ def list_properties(
     current_user: User = Depends(get_current_user),
 ):
     if is_global_admin(current_user):
-        return db.query(Property).all()
+        return _with_role(db, current_user, db.query(Property).all())
     # Only properties the user is assigned to
-    return (
-        db.query(Property)
-        .filter(Property.id.in_(accessible_property_ids(current_user)))
-        .all()
+    return _with_role(
+        db,
+        current_user,
+        db.query(Property).filter(Property.id.in_(accessible_property_ids(current_user))).all(),
     )
 
 
@@ -80,7 +91,7 @@ def create_property(
     db.add(prop)
     db.commit()
     db.refresh(prop)
-    return prop
+    return _with_role(db, current_user, [prop])[0]
 
 
 @router.get("/{property_id}", response_model=PropertyResponse)
@@ -91,7 +102,7 @@ def get_property(
 ):
     prop = get_property_or_404(db, property_id)
     require_property_access(db, property_id, current_user, level="read")
-    return prop
+    return _with_role(db, current_user, [prop])[0]
 
 
 @router.patch("/{property_id}", response_model=PropertyResponse)
@@ -109,7 +120,7 @@ def update_property(
     db.commit()
     db.refresh(prop)
     log_event("property_update", actor=current_user.id, target=property_id, ip=_ip(request))
-    return prop
+    return _with_role(db, current_user, [prop])[0]
 
 
 @router.delete("/{property_id}", status_code=status.HTTP_204_NO_CONTENT)

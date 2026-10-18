@@ -119,6 +119,8 @@ export default {
     scanning: 'Erkennung läuft…',
     detected_value: 'Erkannter Wert (bitte prüfen)',
     crop_hint: 'Markiere den Zählerstand-Bereich für eine bessere Erkennung',
+    crop_loading: 'Bild wird geladen …',
+    crop_error: 'Das Bild konnte nicht geladen werden',
     crop_reset: 'Zurücksetzen',
     scan: 'Weiter',
     recrop: 'Zuschnitt anpassen',

@@ -53,7 +53,7 @@
         <p v-if="probableError?.key === probableKey(p)" class="text-sm text-red-600 dark:text-red-400 mt-1" role="alert">
           {{ probableError.message }}
         </p>
-        <div v-if="authStore.isManager && propertyIdOf(p)" class="flex gap-2 mt-3 flex-wrap">
+        <div v-if="canWriteProperty(propertyIdOf(p))" class="flex gap-2 mt-3 flex-wrap">
           <button
             @click="confirmProbable(p)"
             class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-sm font-medium transition"
@@ -130,6 +130,7 @@ import { useI18n } from 'vue-i18n'
 import { formatApiError } from '@/utils/oilDeliveries'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
+import { permsFor } from '@/utils/propertyRole'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
 import VueApexCharts from 'vue3-apexcharts'
@@ -139,6 +140,8 @@ const router = useRouter()
 const { t } = useI18n()
 const loading = ref(true)
 const summary = ref<any>(null)
+// property id -> caller's role in it (GET /api/properties `my_role`); decides who sees the write buttons
+const propertyRoles = ref<Map<string, string>>(new Map())
 const typeAggregates = ref<Record<string, any>>({})
 const oilPriceHistory = ref<{ history: Array<{date: string; price: number}>; forecast: Array<{date: string; price: number}> } | null>(null)
 
@@ -215,6 +218,10 @@ function propertyIdOf(p: any): string | undefined {
   return p.property_id ?? summary.value?.meters?.find((m: any) => m.meter_id === p.meter_id)?.property_id
 }
 
+function canWriteProperty(pid: string | undefined): boolean {
+  return !!pid && permsFor(propertyRoles.value.get(pid)).canWrite
+}
+
 function formatDate(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('de-DE')
@@ -274,8 +281,19 @@ async function fetchTypeAggregates(propId: string) {
   }
 }
 
+async function fetchPropertyRoles() {
+  try {
+    const res = await apiFetch('/api/properties', { headers: { Authorization: `Bearer ${authStore.token}` } })
+    if (res.ok) {
+      const list = await res.json()
+      propertyRoles.value = new Map(list.map((p: any) => [p.id, p.my_role]))
+    }
+  } catch { /* no roles: write buttons stay hidden */ }
+}
+
 onMounted(async () => {
   try {
+    void fetchPropertyRoles()
     const res = await apiFetch('/api/dashboard/summary', {
       headers: { Authorization: `Bearer ${authStore.token}` },
     })

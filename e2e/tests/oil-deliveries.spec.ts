@@ -53,7 +53,10 @@ test.describe('oil deliveries', () => {
 
     // edit
     await page.getByTitle('Lieferung bearbeiten').click()
-    await expect(dialog.getByLabel('Menge (Liter)')).toHaveValue(/^1500(\.0+)?$/)
+    // no API artefacts like "1500.00" / "1.1000" in the form (spec 014)
+    await expect(dialog.getByLabel('Menge (Liter)')).toHaveValue('1500')
+    await expect(dialog.getByLabel('Gesamtpreis')).toHaveValue('1650')
+    await expect(dialog.getByLabel('Preis pro Liter')).toHaveValue('1.1')
     await dialog.getByLabel('Menge (Liter)').fill('1600')
     await dialog.getByLabel('Gesamtpreis').fill('1760')
     await dialog.getByRole('button', { name: 'Speichern' }).click()

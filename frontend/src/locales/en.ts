@@ -120,6 +120,8 @@ export default {
     scanning: 'Recognizing…',
     detected_value: 'Detected value (please verify)',
     crop_hint: 'Select the meter display area for better recognition',
+    crop_loading: 'Loading image …',
+    crop_error: 'The image could not be loaded',
     crop_reset: 'Reset',
     scan: 'Continue',
     recrop: 'Adjust crop',
