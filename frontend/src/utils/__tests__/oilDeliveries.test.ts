@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseDecimal, buildDeliveryPayload, toLocalInput, formatApiError } from '../oilDeliveries'
+import { parseDecimal, buildDeliveryPayload, toLocalInput, formatApiError, formatInputNumber } from '../oilDeliveries'
 
 const base = { delivered_at: '2026-03-01T10:30', liters: '2000', total_price: '', price_per_liter: '', supplier: ' ', note: '' }
 
@@ -65,5 +65,25 @@ describe('formatApiError', () => {
   it('falls back', () => {
     expect(formatApiError(null, 'fb')).toBe('fb')
     expect(formatApiError([], 'fb')).toBe('fb')
+  })
+})
+
+describe('formatInputNumber (spec 014)', () => {
+  it('drops trailing zeros of API decimals', () => {
+    expect(formatInputNumber('1500.00')).toBe('1500')
+    expect(formatInputNumber(1500)).toBe('1500')
+    expect(formatInputNumber('87.50')).toBe('87.5')
+    expect(formatInputNumber('0.8990')).toBe('0.899')
+    expect(formatInputNumber('1234.5')).toBe('1234.5')
+  })
+  it('keeps the value parseable by parseDecimal', () => {
+    for (const v of ['1500.00', '87.50', '0.8990', '1234.5']) {
+      expect(parseDecimal(formatInputNumber(v))).toBe(Number(v))
+    }
+  })
+  it('empty for null / junk', () => {
+    expect(formatInputNumber(null)).toBe('')
+    expect(formatInputNumber(undefined)).toBe('')
+    expect(formatInputNumber('abc')).toBe('')
   })
 })

@@ -17,7 +17,7 @@
       </div>
 
       <!-- Add reading + OCR -->
-      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 mb-6">
+      <div v-if="canWrite" class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 mb-6">
         <h2 class="font-semibold mb-3">{{ $t('meter.add_reading') }}</h2>
         <OcrCapture :meter-id="meterId" :property-id="propertyId" :serial-number="meter.serial_number ?? undefined" @reading-added="fetchReadings" />
       </div>
@@ -62,7 +62,7 @@
                     </svg>
                   </button>
                   <button
-                    v-if="authStore.isAdmin"
+                    v-if="canWrite"
                     class="text-gray-400 hover:text-yellow-500 transition-colors"
                     :title="$t('reading.edit')"
                     @click="startEdit(r)"
@@ -73,7 +73,7 @@
                     </svg>
                   </button>
                   <button
-                    v-if="authStore.isAdmin"
+                    v-if="canDelete"
                     class="text-gray-400 hover:text-red-500 transition-colors"
                     :title="$t('reading.delete')"
                     @click="confirmDeleteReading(r)"
@@ -185,12 +185,14 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import OcrCapture from '@/components/OcrCapture.vue'
+import { usePropertyPerms } from '@/utils/usePropertyPerms'
 
 const authStore = useAuthStore()
 const route = useRoute()
 const { t } = useI18n()
 const propertyId = route.params.propertyId as string
 const meterId = route.params.meterId as string
+const { canWrite, canDelete, loadRole } = usePropertyPerms(propertyId)
 
 const loading = ref(true)
 const meter = ref<any>(null)
@@ -225,7 +227,7 @@ onMounted(async () => {
     }),
   ])
   if (mRes.ok) meter.value = await mRes.json()
-  await fetchReadings()
+  await Promise.all([fetchReadings(), loadRole()])
   loading.value = false
 })
 

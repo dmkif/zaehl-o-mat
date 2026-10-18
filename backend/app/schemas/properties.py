@@ -29,6 +29,8 @@ class PropertyResponse(BaseModel):
     name: str
     address: Optional[str]
     property_type: Optional[PropertyType]
+    # The caller's role in this property (global admins: "admin"). Informational for the UI; the server decides.
+    my_role: Optional[PropertyUserRole] = None
 
     model_config = {"from_attributes": True}
 

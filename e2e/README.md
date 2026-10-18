@@ -32,11 +32,11 @@ uncaught page errors, tokens in any visited URL.
 |---|---|
 | `sso-login` | full SSO round trip, no token in URLs/localStorage/cookies, binder cookie cleared, callback URL and login code single use (second tab, replay), user without group refused |
 | `logout` | reload keeps the session, logout revokes the token server side, protected pages redirect, revoked session sent to login |
-| `role-ui` | admin / manager / plain user: navigation, create/edit/delete buttons, `/admin` guard, foreign tenant |
+| `role-ui` | admin / manager / plain user: navigation, create/edit/delete buttons, `/admin` guard, foreign tenant; per-property role (`my_role`): read-only detail page, global manager as property user, global user as property admin |
 | `dashboard-meter-detail` | meter cards, readings table, **regression for the http redirect (v0.6.1)**, production headers on the page |
 | `oil-deliveries` | tile ~3.4 L/day and range ~240 d (8-reading reference tank), CRUD, probable delivery confirm/dismiss, read-only user |
 | `status-footer` | backend/OCR/LLM lights from `/api/health/details`, admin-only version, anonymous health = status only |
-| `scan-upload` | upload -> crop -> scan (fake gateway) -> prefilled value -> save, duplicate image |
+| `scan-upload` | upload -> crop ("Weiter" disabled until decoded) -> scan (fake gateway) -> prefilled value -> save, duplicate image |
 | `admin-users` | role change persists, user deletion with confirm dialog, superadmin not deletable |
 
 Test data is created per test through the API (`lib/api.ts`, dates relative to today) and deleted afterwards; the
@@ -61,7 +61,9 @@ Mutants are `e2e/mutants/*.patch` applied to a temp copy of `backend/`.
 * Reloading `/admin` (or opening it via bookmark) bounced admins to the dashboard: the router guard ran before
   `/auth/me` returned the role. Fixed (`router/index.ts`, `stores/auth.ts`), regression test
   `frontend/src/router/__tests__/guard.test.ts`.
-* Observations, not fixed: the oil delivery edit form shows litres as `1500.00`; the oil deliveries page shows
-  "Noch keine Lieferungen erfasst." next to an error (foreign/unknown property); the add-reading form is shown
-  to read-only users (the save is answered with 403); the scan dialog stays on the crop step if "Weiter" is
-  clicked before the cropper decoded the image (no feedback).
+* Observations of 2026-10-17, fixed in feature 014: the oil delivery edit form showed litres as `1500.00`; the oil
+  deliveries page showed "Noch keine Lieferungen erfasst." next to an error (foreign/unknown property); the
+  add-reading form was shown to read-only users; the scan dialog stayed on the crop step if "Weiter" was clicked
+  before the cropper decoded the image. The SPA now takes `canWrite`/`canDelete` from the API's per-property
+  `my_role`, "Weiter" is disabled until the cropper is ready. Tests: `role-ui` (per property role), `oil-deliveries`
+  (edit values), `scan-upload` (disabled-until-ready, no retry workaround).

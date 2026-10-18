@@ -14,7 +14,7 @@
           ⛽ {{ $t('oil.link') }}
         </RouterLink>
         <button
-          v-if="authStore.isManager"
+          v-if="canWrite"
           @click="showBulkImport = true"
           class="flex items-center gap-2 px-3 py-1.5 text-sm bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-medium transition"
         >
@@ -39,7 +39,7 @@
           <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ m.unit }} · {{ m.serial_number }}</div>
           <div class="text-xs text-gray-400 mt-1">{{ m.location }}</div>
         </RouterLink>
-        <div v-if="authStore.isManager" class="absolute top-3 right-3 flex gap-1">
+        <div v-if="canWrite" class="absolute top-3 right-3 flex gap-1">
           <button
             class="text-gray-400 hover:text-yellow-500 transition-colors p-1"
             :title="$t('meters.edit')"
@@ -51,7 +51,7 @@
             </svg>
           </button>
           <button
-            v-if="authStore.isAdmin"
+            v-if="canDelete"
             class="text-gray-400 hover:text-red-500 transition-colors p-1"
             :title="$t('meters.delete')"
             @click.prevent="confirmDeleteMeter(m)"
@@ -67,7 +67,7 @@
       </div>
 
       <button
-        v-if="authStore.isManager"
+        v-if="canWrite"
         @click="showCreate = true"
         class="p-4 rounded-xl border-2 border-dashed dark:border-gray-600 flex items-center justify-center text-gray-400 hover:text-brand-600 hover:border-brand-400 transition"
       >
@@ -177,10 +177,12 @@ import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import MeterTypeIcon from '@/components/MeterTypeIcon.vue'
 import BulkImport from '@/components/BulkImport.vue'
+import { usePropertyPerms } from '@/utils/usePropertyPerms'
 
 const authStore = useAuthStore()
 const route = useRoute()
 const propertyId = route.params.propertyId as string
+const { canWrite, canDelete, loadRole } = usePropertyPerms(propertyId)
 
 const loading = ref(true)
 const meters = ref<any[]>([])
@@ -197,7 +199,7 @@ const editSaving = ref(false)
 const deleteTarget = ref<any>(null)
 const deleting = ref(false)
 
-onMounted(fetchMeters)
+onMounted(() => Promise.all([fetchMeters(), loadRole()]))
 
 async function fetchMeters() {
   loading.value = true

@@ -25,6 +25,14 @@ export function parseDecimal(raw: string): number {
   return Number(s)
 }
 
+/** API decimal ("1500.00", 87.50) -> text for an input: no trailing zeros, '.' separator (parseDecimal reads it back). */
+export function formatInputNumber(v: number | string | null | undefined): string {
+  if (v == null || v === '') return ''
+  const n = Number(v)
+  if (!Number.isFinite(n)) return ''
+  return String(n)
+}
+
 /** Build the API body from the form; validates client-side, server stays authoritative. */
 export function buildDeliveryPayload(f: DeliveryForm): PayloadResult {
   if (!f.delivered_at) return { ok: false, error: 'date_required' }

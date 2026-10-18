@@ -53,13 +53,19 @@
           ref="cropperRef"
           :src="originalUrl ?? ''"
           class="h-full"
+          @ready="cropReady = true"
+          @error="onCropperError"
         />
       </div>
+      <p v-if="!cropReady && !cropperFailed" class="text-xs text-gray-500 flex items-center gap-2" role="status" data-testid="crop-loading">
+        <span class="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" aria-hidden="true"></span>
+        {{ $t('ocr.crop_loading') }}
+      </p>
       <div class="flex gap-2">
         <button @click="resetCrop" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           {{ $t('ocr.crop_reset') }}
         </button>
-        <button @click="goToSerialCrop" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold text-sm transition">
+        <button @click="goToSerialCrop" :disabled="!cropReady" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-semibold text-sm transition">
           {{ $t('ocr.scan') }}
         </button>
         <button @click="cancelCrop" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
@@ -77,13 +83,19 @@
           ref="serialCropperRef"
           :src="originalUrl ?? ''"
           class="h-full"
+          @ready="serialReady = true"
+          @error="onCropperError"
         />
       </div>
+      <p v-if="!serialReady && !cropperFailed" class="text-xs text-gray-500 flex items-center gap-2" role="status" data-testid="serial-crop-loading">
+        <span class="inline-block w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" aria-hidden="true"></span>
+        {{ $t('ocr.crop_loading') }}
+      </p>
       <div class="flex gap-2">
         <button @click="serialCropperRef?.reset()" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
           {{ $t('ocr.crop_reset') }}
         </button>
-        <button @click="startScan(true)" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-semibold text-sm transition">
+        <button @click="startScan(true)" :disabled="!serialReady" class="flex-1 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-semibold text-sm transition">
           {{ $t('ocr.serial_scan') }}
         </button>
         <button @click="startScan(false)" class="px-3 py-2 text-sm border rounded-xl dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition">
@@ -154,7 +166,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Cropper } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
@@ -169,6 +181,21 @@ const authStore = useAuthStore()
 
 type Stage = 'idle' | 'crop' | 'serial_crop' | 'scanning' | 'result'
 const stage = ref<Stage>('idle')
+
+// A cropper has no crop box (and no canvas) until it decoded the image and fired `ready`: the buttons that read
+// the crop stay disabled until then, instead of silently doing nothing.
+const cropReady = ref(false)
+const serialReady = ref(false)
+const cropperFailed = ref(false)
+watch(stage, (s) => {
+  if (s === 'crop') cropReady.value = false
+  if (s === 'serial_crop') serialReady.value = false
+})
+
+function onCropperError() {
+  cropperFailed.value = true
+  errorMsg.value = t('ocr.crop_error')
+}
 
 // Recognised engine preference — persists as long as the component is mounted
 const engine = ref<'auto' | 'ocr' | 'llm'>('auto')
@@ -222,6 +249,8 @@ function onFileSelected(event: Event) {
   if (originalUrl.value) URL.revokeObjectURL(originalUrl.value)
   originalUrl.value = URL.createObjectURL(file)
   errorMsg.value = ''
+  cropperFailed.value = false
+  cropReady.value = false
   stage.value = 'crop'
 }
 
@@ -250,7 +279,7 @@ function backToCrop() {
 // ── OCR scan ──────────────────────────────────────────────────────────────
 
 async function goToSerialCrop() {
-  if (!cropperRef.value) return
+  if (!cropReady.value || !cropperRef.value) return
   // Extract display crop blob for preview (it will be re-extracted at scan time too)
   const { canvas } = cropperRef.value.getResult()
   if (!canvas) return
@@ -267,6 +296,7 @@ async function goToSerialCrop() {
 }
 
 async function startScan(withSerial: boolean) {
+  if (withSerial && !serialReady.value) return
   stage.value = 'scanning'
   errorMsg.value = ''
 

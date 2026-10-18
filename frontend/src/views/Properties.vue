@@ -26,7 +26,7 @@
             {{ $t(`properties.type_${p.property_type}`) || p.property_type }}
           </div>
         </RouterLink>
-        <div v-if="authStore.isAdmin" class="absolute top-3 right-3 flex gap-1">
+        <div v-if="p.my_role === 'admin'" class="absolute top-3 right-3 flex gap-1">
           <button
             class="text-gray-400 hover:text-yellow-500 transition-colors p-1"
             :title="$t('properties.edit')"
@@ -38,6 +38,7 @@
             </svg>
           </button>
           <button
+            v-if="authStore.isAdmin"
             class="text-gray-400 hover:text-red-500 transition-colors p-1"
             :title="$t('properties.delete')"
             @click.prevent="confirmDeleteProperty(p)"
