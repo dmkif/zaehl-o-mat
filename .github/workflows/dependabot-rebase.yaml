@@ -1,8 +1,8 @@
 name: Dependabot rebase
 
 # The branch protection requires branches to be up to date. After every merge to main the
-# next Dependabot pull request that fell behind is rebased by Dependabot (one at a time, oldest
-# first); its checks run again and auto-merge then merges it, which starts the next round.
+# next auto-merge Dependabot pull request that fell behind is rebased by Dependabot (one at a
+# time, oldest first); its checks run again and auto-merge then merges it, which starts the next round.
 
 on:
   push:
@@ -28,10 +28,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          next=$(gh pr list --state open --author 'app/dependabot' --json number,mergeStateStatus,createdAt \
-            --jq '[.[] | select(.mergeStateStatus == "BEHIND")] | sort_by(.createdAt) | .[0].number // empty')
+          # Only pull requests with auto-merge on are rebased: manual ones (majors, base images)
+          # would otherwise stay "oldest behind" after every merge and starve the others.
+          # GitHub computes the merge state lazily after a push, so look again once if nothing is behind.
+          pick() {
+            gh pr list --state open --author 'app/dependabot' --json number,mergeStateStatus,createdAt,autoMergeRequest \
+              --jq '[.[] | select(.autoMergeRequest != null and .mergeStateStatus == "BEHIND")] | sort_by(.createdAt) | .[0].number // empty'
+          }
+          next=$(pick)
           if [ -z "$next" ]; then
-            echo "no Dependabot pull request is behind"
+            sleep 30
+            next=$(pick)
+          fi
+          if [ -z "$next" ]; then
+            echo "no auto-merge Dependabot pull request is behind"
             exit 0
           fi
           gh pr comment "$next" --body "@dependabot rebase"
