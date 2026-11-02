@@ -54,6 +54,11 @@ export default {
     yearly: 'Jahresschnitt',
     scope_label: 'Ansicht',
     scope_all: 'Alle Objekte',
+    yearly_title: 'Jahresverbrauch bis heute',
+    year_to_date: 'Dieses Jahr',
+    previous_period: 'Vorjahr (gleicher Zeitraum)',
+    cost: 'Kosten',
+    cost_partial: 'unvollständig (nicht alle Preise bekannt)',
     per_day: '/Tag',
   },
   meter_types: {

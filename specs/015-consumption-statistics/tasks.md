@@ -143,14 +143,14 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US4 (write first)
 
-- [ ] T043 [P] [US4] Pure tests in `backend/tests/test_consumption_stats.py` for `year_summary` (year-to-date, same elapsed span of previous year by clipping, `delta_pct` null when previous <= 0) and for cost rules (oil from delivery `total_price` or `liters * price_per_liter`, unpriced deliveries ignored, `cost_complete`; water/electricity price valid at month end, no price gives `None`)
-- [ ] T044 [P] [US4] API tests in `backend/tests/test_dashboard_statistics.py` for `GET /api/dashboard/yearly`: scopes, 401, foreign scope 403/404, 422 on ambiguous parameters, cost omitted without price (never 0)
+- [X] T043 [P] [US4] Pure tests in `backend/tests/test_consumption_stats.py` for `year_summary` (year-to-date, same elapsed span of previous year by clipping, `delta_pct` null when previous <= 0) and for cost rules (oil from delivery `total_price` or `liters * price_per_liter`, unpriced deliveries ignored, `cost_complete`; water/electricity price valid at month end, no price gives `None`)
+- [X] T044 [P] [US4] API tests in `backend/tests/test_dashboard_statistics.py` for `GET /api/dashboard/yearly`: scopes, 401, foreign scope 403/404, 422 on ambiguous parameters, cost omitted without price (never 0)
 
 ### Implementation for US4
 
-- [ ] T045 [US4] Implement `year_summary` and cost calculation in `backend/app/services/consumption_stats.py` (price lookup in `backend/app/services/stats_loader.py`); make T043 pass
-- [ ] T046 [US4] Implement `GET /api/dashboard/yearly` in `backend/app/routers/dashboard.py`; make T044 pass; add `cost` per month to `/monthly` where a price is known
-- [ ] T047 [P] [US4] Year totals and cost display (year to date vs. previous year, percent, cost or nothing) in `frontend/src/views/Dashboard.vue`; i18n keys
+- [X] T045 [US4] Implement `year_summary` and cost calculation in `backend/app/services/consumption_stats.py` (price lookup in `backend/app/services/stats_loader.py`); make T043 pass
+- [X] T046 [US4] Implement `GET /api/dashboard/yearly` in `backend/app/routers/dashboard.py`; make T044 pass; add `cost` per month to `/monthly` where a price is known
+- [X] T047 [P] [US4] Year totals and cost display (year to date vs. previous year, percent, cost or nothing) in `frontend/src/views/Dashboard.vue`; i18n keys
 
 ---
 

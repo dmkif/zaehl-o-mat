@@ -366,3 +366,151 @@ class TestSummaryStatistics:
         water = _summary(client, _admin(db))["statistics"]["overall"]["water"]
         assert water["properties_used"] == 2
         assert water["mean_per_property"]["yearly"] == pytest.approx(0.4, abs=0.002)
+
+
+# ── GET /api/dashboard/yearly and cost ────────────────────────────────────────
+
+from zoneinfo import ZoneInfo  # noqa: E402
+
+from app.models import OilDelivery, PriceEntry  # noqa: E402
+
+FIXED_NOW = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+
+
+def lt(y, m, d):
+    """Local (Europe/Berlin) midnight as aware UTC."""
+    return datetime(y, m, d, tzinfo=ZoneInfo("Europe/Berlin")).astimezone(timezone.utc)
+
+
+@pytest.fixture
+def fixed_now(monkeypatch):
+    monkeypatch.setattr("app.routers.dashboard._now", lambda: FIXED_NOW)
+    return FIXED_NOW
+
+
+class TestYearlyEndpoint:
+    def _water(self, db, prop, name="Wasser"):
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3, name=name)
+        for d, v in ((lt(2025, 1, 1), 0.0), (lt(2025, 10, 15), 100.0), (lt(2026, 1, 1), 130.0), (lt(2026, 10, 15), 430.0)):
+            make_reading(db, m.id, v, d)
+        return m
+
+    def test_unauthenticated_returns_401(self, client, db):
+        assert client.get("/api/dashboard/yearly").status_code == 401
+
+    def test_year_to_date_against_same_period_last_year(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = self._water(db, prop)
+        body = client.get(f"/api/dashboard/yearly?meter_id={m.id}", headers=auth_headers(_admin(db))).json()
+        s = body["series"][0]
+        assert body["scope"]["kind"] == "meter"
+        assert s["meter_type"] == "water" and s["unit"] == "m³"
+        assert s["year_to_date"] == pytest.approx(300.0, abs=0.5)
+        assert s["previous_year_same_period"] == pytest.approx(100.0, abs=0.5)
+        assert s["delta_pct"] == pytest.approx(200.0, abs=2.0)
+
+    def test_cost_from_price_entry(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = self._water(db, prop)
+        db.add(PriceEntry(meter_id=m.id, price_per_unit=0.5, valid_from=lt(2025, 1, 1)))
+        db.commit()
+        s = client.get(f"/api/dashboard/yearly?meter_id={m.id}", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert s["cost"] == pytest.approx(150.0, abs=0.2)
+        assert s["cost_complete"] is True
+
+    def test_no_price_means_no_cost_but_consumption_stays(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = self._water(db, prop)
+        s = client.get(f"/api/dashboard/yearly?meter_id={m.id}", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert s["cost"] is None
+        assert s["cost_complete"] is False
+        assert s["year_to_date"] == pytest.approx(300.0, abs=0.5)
+
+    def test_oil_cost_is_the_money_spent_on_deliveries(self, client, db, fixed_now):
+        prop = make_property(db)
+        t1 = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="T1")
+        t2 = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="T2")
+        for t in (t1, t2):
+            make_reading(db, t.id, 1000.0, lt(2026, 1, 1))
+            make_reading(db, t.id, 800.0, lt(2026, 10, 1))
+        db.add(OilDelivery(property_id=prop.id, liters=1000, total_price=1200.0, delivered_at=lt(2026, 3, 1)))
+        db.add(OilDelivery(property_id=prop.id, liters=500, price_per_liter=1.0, delivered_at=lt(2025, 3, 1)))  # last year
+        db.commit()
+        s = client.get(f"/api/dashboard/yearly?property_id={prop.id}", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert s["meter_type"] == "oil"
+        # two tanks: the delivery belongs to the property and is counted once
+        assert s["cost"] == pytest.approx(1200.0)
+        assert s["cost_complete"] is True
+
+    def test_unpriced_oil_delivery_is_incomplete(self, client, db, fixed_now):
+        prop = make_property(db)
+        t = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="T")
+        make_reading(db, t.id, 1000.0, lt(2026, 1, 1))
+        make_reading(db, t.id, 800.0, lt(2026, 10, 1))
+        db.add(OilDelivery(property_id=prop.id, liters=1000, total_price=1200.0, delivered_at=lt(2026, 3, 1)))
+        db.add(OilDelivery(property_id=prop.id, liters=500, delivered_at=lt(2026, 5, 1)))
+        db.commit()
+        s = client.get(f"/api/dashboard/yearly?property_id={prop.id}", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert s["cost"] == pytest.approx(1200.0)
+        assert s["cost_complete"] is False
+
+    def test_all_scope_only_accessible_properties(self, client, db, fixed_now):
+        mine, other = make_property(db, "Mine"), make_property(db, "Other")
+        self._water(db, mine)
+        self._water(db, other)
+        user = make_user(db, role=UserRole.user)
+        db.add(PropertyUser(property_id=mine.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+        mine_only = client.get("/api/dashboard/yearly", headers=auth_headers(user)).json()["series"][0]
+        both = client.get("/api/dashboard/yearly", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert both["year_to_date"] == pytest.approx(2 * mine_only["year_to_date"], abs=0.5)
+
+    def test_foreign_scope_is_403_and_bad_input_is_422(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = self._water(db, prop)
+        user = make_user(db, role=UserRole.user)
+        h = auth_headers(user)
+        assert client.get(f"/api/dashboard/yearly?meter_id={m.id}", headers=h).status_code == 403
+        assert client.get(f"/api/dashboard/yearly?property_id={prop.id}", headers=h).status_code == 403
+        assert client.get(f"/api/dashboard/yearly?meter_id={m.id}&property_id={prop.id}", headers=h).status_code == 422
+        assert client.get("/api/dashboard/yearly?meter_id=x", headers=h).status_code == 422
+
+    def test_no_data_gives_null_not_zero(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = make_meter(db, prop.id)
+        s = client.get(f"/api/dashboard/yearly?meter_id={m.id}", headers=auth_headers(_admin(db))).json()["series"][0]
+        assert s["year_to_date"] is None and s["previous_year_same_period"] is None and s["delta_pct"] is None
+
+
+class TestMonthlyCost:
+    def test_water_month_cost_is_value_times_price(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        make_reading(db, m.id, 0.0, lt(2026, 8, 1))
+        make_reading(db, m.id, 62.0, lt(2026, 10, 1))
+        db.add(PriceEntry(meter_id=m.id, price_per_unit=2.0, valid_from=lt(2026, 1, 1)))
+        db.commit()
+        body = client.get(f"/api/dashboard/monthly?meter_id={m.id}&months=3", headers=auth_headers(_admin(db))).json()
+        by_month = {r["month"]: r for r in body["series"][0]["months"]}
+        assert by_month["2026-08"]["cost"] == pytest.approx(62 * 31 / 61 * 2.0, abs=0.05)
+        assert by_month["2026-10"]["cost"] is None  # no value yet
+
+    def test_month_cost_null_without_price(self, client, db, fixed_now):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        make_reading(db, m.id, 0.0, lt(2026, 8, 1))
+        make_reading(db, m.id, 62.0, lt(2026, 10, 1))
+        body = client.get(f"/api/dashboard/monthly?meter_id={m.id}&months=3", headers=auth_headers(_admin(db))).json()
+        assert all(r["cost"] is None for r in body["series"][0]["months"])
+
+    def test_oil_month_cost_is_the_spend_of_that_month(self, client, db, fixed_now):
+        prop = make_property(db)
+        t = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="T")
+        make_reading(db, t.id, 1000.0, lt(2026, 8, 1))
+        make_reading(db, t.id, 900.0, lt(2026, 10, 1))
+        db.add(OilDelivery(property_id=prop.id, liters=800, total_price=900.0, delivered_at=lt(2026, 9, 10)))
+        db.commit()
+        body = client.get(f"/api/dashboard/monthly?property_id={prop.id}&months=3", headers=auth_headers(_admin(db))).json()
+        by_month = {r["month"]: r for r in body["series"][0]["months"]}
+        assert by_month["2026-09"]["cost"] == pytest.approx(900.0)
+        assert by_month["2026-08"]["cost"] is None

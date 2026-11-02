@@ -54,6 +54,11 @@ export default {
     yearly: 'Yearly average',
     scope_label: 'View',
     scope_all: 'All properties',
+    yearly_title: 'Consumption this year so far',
+    year_to_date: 'This year',
+    previous_period: 'Previous year (same period)',
+    cost: 'Cost',
+    cost_partial: 'incomplete (not every price is known)',
     per_day: '/day',
   },
   meter_types: {

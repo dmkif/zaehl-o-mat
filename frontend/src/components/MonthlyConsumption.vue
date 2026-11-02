@@ -17,6 +17,7 @@
               <th class="text-right py-1">{{ $t('stats.consumption') }}</th>
               <th class="text-right py-1">{{ $t('stats.previous_year') }}</th>
               <th class="text-right py-1">{{ $t('stats.delta') }}</th>
+              <th v-if="hasCost(s)" class="text-right py-1">{{ $t('stats.cost') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -34,6 +35,7 @@
                 {{ row.previous_year?.value != null ? formatAmount(row.previous_year.value) : '–' }}
               </td>
               <td class="py-1 text-right" :class="deltaColor(row.delta_pct)">{{ row.delta_pct != null ? formatTrend(row.delta_pct) : '–' }}</td>
+              <td v-if="hasCost(s)" class="py-1 text-right font-mono text-gray-500">{{ formatCost(row.cost) }}</td>
             </tr>
           </tbody>
         </table>
@@ -47,7 +49,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
-import { chartValue, formatAmount, formatTrend, monthLabel, trendClass } from '@/utils/consumptionStats'
+import { chartValue, formatAmount, formatCost, formatTrend, monthLabel, trendClass } from '@/utils/consumptionStats'
 
 const props = defineProps<{ meterId?: string; propertyId?: string; months?: number }>()
 
@@ -80,6 +82,11 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+/** The cost column only appears when at least one month has a known price. */
+function hasCost(s: any): boolean {
+  return s.months.some((m: any) => m.cost != null)
 }
 
 function deltaColor(pct: number | null) {

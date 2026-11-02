@@ -548,3 +548,123 @@ class TestAggregateOverall:
         oil = aggregate_overall(by_prop)["oil"]
         assert oil["yearly"] == pytest.approx(7.0)
         assert oil["mean_per_property"]["yearly"] == pytest.approx(3.5)
+
+
+# ── Year view and cost (US4) ──────────────────────────────────────────────────
+
+def delivery(liters, at_, total=None, per_liter=None):
+    return SimpleNamespace(liters=liters, delivered_at=at_, total_price=total, price_per_liter=per_liter)
+
+
+def price(value, valid_from):
+    return SimpleNamespace(price_per_unit=value, valid_from=valid_from)
+
+
+class TestYearSummary:
+    def _intervals(self):
+        # 1/day through 2025 and 2026
+        return ivs((0, local(2025, 1, 1)), (365, local(2026, 1, 1)), (365 + 100, local(2026, 4, 11)))
+
+    def test_year_to_date_and_same_period_last_year(self):
+        from app.services.consumption_stats import year_summary
+
+        res = year_summary(self._intervals(), local(2026, 4, 11))
+        assert res["year_to_date"] == pytest.approx(100)
+        # 1 Jan .. 11 Apr 2025 is the same elapsed span (100 days) at 1/day
+        assert res["previous_year_same_period"] == pytest.approx(100, abs=0.1)  # DST: 99.96 days
+        assert res["delta_pct"] == pytest.approx(0.0, abs=0.2)
+
+    def test_delta_when_this_year_is_higher(self):
+        from app.services.consumption_stats import year_summary
+
+        intervals = ivs((0, local(2025, 1, 1)), (100, local(2026, 1, 1)), (300, local(2026, 4, 11)))
+        res = year_summary(intervals, local(2026, 4, 11))
+        assert res["year_to_date"] == pytest.approx(200)
+        assert res["previous_year_same_period"] == pytest.approx(100 * 100 / 365, abs=0.1)
+        assert res["delta_pct"] > 100
+
+    def test_none_without_data_in_the_period(self):
+        from app.services.consumption_stats import year_summary
+
+        res = year_summary([], local(2026, 4, 11))
+        assert res == {"year_to_date": None, "previous_year_same_period": None, "delta_pct": None}
+
+    def test_previous_year_missing(self):
+        from app.services.consumption_stats import year_summary
+
+        res = year_summary(ivs((0, local(2026, 1, 1)), (50, local(2026, 3, 1))), local(2026, 3, 1))
+        assert res["year_to_date"] == pytest.approx(50)
+        assert res["previous_year_same_period"] is None
+        assert res["delta_pct"] is None
+
+    def test_previous_zero_gives_no_percent(self):
+        from app.services.consumption_stats import year_summary
+
+        res = year_summary(ivs((10, local(2025, 1, 1)), (10, local(2025, 6, 1)), (10, local(2026, 1, 1)),
+                               (60, local(2026, 3, 1))), local(2026, 3, 1))
+        assert res["delta_pct"] is None
+
+    def test_clips_to_the_last_counted_instant(self):
+        from app.services.consumption_stats import year_summary
+
+        # last reading on 1 Mar, asked on 1 Jun: the previous year covers only 1 Jan..1 Mar
+        intervals = ivs((0, local(2025, 1, 1)), (59, local(2025, 3, 1)), (59, local(2026, 1, 1)),
+                        (59 + 118, local(2026, 3, 1)))
+        res = year_summary(intervals, local(2026, 6, 1))
+        assert res["year_to_date"] == pytest.approx(118)
+        assert res["previous_year_same_period"] == pytest.approx(59)
+
+
+class TestDeliverySpend:
+    def test_total_price_or_liters_times_unit_price(self):
+        from app.services.consumption_stats import delivery_spend
+
+        d = [delivery(1000, local(2026, 2, 1), total=1200.0), delivery(500, local(2026, 3, 1), per_liter=1.1)]
+        assert delivery_spend(d, local(2026, 1, 1), local(2026, 12, 31)) == (pytest.approx(1750.0), True)
+
+    def test_unpriced_delivery_makes_it_incomplete(self):
+        from app.services.consumption_stats import delivery_spend
+
+        d = [delivery(1000, local(2026, 2, 1), total=1200.0), delivery(500, local(2026, 3, 1))]
+        assert delivery_spend(d, local(2026, 1, 1), local(2026, 12, 31)) == (pytest.approx(1200.0), False)
+
+    def test_none_when_nothing_is_priced(self):
+        from app.services.consumption_stats import delivery_spend
+
+        assert delivery_spend([delivery(500, local(2026, 3, 1))], local(2026, 1, 1), local(2026, 12, 31)) == (None, False)
+
+    def test_none_without_deliveries_in_the_window(self):
+        from app.services.consumption_stats import delivery_spend
+
+        assert delivery_spend([delivery(500, local(2025, 3, 1), total=10.0)], local(2026, 1, 1), local(2026, 12, 31)) == (None, True)
+
+    def test_window_is_start_exclusive_end_inclusive_like_the_intervals(self):
+        from app.services.consumption_stats import delivery_spend
+
+        d = [delivery(100, local(2026, 1, 1), total=5.0), delivery(100, local(2026, 2, 1), total=7.0)]
+        assert delivery_spend(d, local(2026, 1, 1), local(2026, 2, 1))[0] == pytest.approx(7.0)
+
+
+class TestUnitPriceCost:
+    def test_price_valid_at_month_end(self):
+        from app.services.consumption_stats import price_at
+
+        prices = [price(0.30, local(2025, 1, 1)), price(0.40, local(2026, 3, 1))]
+        assert price_at(prices, local(2026, 2, 28)) == 0.30
+        assert price_at(prices, local(2026, 3, 31)) == 0.40
+        assert price_at(prices, local(2024, 1, 1)) is None
+        assert price_at([], local(2026, 1, 1)) is None
+
+    def test_monthly_costs_and_completeness(self):
+        from app.services.consumption_stats import unit_price_costs
+
+        months = [("2026-01", 10.0), ("2026-02", 20.0), ("2026-03", None)]
+        prices = [price(0.5, local(2026, 2, 1))]
+        costs, complete = unit_price_costs(months, prices)
+        assert costs == {"2026-02": pytest.approx(10.0)}  # January has no price yet
+        assert complete is False
+
+    def test_no_prices_means_no_cost(self):
+        from app.services.consumption_stats import unit_price_costs
+
+        assert unit_price_costs([("2026-01", 10.0)], []) == ({}, False)

@@ -18,15 +18,21 @@ from app.routers.oil_deliveries import open_probable_deliveries
 from app.schemas.oil_deliveries import ProbableDeliveryResponse
 from app.services.buy_signal import compute_oil_buy_signal
 from app.permissions import get_property_or_404, require_property_access
-from app.schemas.dashboard import MonthlyResponse
+from app.schemas.dashboard import MonthlyResponse, YearlyResponse
 from app.services.consumption_stats import (
-    aggregate_overall, group_range, group_statistics, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
-    trend_pct, yearly_rate,
+    LOCAL_TZ,
+    aggregate_overall, delivery_spend, group_range, group_statistics, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
+    trend_pct, yearly_rate, month_bounds, month_totals, unit_price_costs, year_summary,
 )
 from app.services.oil_loader import load_oil_results
 from app.services.stats_loader import load_intervals
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _now() -> datetime:
+    """The current instant; one place so tests can pin the clock."""
+    return datetime.now(timezone.utc)
 
 
 def _accessible_property_ids(user: User, db: Session) -> list[uuid.UUID]:
@@ -69,7 +75,7 @@ def dashboard_summary(
         latest_map = {}
 
     # Oil: one shared calculation for tile, range and forecast (app.services.oil_consumption)
-    now = datetime.now(timezone.utc)
+    now = _now()
     oil_meters = [m for m in meters if m.meter_type == MeterType.oil]
     oil_results = load_oil_results(db, oil_meters, now)
     # Every other meter type: one batched readings query for all meters (feature 015)
@@ -202,23 +208,113 @@ def monthly_consumption(
 ):
     """Consumption per local calendar month, with the same month of the previous year."""
     scope, meters = _resolve_scope(db, current_user, meter_id, property_id)
-    now = datetime.now(timezone.utc)
+    now = _now()
     # months to show + one year back for the previous-year comparison
     intervals = load_intervals(db, meters, now, window_days=(months + 12) * 31 + 1)
+    prices = _price_entries(db, [m.id for m in meters if m.meter_type != MeterType.oil])
     by_type: dict[MeterType, list] = {}
     units: dict[MeterType, str] = {}
     for m in meters:
-        by_type.setdefault(m.meter_type, []).append(monthly_series(intervals[m.id], now, months))
+        rows = monthly_series(intervals[m.id], now, months)
+        if m.meter_type != MeterType.oil:
+            # water / electricity: consumption x the unit price valid at the end of the month
+            costs, _ = unit_price_costs([(r.month, r.value) for r in rows], prices.get(m.id, []))
+            for r in rows:
+                r.cost = costs.get(r.month)
+        by_type.setdefault(m.meter_type, []).append(rows)
         units.setdefault(m.meter_type, m.unit.value)
-    series = [
-        {
-            "meter_type": mt.value,
-            "unit": units[mt],
-            "months": [vars(row) for row in merge_month_series(rows)],
-        }
-        for mt, rows in sorted(by_type.items(), key=lambda kv: kv[0].value)
-    ]
+    oil_property_ids = {m.property_id for m in meters if m.meter_type == MeterType.oil}
+    deliveries = _deliveries(db, oil_property_ids)
+    series = []
+    for mt, rows in sorted(by_type.items(), key=lambda kv: kv[0].value):
+        merged = merge_month_series(rows)
+        if mt == MeterType.oil:
+            # oil: the money spent on deliveries in that month (deliveries belong to the property)
+            for row in merged:
+                year, month = int(row.month[:4]), int(row.month[5:7])
+                m_start, m_end = month_bounds(year, month)
+                spends = [
+                    delivery_spend(deliveries.get(pid, []), m_start - timedelta(microseconds=1), m_end - timedelta(microseconds=1))[0]
+                    for pid in oil_property_ids
+                ]
+                priced = [x for x in spends if x is not None]
+                row.cost = round(sum(priced), 2) if priced else None
+        series.append({"meter_type": mt.value, "unit": units[mt], "months": [vars(row) for row in merged]})
     return {"scope": scope, "series": series}
+
+
+def _price_entries(db: Session, meter_ids: list) -> dict:
+    grouped: dict = {}
+    if not meter_ids:
+        return grouped
+    for p in db.query(PriceEntry).filter(PriceEntry.meter_id.in_(meter_ids)).all():
+        grouped.setdefault(p.meter_id, []).append(p)
+    return grouped
+
+
+def _deliveries(db: Session, property_ids) -> dict:
+    grouped: dict = {}
+    if not property_ids:
+        return grouped
+    for d in db.query(OilDelivery).filter(OilDelivery.property_id.in_(list(property_ids))).all():
+        grouped.setdefault(d.property_id, []).append(d)
+    return grouped
+
+
+@router.get("/yearly", response_model=YearlyResponse)
+def yearly_consumption(
+    meter_id: Optional[uuid.UUID] = None,
+    property_id: Optional[uuid.UUID] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Current calendar year to date against the same period of the previous year, with cost
+    where a price is known (oil: money spent on deliveries; other types: consumption x unit price)."""
+    scope, meters = _resolve_scope(db, current_user, meter_id, property_id)
+    now = _now()
+    local_year = now.astimezone(LOCAL_TZ).year
+    year_start, _ = month_bounds(local_year, 1)
+    prev_start, _ = month_bounds(local_year - 1, 1)
+    intervals = load_intervals(db, meters, now, window_days=(now - prev_start).days + 2)
+    prices = _price_entries(db, [m.id for m in meters if m.meter_type != MeterType.oil])
+    oil_property_ids = {m.property_id for m in meters if m.meter_type == MeterType.oil}
+    deliveries = _deliveries(db, oil_property_ids)
+
+    by_type: dict[MeterType, list[Meter]] = {}
+    for m in meters:
+        by_type.setdefault(m.meter_type, []).append(m)
+    series = []
+    for mt, group in sorted(by_type.items(), key=lambda kv: kv[0].value):
+        summaries = [year_summary(intervals[m.id], now) for m in group]
+        current = [x["year_to_date"] for x in summaries if x["year_to_date"] is not None]
+        previous = [x["previous_year_same_period"] for x in summaries if x["previous_year_same_period"] is not None]
+        ytd = round(sum(current), 3) if current else None
+        prev = round(sum(previous), 3) if previous else None
+        delta = round((ytd / prev - 1) * 100, 1) if ytd is not None and prev is not None and prev > 0 else None
+        cost, complete = None, False
+        if mt == MeterType.oil:
+            results = [delivery_spend(deliveries.get(pid, []), year_start, now) for pid in oil_property_ids]
+            priced = [c for c, _ in results if c is not None]
+            cost = round(sum(priced), 2) if priced else None
+            complete = bool(priced) and all(ok for _, ok in results)
+        else:
+            total, all_complete, any_cost = 0.0, True, False
+            for m in group:
+                totals = month_totals(intervals[m.id])
+                months_this_year = [(k, v["value"]) for k, v in totals.items() if k.startswith(f"{local_year:04d}-")]
+                costs, ok = unit_price_costs(months_this_year, prices.get(m.id, []))
+                if costs:
+                    any_cost = True
+                    total += sum(costs.values())
+                all_complete = all_complete and ok
+            cost = round(total, 2) if any_cost else None
+            complete = any_cost and all_complete
+        series.append({
+            "meter_type": mt.value, "unit": group[0].unit.value,
+            "year_to_date": ytd, "previous_year_same_period": prev, "delta_pct": delta,
+            "cost": cost, "cost_complete": complete,
+        })
+    return {"scope": scope, "as_of": now.isoformat(), "series": series}
 
 
 @router.get("/consumption/{meter_id}")

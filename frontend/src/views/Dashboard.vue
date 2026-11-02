@@ -69,6 +69,8 @@
           </label>
         </div>
         <MonthlyConsumption :property-id="monthlyScope || undefined" />
+        <h3 class="font-medium mt-4 mb-2">{{ $t('stats.yearly_title') }}</h3>
+        <YearlySummary :property-id="monthlyScope || undefined" />
       </div>
 
       <!-- Probable oil deliveries (level rose between two readings) -->
@@ -171,6 +173,7 @@ import MeterCard from '@/components/MeterCard.vue'
 import TrendLine from '@/components/TrendLine.vue'
 import TypeStatistics from '@/components/TypeStatistics.vue'
 import MonthlyConsumption from '@/components/MonthlyConsumption.vue'
+import YearlySummary from '@/components/YearlySummary.vue'
 import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()

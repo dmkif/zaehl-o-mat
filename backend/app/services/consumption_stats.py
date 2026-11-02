@@ -323,3 +323,113 @@ def aggregate_overall(by_property: dict) -> dict[str, dict]:
             }
         result[meter_type] = row
     return result
+
+
+# ── Year view and cost ────────────────────────────────────────────────────────
+
+def consumption_in_window(intervals: Iterable[Interval], start: datetime, end: datetime) -> Optional[float]:
+    """Consumption of the known intervals inside [start, end], distributed in proportion to
+    time (like the monthly view). None when no known interval covers any part of the window."""
+    start, end = _utc(start), _utc(end)
+    total = 0.0
+    covered = 0.0
+    for iv in intervals:
+        if iv.consumption is None:
+            continue
+        iv_start, iv_end = _utc(iv.from_at), _utc(iv.to_at)
+        span = (iv_end - iv_start).total_seconds()
+        overlap = (min(iv_end, end) - max(iv_start, start)).total_seconds()
+        if span <= 0 or overlap <= 0:
+            continue
+        total += iv.consumption * overlap / span
+        covered += overlap
+    return round(total, 6) if covered > 0 else None
+
+
+def year_summary(intervals: Iterable[Interval], now: datetime) -> dict:
+    """Current calendar year to date against the same elapsed span of the previous year.
+
+    The period ends at the last counted instant (the newest known reading, at most ``now``),
+    so a stale meter is not compared over a span it has no data for."""
+    known = [iv for iv in intervals if iv.consumption is not None]
+    empty = {"year_to_date": None, "previous_year_same_period": None, "delta_pct": None}
+    if not known:
+        return empty
+    now = _utc(now)
+    local_now = now.astimezone(LOCAL_TZ)
+    year_start = datetime(local_now.year, 1, 1, tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+    cut = min(now, max(_utc(iv.to_at) for iv in known))
+    elapsed = cut - year_start
+    if elapsed.total_seconds() <= 0:
+        return empty
+    current = consumption_in_window(known, year_start, cut)
+    prev_start = datetime(local_now.year - 1, 1, 1, tzinfo=LOCAL_TZ).astimezone(timezone.utc)
+    # same local calendar moment one year earlier (not the same elapsed seconds: DST differs)
+    cut_local = cut.astimezone(LOCAL_TZ)
+    try:
+        prev_cut = cut_local.replace(year=cut_local.year - 1)
+    except ValueError:  # 29 February
+        prev_cut = cut_local.replace(year=cut_local.year - 1, day=28)
+    previous = consumption_in_window(known, prev_start, prev_cut.astimezone(timezone.utc))
+    delta = None
+    if current is not None and previous is not None and previous > 0:
+        delta = round((current / previous - 1) * 100, 1)
+    return {"year_to_date": current, "previous_year_same_period": previous, "delta_pct": delta}
+
+
+def delivery_spend(deliveries: Iterable, start: datetime, end: datetime) -> tuple[Optional[float], bool]:
+    """Money spent on oil deliveries with start < delivered_at <= end.
+
+    A delivery is priced by ``total_price`` or ``liters * price_per_liter``. Returns
+    (spend, complete): spend is None when nothing in the window is priced; complete is False
+    when a delivery in the window has no price."""
+    start, end = _utc(start), _utc(end)
+    spend = 0.0
+    priced = False
+    complete = True
+    for d in deliveries:
+        if not (start < _utc(d.delivered_at) <= end):
+            continue
+        if d.total_price is not None:
+            spend += float(d.total_price)
+            priced = True
+        elif d.price_per_liter is not None:
+            spend += float(d.liters) * float(d.price_per_liter)
+            priced = True
+        else:
+            complete = False
+    return (round(spend, 2) if priced else None), complete
+
+
+def price_at(prices: Iterable, instant: datetime) -> Optional[float]:
+    """The unit price valid at ``instant`` (latest valid_from not after it); None if none."""
+    instant = _utc(instant)
+    valid = [p for p in prices if _utc(p.valid_from) <= instant]
+    if not valid:
+        return None
+    return float(max(valid, key=lambda p: _utc(p.valid_from)).price_per_unit)
+
+
+def unit_price_costs(months: Iterable[tuple[str, Optional[float]]], prices: list) -> tuple[dict[str, float], bool]:
+    """Cost per month = consumption x the unit price valid at the end of the month.
+
+    months: (YYYY-MM, consumption or None). Months without consumption or without a valid
+    price are left out; ``complete`` is False when a month with consumption had no price."""
+    costs: dict[str, float] = {}
+    complete = True
+    for key, value in months:
+        if value is None:
+            continue
+        year, month = int(key[:4]), int(key[5:7])
+        _, m_end = _month_bounds(year, month)
+        unit_price = price_at(prices, m_end - timedelta(seconds=1))
+        if unit_price is None:
+            complete = False
+            continue
+        costs[key] = round(value * unit_price, 2)
+    if not prices:
+        complete = False
+    return costs, complete
+
+
+month_bounds = _month_bounds

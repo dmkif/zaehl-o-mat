@@ -43,3 +43,9 @@ export function monthLabel(month: string): string {
 export function chartValue(value: number | null): number | null {
   return value == null ? null : value
 }
+
+/** "1.234,50 €"; a missing cost is a dash, never 0 € (SC-004). */
+export function formatCost(cost: number | null | undefined): string {
+  if (cost == null) return '–'
+  return cost.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+}

@@ -49,3 +49,14 @@ describe('monthly helpers', () => {
     expect(chartValue(12.5)).toBe(12.5)
   })
 })
+
+import { formatCost } from '../consumptionStats'
+
+describe('formatCost', () => {
+  it('formats euros and shows a missing cost as a dash', () => {
+    expect(formatCost(1234.5)).toContain('1.234,50')
+    expect(formatCost(1234.5)).toContain('€')
+    expect(formatCost(null)).toBe('–')
+    expect(formatCost(0)).toContain('0,00')
+  })
+})
