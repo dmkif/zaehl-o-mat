@@ -1,4 +1,3 @@
-import math
 import uuid
 from datetime import date as date_type, datetime, timedelta, timezone
 from decimal import Decimal
@@ -20,7 +19,8 @@ from app.services.buy_signal import compute_oil_buy_signal
 from app.permissions import get_property_or_404, require_property_access
 from app.schemas.dashboard import MonthlyResponse
 from app.services.consumption_stats import (
-    last_interval_rate, merge_month_series, monthly_series, recent_rate, trend_pct, yearly_rate,
+    group_range, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
+    trend_pct, yearly_rate,
 )
 from app.services.oil_loader import load_oil_results
 from app.services.stats_loader import load_intervals
@@ -100,16 +100,21 @@ def dashboard_summary(
             }
         )
 
-    # Oil Reichweite per property (oil meter = direct tank level reading)
+    # Oil Reichweite per tank group (oil meter = direct tank level reading). All active tanks of
+    # a property form one group: sum of the levels / sum of the rates (spec 015, FR-024).
     oil_reichweite: dict[str, Optional[int]] = {}
+    oil_reichweite_30d: dict[str, int] = {}
+    tank_groups: dict[uuid.UUID, list[Meter]] = {}
     for m in oil_meters:
-        latest = latest_map.get(m.id)  # reuse already-fetched latest reading
-        avg_daily = oil_results[m.id].liters_per_day
-        if latest and avg_daily and avg_daily > 0:
-            days = math.floor(float(latest.value) / avg_daily)
-            oil_reichweite[str(m.property_id)] = days
-        else:
-            oil_reichweite.setdefault(str(m.property_id), None)
+        tank_groups.setdefault(tank_group_key(m), []).append(m)
+    for key, tanks in tank_groups.items():
+        levels = [float(latest_map[t.id].value) if latest_map.get(t.id) else None for t in tanks]
+        yearly_rates = [oil_results[t.id].liters_per_day for t in tanks]
+        oil_reichweite[str(key)] = group_range(levels, yearly_rates)
+        recent_rates = [recent_rate(oil_results[t.id].intervals, now) for t in tanks]
+        days_30d = group_range(levels, recent_rates)
+        if days_30d is not None:
+            oil_reichweite_30d[str(key)] = days_30d
 
     oil_probable = open_probable_deliveries(db, prop_ids, now)
 
@@ -126,6 +131,7 @@ def dashboard_summary(
         "active_meter_count": len(meters),
         "meters": meter_summaries,
         "oil_reichweite": oil_reichweite,
+        "oil_reichweite_30d": oil_reichweite_30d,
         "oil_probable_deliveries": [ProbableDeliveryResponse(**p).model_dump(mode="json") for p in oil_probable],
         "oil_market_price": {
             "price_per_100l": str(oil_price.price_per_100l) if oil_price else None,

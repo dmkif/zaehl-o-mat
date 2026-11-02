@@ -10,6 +10,7 @@ Water and electricity: only a rising value is consumption. An interval whose
 value stays equal or falls is unknown (neither litres nor days), exactly like the
 yearly average that existed before this module.
 """
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
@@ -242,3 +243,18 @@ def merge_month_series(series: list[list[MonthValue]]) -> list[MonthValue]:
             first.month, value, state, any(r.estimated for r in with_data), previous, delta, cost,
         ))
     return merged
+
+
+def group_range(levels: list[Optional[float]], rates: list[Optional[float]]) -> Optional[int]:
+    """Days a tank group lasts: sum of the current levels / sum of the rates, rounded down.
+
+    None when a tank has no level or no rate (a partial sum would promise too many days),
+    or when the summed rate is not positive. A standby tank with a rate of 0 is fine."""
+    if not levels or len(levels) != len(rates):
+        return None
+    if any(level is None for level in levels) or any(rate is None for rate in rates):
+        return None
+    total_rate = sum(rates)
+    if total_rate <= 0:
+        return None
+    return math.floor(sum(levels) / total_rate)

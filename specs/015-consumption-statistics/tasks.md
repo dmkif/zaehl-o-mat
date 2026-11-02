@@ -103,13 +103,13 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US3 (write first)
 
-- [ ] T031 [P] [US3] Pure tests for `group_range` in `backend/tests/test_consumption_stats.py`: sum of levels / sum of rates floored; one tank equals old value; a tank without rate gives `None`; zero rate gives `None`
-- [ ] T032 [P] [US3] API tests in `backend/tests/test_dashboard_statistics.py`: two tanks in one property give the group range (the previous last-tank-wins behaviour is gone); single-tank property unchanged (T004); `oil_reichweite_30d` present only when every tank has a 30-day rate and the sum is > 0
+- [X] T031 [P] [US3] Pure tests for `group_range` in `backend/tests/test_consumption_stats.py`: sum of levels / sum of rates floored; one tank equals old value; a tank without rate gives `None`; zero rate gives `None`
+- [X] T032 [P] [US3] API tests in `backend/tests/test_dashboard_statistics.py`: two tanks in one property give the group range (the previous last-tank-wins behaviour is gone); single-tank property unchanged (T004); `oil_reichweite_30d` present only when every tank has a 30-day rate and the sum is > 0
 
 ### Implementation for US3
 
-- [ ] T033 [US3] Implement `group_range` in `backend/app/services/consumption_stats.py`; switch `oil_reichweite` in `backend/app/routers/dashboard.py` to the group range and add `oil_reichweite_30d` (contracts section 1); T004 stays green for single tanks
-- [ ] T034 [US3] Show both ranges with labels ("Reichweite (Jahresschnitt)", "Reichweite (30 Tage)") in the oil section of `frontend/src/views/Dashboard.vue`, per-tank levels and rates remain visible; add i18n keys; extend a component/view test where one exists
+- [X] T033 [US3] Implement `group_range` in `backend/app/services/consumption_stats.py`; switch `oil_reichweite` in `backend/app/routers/dashboard.py` to the group range and add `oil_reichweite_30d` (contracts section 1); T004 stays green for single tanks
+- [X] T034 [US3] Show both ranges with labels ("Reichweite (Jahresschnitt)", "Reichweite (30 Tage)") in the oil section of `frontend/src/views/Dashboard.vue`, per-tank levels and rates remain visible; add i18n keys; extend a component/view test where one exists
 
 ---
 

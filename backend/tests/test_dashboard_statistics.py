@@ -224,3 +224,55 @@ class TestMonthlyEndpoint:
         user = make_user(db, role=UserRole.user)
         body = client.get("/api/dashboard/monthly", headers=auth_headers(user)).json()
         assert body["series"] == []
+
+
+# ── Oil range for a tank group ────────────────────────────────────────────────
+
+class TestOilRangeGroup:
+    def _tank(self, db, prop, name, levels):
+        m = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name=name)
+        now = NOW()
+        for days_ago, level in levels:
+            make_reading(db, m.id, level, now - timedelta(days=days_ago))
+        return m
+
+    def test_two_tanks_give_the_group_range(self, client, db):
+        prop = make_property(db)
+        # tank A: 300 L left, 1.5 L/day; tank B: 500 L left, 2.5 L/day
+        self._tank(db, prop, "A", [(40, 360.0), (0, 300.0)])
+        self._tank(db, prop, "B", [(40, 600.0), (0, 500.0)])
+        body = _summary(client, _admin(db))
+        assert body["oil_reichweite"][str(prop.id)] == 200
+
+    def test_group_range_does_not_depend_on_tank_order(self, client, db):
+        prop = make_property(db)
+        self._tank(db, prop, "Z-last", [(40, 360.0), (0, 300.0)])
+        self._tank(db, prop, "A-first", [(40, 600.0), (0, 500.0)])
+        assert _summary(client, _admin(db))["oil_reichweite"][str(prop.id)] == 200
+
+    def test_no_group_range_when_one_tank_has_no_rate_yet(self, client, db):
+        prop = make_property(db)
+        self._tank(db, prop, "A", [(40, 360.0), (0, 300.0)])
+        self._tank(db, prop, "B", [(0, 500.0)])
+        assert _summary(client, _admin(db))["oil_reichweite"][str(prop.id)] is None
+
+    def test_30_day_range_present_when_every_tank_has_a_recent_rate(self, client, db):
+        prop = make_property(db)
+        # 100 days of 1 L/day, then 12 L/day over the last 20 days (300 L left in total)
+        self._tank(db, prop, "A", [(100, 1000.0), (40, 900.0), (20, 660.0), (0, 420.0)])
+        body = _summary(client, _admin(db))
+        assert body["oil_reichweite_30d"][str(prop.id)] == 35  # 420 / 12
+        # the yearly rate (~2.6 L/day) promises far more days than the winter pace
+        assert body["oil_reichweite"][str(prop.id)] > body["oil_reichweite_30d"][str(prop.id)]
+
+    def test_30_day_range_absent_without_recent_rate(self, client, db):
+        prop = make_property(db)
+        self._tank(db, prop, "A", [(120, 1000.0), (60, 900.0)])
+        body = _summary(client, _admin(db))
+        assert str(prop.id) not in body["oil_reichweite_30d"]
+
+    def test_30_day_range_absent_when_recent_rate_is_zero(self, client, db):
+        prop = make_property(db)
+        self._tank(db, prop, "A", [(100, 1000.0), (40, 900.0), (20, 900.0), (0, 900.0)])
+        body = _summary(client, _admin(db))
+        assert str(prop.id) not in body["oil_reichweite_30d"]

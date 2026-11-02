@@ -44,6 +44,9 @@ export default {
     estimated: 'geschätzt (lange Ablesepause)',
     show_previous_year: 'Vorjahr einblenden',
     load_error: 'Statistik konnte nicht geladen werden.',
+    range_year: 'Reichweite (Jahresschnitt)',
+    range_30d: 'Reichweite (30 Tage)',
+    range_days: '{n} Tage',
     per_day: '/Tag',
   },
   meter_types: {

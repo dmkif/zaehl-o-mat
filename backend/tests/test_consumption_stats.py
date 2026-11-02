@@ -408,3 +408,37 @@ class TestMergeMonthSeries:
         from app.services.consumption_stats import merge_month_series
 
         assert merge_month_series([]) == []
+
+
+class TestGroupRange:
+    def test_sum_of_levels_over_sum_of_rates_floored(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([300, 500], [1.5, 2.5]) == 200
+        assert group_range([301, 500], [1.5, 2.5]) == 200  # 801 / 4 = 200.25
+
+    def test_one_tank_equals_the_old_calculation(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([700], [7.5]) == 93
+
+    def test_none_when_a_tank_has_no_rate(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([300, 500], [1.5, None]) is None
+
+    def test_none_when_a_tank_has_no_level(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([300, None], [1.5, 2.5]) is None
+
+    def test_none_for_zero_or_empty(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([300], [0.0]) is None
+        assert group_range([], []) is None
+
+    def test_a_standby_tank_with_zero_rate_is_fine(self):
+        from app.services.consumption_stats import group_range
+
+        assert group_range([300, 500], [4.0, 0.0]) == 200

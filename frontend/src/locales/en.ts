@@ -44,6 +44,9 @@ export default {
     estimated: 'estimated (long gap between readings)',
     show_previous_year: 'Show previous year',
     load_error: 'Statistics could not be loaded.',
+    range_year: 'Range (yearly average)',
+    range_30d: 'Range (30 days)',
+    range_days: '{n} days',
     per_day: '/day',
   },
   meter_types: {

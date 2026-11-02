@@ -71,8 +71,11 @@
       <template v-for="(days, propId) in summary?.oil_reichweite" :key="propId">
         <div v-if="days != null" class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           <h2 class="text-lg font-semibold mb-3">⛽ Heizöltank</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-300">
-            Reichweite: <span class="font-semibold">{{ days }} Tage</span>
+          <p class="text-sm text-gray-600 dark:text-gray-300" data-testid="range-year">
+            {{ $t('stats.range_year') }}: <span class="font-semibold">{{ $t('stats.range_days', { n: days }) }}</span>
+          </p>
+          <p v-if="summary?.oil_reichweite_30d?.[propId] != null" class="text-sm text-gray-600 dark:text-gray-300" data-testid="range-30d">
+            {{ $t('stats.range_30d') }}: <span class="font-semibold">{{ $t('stats.range_days', { n: summary.oil_reichweite_30d[propId] }) }}</span>
           </p>
           <div class="mt-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
             <div
