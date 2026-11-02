@@ -17,6 +17,12 @@ Seed (test fixture or UI): oil tank with about 1 L/day for 100 days, then about 
 - `GET /api/dashboard/summary`: the tank entry has `avg_daily_consumption_30d` clearly above `avg_daily_consumption_365d`, `trend_30d_vs_365d_pct` large and positive, `unusually_high: false` (oil).
 - Dashboard: the meter card shows "30 Tage", the percentage in red, and "seit letzter Ablesung".
 
+## 2b. Two tanks (Story 3, FR-041)
+
+Property with tank A (300 L) and tank B (500 L), together 4 L/day.
+- `summary.oil_reichweite[property] == 200` (800 / 4); with only tank A having a rate the group range is absent.
+- A single-tank property returns the same range as on `main` (regression test).
+
 ## 3. Monthly view (Story 2, SC-002/003)
 
 Readings across 14 months, one reading roughly every 3 weeks.

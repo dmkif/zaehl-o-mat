@@ -39,7 +39,8 @@ Existing fields unchanged. New fields:
 }
 ```
 
-- `oil_reichweite_30d`: only for properties with a 30-day rate > 0 (R11).
+- `oil_reichweite` (existing field): for properties with several tanks now `floor(sum of levels / sum of yearly rates)` of the tank group (FR-041); unchanged for one tank.
+- `oil_reichweite_30d`: same calculation with the 30-day rates; only for properties where every active tank has a 30-day rate and the sum is > 0 (R11).
 - `overall` is `null`/absent unless the caller has >= 2 accessible properties (FR-021). `mean_per_property` absent when `properties_used == 1` (FR-022).
 - Only properties and meters the caller may read are included.
 

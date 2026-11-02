@@ -41,7 +41,7 @@ Approach: everything is **derived on request** from existing readings, deliverie
 | III. Secure-by-Default Access | PASS. Every new endpoint authorizes server-side with the existing helpers (`get_meter_with_access`, `require_property_access`, accessible ids). |
 | IV. Schema via Migrations | PASS, not applicable: nothing stored (confirmed in R9). |
 | V. Deployment Parity | PASS, not applicable: no new env var, secret or service. The new `tzdata` package is a Python requirement, shipped by the image build for both Compose and Helm. |
-| VI. Brownfield Respect | PASS. Router/service split kept; existing response fields keep name, type and value; new fields are additive; `avg_daily_consumption_365d` is produced by the new shared code but verified identical by regression tests (SC-005). |
+| VI. Brownfield Respect | PASS. Router/service split kept; existing response fields keep name and type and, with one justified exception, their value (oil range with several tanks was wrong: last tank won; now the tank group sum, FR-041, to be stated in the PR description); new fields are additive; `avg_daily_consumption_365d` is produced by the new shared code but verified identical by regression tests (SC-005). |
 | VII. OWASP Top 10 | PASS with mapping below. |
 | VIII. Authenticated Communication | PASS. No unauthenticated endpoint; no outbound calls. |
 | IX. Server-Side Validation | PASS. Query parameters validated by Pydantic/FastAPI types (UUID, enum, bounded ints). |

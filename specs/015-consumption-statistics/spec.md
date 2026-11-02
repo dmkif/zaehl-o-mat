@@ -97,6 +97,8 @@ For the oil tank the dashboard shows the range in days not only at the yearly ra
 1. **Given** a 30-day rate above zero, **When** the oil tile is shown, **Then** the range at the 30-day rate is shown next to the existing range.
 2. **Given** no 30-day rate or a rate of zero, **When** shown, **Then** only the existing range is shown.
 3. **Given** both ranges, **When** shown, **Then** each is labelled with its basis so they cannot be confused.
+4. **Given** a property with two oil tanks (300 L and 500 L, together 4 L/day), **When** the oil tile is shown, **Then** the range is 800 / 4 = 200 days for the group, not the range of one tank, and each tank's own level and rate remain visible.
+5. **Given** one tank of the group has no rate yet (too little data), **When** the range is calculated, **Then** the group range is not shown (a partial sum would give a wrong, too long range) and the reason is indicated.
 
 ---
 
@@ -188,7 +190,8 @@ With more than one property, the operator sees every statistic in two scopes: **
 - **FR-014**: The system MUST show cost for year and month views only where a price is known (oil: recorded delivery prices; other types: recorded price per unit) and MUST omit cost otherwise.
 - **FR-015**: Water and electricity meters MUST show an "unusually high" marker when the 30-day rate is at least twice the yearly average and at least 60 days of data exist; oil tanks MUST NOT show this marker.
 - **FR-016**: All new figures MUST respect the existing property access rules: a user sees statistics only for properties they may access.
-- **FR-017**: Existing figures (yearly average, range, type aggregate, cost forecast) MUST keep their current values and behaviour.
+- **FR-017**: Existing figures (yearly average, range, type aggregate, cost forecast) MUST keep their current values and behaviour, with one deliberate exception: the oil range of a property with several tanks (FR-041).
+- **FR-041**: All active oil tanks of a property form one *tank group* (one heating supply): the oil range is the sum of the current levels divided by the sum of the tanks' rates, for both the yearly and the 30-day rate. For a property with one tank the value is unchanged. The per-tank figures stay visible. Splitting tanks into several separate groups is out of scope (see Assumptions).
 - **FR-018**: All new figures MUST be calculated by one shared calculation per meter type, so dashboard, detail page and range cannot disagree.
 - **FR-019**: Month boundaries MUST follow the Europe/Berlin calendar.
 
@@ -226,6 +229,8 @@ With more than one property, the operator sees every statistic in two scopes: **
 - "Last reading" means the most recent reading of the active meter, regardless of how it was entered (manual or photo).
 - Costs reuse prices that already exist in the app (oil deliveries, price entries per unit); no new price input is added here.
 - "Overall" means the sum of rates per meter type over the accessible properties; the mean per property is the second view of the same data. Mixing meter types (for example oil litres and water m³) is never summed.
+- Oil tanks of a property are always one group (summed consumption and range). Separate groups (two heating systems in one property) or grouping by choice are out of scope; if needed later, a "tank group" assignment on the meter would be a separate feature with its own schema change. All group calculations go through one function `tank_group_key(meter)` (today the property id) so that change stays small.
+- A single oil delivery is assigned to the one tank that shows the largest rise (existing rule of feature 005). Delivery into two tanks at once is a known limitation: the second tank's rise shows up as a probable delivery that the operator confirms or splits manually.
 - No new notifications are sent; the feature is display-only.
 - Statistics use the readings that count. Today that is every reading; feature `016-roles-and-release` may mark readings as pending or rejected, and from then on only released readings count. To keep this a one-place change, all new figures take their readings from one shared selection (the same one the existing rate uses).
 - All figures are derived on request from existing readings, deliveries and prices; nothing new is stored, so no data migration is needed (to be confirmed in planning).
