@@ -442,3 +442,109 @@ class TestGroupRange:
         from app.services.consumption_stats import group_range
 
         assert group_range([300, 500], [4.0, 0.0]) == 200
+
+
+# ── Per property and overall (US6) ────────────────────────────────────────────
+
+def mr(meter_type, unit, yearly, recent):
+    return SimpleNamespace(meter_type=meter_type, unit=unit, yearly=yearly, recent=recent)
+
+
+class TestGroupStatistics:
+    def test_two_meters_of_a_type_add_up_and_trend_is_recomputed(self):
+        from app.services.consumption_stats import group_statistics
+
+        stats = group_statistics([mr("oil", "L", 2.0, 4.0), mr("oil", "L", 2.0, 4.0)])
+        assert stats["oil"]["yearly"] == 4.0
+        assert stats["oil"]["recent_30d"] == 8.0
+        assert stats["oil"]["trend_pct"] == 100.0
+        assert stats["oil"]["meter_count"] == 2
+        assert stats["oil"]["unit"] == "L"
+
+    def test_types_are_never_mixed(self):
+        from app.services.consumption_stats import group_statistics
+
+        stats = group_statistics([mr("oil", "L", 3.0, 3.0), mr("water", "m³", 0.2, 0.2)])
+        assert set(stats) == {"oil", "water"}
+        assert stats["water"]["yearly"] == 0.2
+
+    def test_meter_without_rates_counts_but_adds_nothing(self):
+        from app.services.consumption_stats import group_statistics
+
+        stats = group_statistics([mr("water", "m³", 0.2, None), mr("water", "m³", None, None)])
+        assert stats["water"]["yearly"] == 0.2
+        assert stats["water"]["recent_30d"] is None
+        assert stats["water"]["trend_pct"] is None
+        assert stats["water"]["meter_count"] == 2
+
+    def test_mixed_units_give_no_total_for_the_type(self):
+        from app.services.consumption_stats import group_statistics
+
+        assert "water" not in group_statistics([mr("water", "m³", 1.0, 1.0), mr("water", "L", 1.0, 1.0)])
+
+    def test_empty(self):
+        from app.services.consumption_stats import group_statistics
+
+        assert group_statistics([]) == {}
+
+
+class TestAggregateOverall:
+    def _by_property(self, **kw):
+        from app.services.consumption_stats import group_statistics
+
+        return {pid: group_statistics(items) for pid, items in kw.items()}
+
+    def test_total_and_mean_per_property(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(
+            a=[mr("water", "m³", 0.2, 0.3)], b=[mr("water", "m³", 0.6, 0.8)],
+        )
+        water = aggregate_overall(by_prop)["water"]
+        assert water["yearly"] == pytest.approx(0.8)
+        assert water["recent_30d"] == pytest.approx(1.1)
+        assert water["properties_used"] == 2
+        assert water["mean_per_property"]["yearly"] == pytest.approx(0.4)
+        assert water["mean_per_property"]["recent_30d"] == pytest.approx(0.55)
+        assert water["trend_pct"] == pytest.approx(37.5)
+
+    def test_property_without_data_is_left_out_of_the_mean(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(
+            a=[mr("water", "m³", 0.2, 0.2)], b=[mr("water", "m³", None, None)], c=[mr("water", "m³", 0.6, 0.6)],
+        )
+        water = aggregate_overall(by_prop)["water"]
+        assert water["properties_used"] == 2
+        assert water["mean_per_property"]["yearly"] == pytest.approx(0.4)
+
+    def test_mean_omitted_with_one_property(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(a=[mr("oil", "L", 3.0, 3.0)], b=[mr("water", "m³", 0.2, 0.2)])
+        oil = aggregate_overall(by_prop)["oil"]
+        assert oil["properties_used"] == 1
+        assert "mean_per_property" not in oil
+        assert oil["yearly"] == 3.0
+
+    def test_type_without_any_data_is_not_listed(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(a=[mr("water", "m³", None, None)], b=[mr("water", "m³", None, None)])
+        assert aggregate_overall(by_prop) == {}
+
+    def test_mixed_units_across_properties_give_no_total(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(a=[mr("water", "m³", 1.0, 1.0)], b=[mr("water", "L", 1.0, 1.0)])
+        assert "water" not in aggregate_overall(by_prop)
+
+    def test_two_tanks_in_one_property_and_one_in_another(self):
+        from app.services.consumption_stats import aggregate_overall
+
+        by_prop = self._by_property(
+            a=[mr("oil", "L", 1.5, 2.0), mr("oil", "L", 2.5, 2.0)], b=[mr("oil", "L", 3.0, 3.0)],
+        )
+        oil = aggregate_overall(by_prop)["oil"]
+        assert oil["yearly"] == pytest.approx(7.0)
+        assert oil["mean_per_property"]["yearly"] == pytest.approx(3.5)

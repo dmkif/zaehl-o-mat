@@ -276,3 +276,93 @@ class TestOilRangeGroup:
         self._tank(db, prop, "A", [(100, 1000.0), (40, 900.0), (20, 900.0), (0, 900.0)])
         body = _summary(client, _admin(db))
         assert str(prop.id) not in body["oil_reichweite_30d"]
+
+
+# ── statistics block: per property and overall ────────────────────────────────
+
+class TestSummaryStatistics:
+    def _water(self, db, prop, per_day, name="W"):
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3, name=name)
+        now = NOW()
+        make_reading(db, m.id, 0.0, now - timedelta(days=60))
+        make_reading(db, m.id, per_day * 60, now)
+        return m
+
+    def test_per_property_and_overall_figures(self, client, db):
+        a = make_property(db, "Haus")
+        b = make_property(db, "Wohnung")
+        self._water(db, a, 0.2)
+        self._water(db, b, 0.6)
+        stats = _summary(client, _admin(db))["statistics"]
+        assert stats["by_property"][str(a.id)]["name"] == "Haus"
+        assert stats["by_property"][str(a.id)]["types"]["water"]["yearly"] == pytest.approx(0.2, abs=0.001)
+        assert stats["by_property"][str(b.id)]["types"]["water"]["yearly"] == pytest.approx(0.6, abs=0.001)
+        water = stats["overall"]["water"]
+        assert water["yearly"] == pytest.approx(0.8, abs=0.002)
+        assert water["properties_used"] == 2
+        assert water["mean_per_property"]["yearly"] == pytest.approx(0.4, abs=0.002)
+
+    def test_overall_equals_sum_of_per_property_figures(self, client, db):
+        props = [make_property(db, f"P{i}") for i in range(3)]
+        for i, p in enumerate(props):
+            self._water(db, p, 0.1 * (i + 1))
+        stats = _summary(client, _admin(db))["statistics"]
+        per = [stats["by_property"][str(p.id)]["types"]["water"]["yearly"] for p in props]
+        assert stats["overall"]["water"]["yearly"] == pytest.approx(sum(per), abs=0.001)
+
+    def test_member_of_one_property_gets_no_overall_and_no_foreign_data(self, client, db):
+        mine = make_property(db, "Mine")
+        other = make_property(db, "Other")
+        self._water(db, mine, 0.2)
+        self._water(db, other, 5.0)
+        user = make_user(db, role=UserRole.user)
+        db.add(PropertyUser(property_id=mine.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+        stats = _summary(client, user)["statistics"]
+        assert stats["overall"] is None
+        assert list(stats["by_property"]) == [str(mine.id)]
+        assert "Other" not in str(stats)
+
+    def test_overall_of_a_member_of_two_of_three_properties_excludes_the_third(self, client, db):
+        a, b, c = (make_property(db, n) for n in "ABC")
+        self._water(db, a, 0.2)
+        self._water(db, b, 0.4)
+        self._water(db, c, 10.0)
+        user = make_user(db, role=UserRole.user)
+        for p in (a, b):
+            db.add(PropertyUser(property_id=p.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+        water = _summary(client, user)["statistics"]["overall"]["water"]
+        assert water["yearly"] == pytest.approx(0.6, abs=0.002)
+        assert water["properties_used"] == 2
+
+    def test_user_without_properties_gets_empty_statistics(self, client, db):
+        make_property(db)
+        user = make_user(db, role=UserRole.user)
+        stats = _summary(client, user)["statistics"]
+        assert stats["by_property"] == {}
+        assert stats["overall"] is None
+
+    def test_two_tanks_add_up_within_a_property(self, client, db):
+        a = make_property(db, "A")
+        b = make_property(db, "B")
+        for name in ("T1", "T2"):
+            t = make_meter(db, a.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name=name)
+            make_reading(db, t.id, 600.0, NOW() - timedelta(days=40))
+            make_reading(db, t.id, 500.0, NOW())
+        t = make_meter(db, b.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="T3")
+        make_reading(db, t.id, 400.0, NOW() - timedelta(days=40))
+        make_reading(db, t.id, 300.0, NOW())
+        stats = _summary(client, _admin(db))["statistics"]
+        assert stats["by_property"][str(a.id)]["types"]["oil"]["yearly"] == pytest.approx(5.0, abs=0.01)
+        assert stats["by_property"][str(a.id)]["types"]["oil"]["meter_count"] == 2
+        assert stats["overall"]["oil"]["yearly"] == pytest.approx(7.5, abs=0.01)
+
+    def test_property_without_data_is_not_counted_in_the_mean(self, client, db):
+        a, b, c = (make_property(db, n) for n in "ABC")
+        self._water(db, a, 0.2)
+        self._water(db, b, 0.6)
+        make_meter(db, c.id, meter_type=MeterType.water, unit=MeterUnit.m3, name="empty")
+        water = _summary(client, _admin(db))["statistics"]["overall"]["water"]
+        assert water["properties_used"] == 2
+        assert water["mean_per_property"]["yearly"] == pytest.approx(0.4, abs=0.002)

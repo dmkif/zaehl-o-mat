@@ -1,4 +1,5 @@
 import uuid
+from types import SimpleNamespace
 from datetime import date as date_type, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
@@ -19,7 +20,7 @@ from app.services.buy_signal import compute_oil_buy_signal
 from app.permissions import get_property_or_404, require_property_access
 from app.schemas.dashboard import MonthlyResponse
 from app.services.consumption_stats import (
-    group_range, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
+    aggregate_overall, group_range, group_statistics, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
     trend_pct, yearly_rate,
 )
 from app.services.oil_loader import load_oil_results
@@ -75,6 +76,7 @@ def dashboard_summary(
     other_intervals = load_intervals(db, [m for m in meters if m.meter_type != MeterType.oil], now)
 
     meter_summaries = []
+    rate_rows: list = []  # per meter rates for the per-property / overall statistics
     for m in meters:
         latest = latest_map.get(m.id)
         if m.meter_type == MeterType.oil:
@@ -84,6 +86,10 @@ def dashboard_summary(
             intervals = other_intervals[m.id]
             avg_daily = yearly_rate(intervals)
         recent = recent_rate(intervals, now)
+        rate_rows.append(SimpleNamespace(
+            property_id=m.property_id, meter_type=m.meter_type.value, unit=m.unit.value,
+            yearly=avg_daily, recent=recent,
+        ))
         meter_summaries.append(
             {
                 "meter_id": str(m.id),
@@ -118,6 +124,21 @@ def dashboard_summary(
 
     oil_probable = open_probable_deliveries(db, prop_ids, now)
 
+    # Per property and overall figures: only properties the caller may access (spec 015, FR-016/021)
+    prop_names = (
+        {p.id: p.name for p in db.query(Property).filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
+    )
+    stats_by_property: dict[uuid.UUID, dict] = {}
+    for pid in {r.property_id for r in rate_rows}:
+        stats_by_property[pid] = group_statistics([r for r in rate_rows if r.property_id == pid])
+    statistics = {
+        "by_property": {
+            str(pid): {"name": prop_names.get(pid), "types": types}
+            for pid, types in stats_by_property.items() if types
+        },
+        "overall": (aggregate_overall(stats_by_property) or None) if len(prop_ids) >= 2 else None,
+    }
+
     # Latest oil market price + buy signal
     oil_price = (
         db.query(OilMarketPrice)
@@ -132,6 +153,7 @@ def dashboard_summary(
         "meters": meter_summaries,
         "oil_reichweite": oil_reichweite,
         "oil_reichweite_30d": oil_reichweite_30d,
+        "statistics": statistics,
         "oil_probable_deliveries": [ProbableDeliveryResponse(**p).model_dump(mode="json") for p in oil_probable],
         "oil_market_price": {
             "price_per_100l": str(oil_price.price_per_100l) if oil_price else None,
@@ -150,7 +172,7 @@ def _resolve_scope(
     meter_id: that meter (property access required); property_id: its active meters;
     neither: the active meters of every property the caller may access."""
     if meter_id is not None and property_id is not None:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Use meter_id or property_id, not both")
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Use meter_id or property_id, not both")
     if meter_id is not None:
         meter = db.query(Meter).filter(Meter.id == meter_id).first()
         if not meter:

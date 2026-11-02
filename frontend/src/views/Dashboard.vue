@@ -40,6 +40,37 @@
         </MeterCard>
       </div>
 
+      <!-- Statistics per property and overall (feature 015) -->
+      <div
+        v-if="summary?.statistics?.overall"
+        class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+        data-testid="overall-statistics"
+      >
+        <h2 class="text-lg font-semibold mb-3">{{ $t('stats.overall_title') }}</h2>
+        <TypeStatistics :types="summary.statistics.overall" overall />
+      </div>
+      <template v-for="(entry, propId) in summary?.statistics?.by_property" :key="`stats-${propId}`">
+        <div class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800" :data-testid="`property-statistics-${propId}`">
+          <h2 class="text-lg font-semibold mb-3">{{ entry.name }}</h2>
+          <TypeStatistics :types="entry.types" />
+        </div>
+      </template>
+
+      <!-- Consumption per month for a property or all (feature 015) -->
+      <div v-if="propertyOptions.length" class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 class="text-lg font-semibold">{{ $t('stats.monthly_title') }}</h2>
+          <label v-if="propertyOptions.length > 1" class="text-sm flex items-center gap-2">
+            {{ $t('stats.scope_label') }}
+            <select v-model="monthlyScope" class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1" data-testid="monthly-scope">
+              <option value="">{{ $t('stats.scope_all') }}</option>
+              <option v-for="o in propertyOptions" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+          </label>
+        </div>
+        <MonthlyConsumption :property-id="monthlyScope || undefined" />
+      </div>
+
       <!-- Probable oil deliveries (level rose between two readings) -->
       <div
         v-for="p in probableDeliveries"
@@ -138,6 +169,8 @@ import { permsFor } from '@/utils/propertyRole'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
 import TrendLine from '@/components/TrendLine.vue'
+import TypeStatistics from '@/components/TypeStatistics.vue'
+import MonthlyConsumption from '@/components/MonthlyConsumption.vue'
 import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()
@@ -148,6 +181,10 @@ const summary = ref<any>(null)
 // property id -> caller's role in it (GET /api/properties `my_role`); decides who sees the write buttons
 const propertyRoles = ref<Map<string, string>>(new Map())
 const typeAggregates = ref<Record<string, any>>({})
+const monthlyScope = ref('')  // '' = all accessible properties
+const propertyOptions = computed(() =>
+  Object.entries(summary.value?.statistics?.by_property ?? {}).map(([id, e]: [string, any]) => ({ id, name: e.name })),
+)
 const oilPriceHistory = ref<{ history: Array<{date: string; price: number}>; forecast: Array<{date: string; price: number}> } | null>(null)
 
 // ── Buy signal ────────────────────────────────────────────────────────────────

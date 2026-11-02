@@ -47,6 +47,13 @@ export default {
     range_year: 'Range (yearly average)',
     range_30d: 'Range (30 days)',
     range_days: '{n} days',
+    overall_title: 'All properties combined',
+    properties_used: 'from {n} properties',
+    mean_per_property: 'Avg per property',
+    type: 'Meter type',
+    yearly: 'Yearly average',
+    scope_label: 'View',
+    scope_all: 'All properties',
     per_day: '/day',
   },
   meter_types: {

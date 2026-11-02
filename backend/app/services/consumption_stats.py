@@ -258,3 +258,68 @@ def group_range(levels: list[Optional[float]], rates: list[Optional[float]]) -> 
     if total_rate <= 0:
         return None
     return math.floor(sum(levels) / total_rate)
+
+
+# ── Per property and overall figures ──────────────────────────────────────────
+
+def group_statistics(meters: Iterable) -> dict[str, dict]:
+    """Rates of one scope (a property) by meter type.
+
+    meters: objects with meter_type, unit, yearly, recent. Rates of meters of one type add up
+    (two tanks are one heating); types are never mixed. A type whose meters use different
+    units gets no total. The trend is recomputed on the sums."""
+    by_type: dict[str, list] = {}
+    for m in meters:
+        by_type.setdefault(m.meter_type, []).append(m)
+    result: dict[str, dict] = {}
+    for meter_type, items in by_type.items():
+        units = {m.unit for m in items}
+        if len(units) != 1:
+            continue
+        yearly = sum_rates(m.yearly for m in items)
+        recent = sum_rates(m.recent for m in items)
+        result[meter_type] = {
+            "unit": units.pop(),
+            "meter_count": len(items),
+            "yearly": yearly,
+            "recent_30d": recent,
+            "trend_pct": trend_pct(recent, yearly),
+        }
+    return result
+
+
+def aggregate_overall(by_property: dict) -> dict[str, dict]:
+    """Combine per-property statistics (group_statistics) over the properties given.
+
+    Total = sum of the property rates per meter type; the mean per property uses only the
+    properties that have a rate for that figure, and ``properties_used`` says how many.
+    The mean is left out when only one property has data."""
+    by_type: dict[str, list[dict]] = {}
+    for stats in by_property.values():
+        for meter_type, entry in stats.items():
+            by_type.setdefault(meter_type, []).append(entry)
+    result: dict[str, dict] = {}
+    for meter_type, entries in by_type.items():
+        if len({e["unit"] for e in entries}) != 1:
+            continue
+        with_yearly = [e["yearly"] for e in entries if e["yearly"] is not None]
+        with_recent = [e["recent_30d"] for e in entries if e["recent_30d"] is not None]
+        if not with_yearly and not with_recent:
+            continue
+        yearly = round(sum(with_yearly), 4) if with_yearly else None
+        recent = round(sum(with_recent), 4) if with_recent else None
+        used = len(with_yearly) if with_yearly else len(with_recent)
+        row = {
+            "unit": entries[0]["unit"],
+            "properties_used": used,
+            "yearly": yearly,
+            "recent_30d": recent,
+            "trend_pct": trend_pct(recent, yearly),
+        }
+        if used > 1:
+            row["mean_per_property"] = {
+                "yearly": round(yearly / len(with_yearly), 4) if with_yearly else None,
+                "recent_30d": round(recent / len(with_recent), 4) if with_recent else None,
+            }
+        result[meter_type] = row
+    return result

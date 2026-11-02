@@ -121,17 +121,17 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US6 (write first)
 
-- [ ] T035 [P] [US6] Pure tests for `aggregate_overall` in `backend/tests/test_consumption_stats.py`: sum and mean per property; properties without data excluded and counted in `properties_used`; `mean_per_property` omitted when `properties_used == 1`; trend recomputed on sums; mixed units give no total; two tanks add up
-- [ ] T036 [P] [US6] API tests in `backend/tests/test_dashboard_statistics.py`: totals equal the sum of the per-property figures; user with access to one of two properties never sees data or totals of the other and gets no `overall` (SC-008); global admin sees all; user without any property gets empty `statistics`
+- [X] T035 [P] [US6] Pure tests for `aggregate_overall` in `backend/tests/test_consumption_stats.py`: sum and mean per property; properties without data excluded and counted in `properties_used`; `mean_per_property` omitted when `properties_used == 1`; trend recomputed on sums; mixed units give no total; two tanks add up
+- [X] T036 [P] [US6] API tests in `backend/tests/test_dashboard_statistics.py`: totals equal the sum of the per-property figures; user with access to one of two properties never sees data or totals of the other and gets no `overall` (SC-008); global admin sees all; user without any property gets empty `statistics`
 - [X] T037 [P] [US6] API tests: `/monthly?property_id=` and `/monthly` (all accessible) group series by meter type and include only accessible properties; foreign `property_id` gives 403/404
 
 ### Implementation for US6
 
-- [ ] T038 [US6] Implement `aggregate_overall` and `group_statistics` in `backend/app/services/consumption_stats.py`; make T035 pass
-- [ ] T039 [US6] Add the `statistics` block to `GET /api/dashboard/summary` in `backend/app/routers/dashboard.py` computed only from the caller's accessible properties; make T036 pass
+- [X] T038 [US6] Implement `aggregate_overall` and `group_statistics` in `backend/app/services/consumption_stats.py`; make T035 pass
+- [X] T039 [US6] Add the `statistics` block to `GET /api/dashboard/summary` in `backend/app/routers/dashboard.py` computed only from the caller's accessible properties; make T036 pass
 - [X] T040 [US6] Support the property and all-accessible scopes in `GET /api/dashboard/monthly` aggregation (series per meter type, summed over meters); make T037 pass
-- [ ] T041 [P] [US6] Dashboard UI: per-property statistic blocks and, only with two or more properties, an overall block (total, mean per property with the number of properties used, trend) in `frontend/src/views/Dashboard.vue`; add i18n keys
-- [ ] T042 [US6] Add a scope selector (property / all) and the monthly view to the dashboard using `MonthlyConsumption` (scope props) in `frontend/src/views/Dashboard.vue`
+- [X] T041 [P] [US6] Dashboard UI: per-property statistic blocks and, only with two or more properties, an overall block (total, mean per property with the number of properties used, trend) in `frontend/src/views/Dashboard.vue`; add i18n keys
+- [X] T042 [US6] Add a scope selector (property / all) and the monthly view to the dashboard using `MonthlyConsumption` (scope props) in `frontend/src/views/Dashboard.vue`
 
 ---
 

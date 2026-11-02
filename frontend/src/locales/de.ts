@@ -47,6 +47,13 @@ export default {
     range_year: 'Reichweite (Jahresschnitt)',
     range_30d: 'Reichweite (30 Tage)',
     range_days: '{n} Tage',
+    overall_title: 'Alle Objekte zusammen',
+    properties_used: 'aus {n} Objekten',
+    mean_per_property: 'Ø je Objekt',
+    type: 'Zählerart',
+    yearly: 'Jahresschnitt',
+    scope_label: 'Ansicht',
+    scope_all: 'Alle Objekte',
     per_day: '/Tag',
   },
   meter_types: {
