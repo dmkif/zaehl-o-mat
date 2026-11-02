@@ -31,7 +31,7 @@
       <!-- Readings table -->
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4">
         <h2 class="font-semibold mb-3">{{ $t('meter.readings') }}</h2>
-        <table class="w-full text-sm">
+        <table class="w-full text-sm" data-testid="readings-table">
           <thead>
             <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
               <th class="text-left py-2">{{ $t('reading.date') }}</th>

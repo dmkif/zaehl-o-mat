@@ -110,7 +110,7 @@ test.describe('role dependent UI', () => {
     test('read-only user: no add-reading form, no edit/delete reading buttons', async ({ page, signIn }) => {
       await signIn(PERSONAS.user)
       await page.goto(detail())
-      await expect(page.locator('tbody tr')).toHaveCount(1)
+      await expect(page.getByTestId('readings-table').locator('tbody tr')).toHaveCount(1)
       await expect(page.getByRole('heading', { name: 'Ablesung erfassen' })).toHaveCount(0)
       await expect(page.locator('label', { hasText: 'Bild hochladen' })).toHaveCount(0)
       await expect(page.getByTitle('Bearbeiten', { exact: true })).toHaveCount(0)
@@ -137,7 +137,7 @@ test.describe('role dependent UI', () => {
       await api.addMember(propertyId, PERSONAS.manager.username, 'user')
       await signIn(PERSONAS.manager)
       await page.goto(detail())
-      await expect(page.locator('tbody tr')).toHaveCount(1)
+      await expect(page.getByTestId('readings-table').locator('tbody tr')).toHaveCount(1)
       await expect(page.getByRole('heading', { name: 'Ablesung erfassen' })).toHaveCount(0)
       await page.goto(`/properties/${propertyId}/meters`)
       await expect(page.getByText('e2e role detail')).toBeVisible()

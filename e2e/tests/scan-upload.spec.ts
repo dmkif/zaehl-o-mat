@@ -40,7 +40,7 @@ test.describe('scan upload', () => {
     await expect(page.getByAltText('preview')).toBeVisible()
 
     await page.getByRole('button', { name: 'Ablesung speichern' }).click()
-    const rows = page.locator('tbody tr')
+    const rows = page.getByTestId('readings-table').locator('tbody tr')
     await expect(rows).toHaveCount(1)
     await expect(rows.first()).toContainText('12345.6')
     // the stored photo can be fetched again with the session (rescan dialog shows it as a blob: image)
@@ -94,12 +94,12 @@ test.describe('scan upload', () => {
       await expect(page.locator('input[inputmode=decimal]')).not.toHaveValue('')
       await page.getByRole('button', { name: 'Ablesung speichern' }).click()
       if (i === 0) {
-        await expect(page.locator('tbody tr')).toHaveCount(1)
+        await expect(page.getByTestId('readings-table').locator('tbody tr')).toHaveCount(1)
       } else {
         guard.expect(409, /\/readings\//)
         // the browser encodes the same crop to the same bytes: same image hash -> 409 duplicate_image
         await expect(page.getByText(/Dieses Bild wurde bereits gespeichert/)).toBeVisible()
-        await expect(page.locator('tbody tr')).toHaveCount(1)
+        await expect(page.getByTestId('readings-table').locator('tbody tr')).toHaveCount(1)
       }
     }
   })
