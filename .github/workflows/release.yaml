@@ -1,0 +1,71 @@
+name: Release
+
+# Every merge to main gets the next version number and its images/chart are built.
+# The bump follows the commit subjects since the last tag (Conventional Commits):
+#   breaking change ("type!:" or "BREAKING CHANGE")  -> major (while the major is 0: minor)
+#   feat                                              -> minor
+#   everything else (fix, chore(deps), docs, ...)     -> patch
+#
+# A tag pushed with GITHUB_TOKEN does not start other workflows, so the build is started
+# explicitly (workflow_dispatch on the tag; build.yaml also builds the chart for tag refs).
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the next version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute, tag and start the build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          if git describe --exact-match --tags "$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "$GITHUB_SHA is already tagged"
+            exit 0
+          fi
+          last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$last" ]; then
+            echo "no earlier version tag: tag the first release by hand" >&2
+            exit 1
+          fi
+          subjects=$(git log --format=%s "$last..$GITHUB_SHA")
+          bodies=$(git log --format=%b "$last..$GITHUB_SHA")
+          IFS=. read -r major minor patch <<<"${last#v}"
+          if grep -qE '^BREAKING[ -]CHANGE' <<<"$bodies" || grep -qE '^[a-z]+(\([^)]*\))?!:' <<<"$subjects"; then
+            bump=breaking
+          elif grep -qE '^feat(\([^)]*\))?:' <<<"$subjects"; then
+            bump=minor
+          else
+            bump=patch
+          fi
+          case "$bump" in
+            breaking) if [ "$major" -eq 0 ]; then minor=$((minor + 1)); patch=0; else major=$((major + 1)); minor=0; patch=0; fi ;;
+            minor)    minor=$((minor + 1)); patch=0 ;;
+            patch)    patch=$((patch + 1)) ;;
+          esac
+          next="v${major}.${minor}.${patch}"
+          summary=$(head -n 3 <<<"$subjects" | paste -sd ';' - | cut -c1-200)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$next" "$GITHUB_SHA" -m "$next ($bump): $summary"
+          git push origin "refs/tags/$next"
+          gh workflow run build.yaml --ref "$next"
+          echo "tagged $next ($bump) and started the build"
