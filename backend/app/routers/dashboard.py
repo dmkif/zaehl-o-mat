@@ -4,7 +4,7 @@ from datetime import date as date_type, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -17,7 +17,11 @@ from app.models import (
 from app.routers.oil_deliveries import open_probable_deliveries
 from app.schemas.oil_deliveries import ProbableDeliveryResponse
 from app.services.buy_signal import compute_oil_buy_signal
-from app.services.consumption_stats import last_interval_rate, recent_rate, trend_pct, yearly_rate
+from app.permissions import get_property_or_404, require_property_access
+from app.schemas.dashboard import MonthlyResponse
+from app.services.consumption_stats import (
+    last_interval_rate, merge_month_series, monthly_series, recent_rate, trend_pct, yearly_rate,
+)
 from app.services.oil_loader import load_oil_results
 from app.services.stats_loader import load_intervals
 
@@ -130,6 +134,63 @@ def dashboard_summary(
             "buy_signal": buy_signal,
         },
     }
+
+
+def _resolve_scope(
+    db: Session, user: User, meter_id: Optional[uuid.UUID], property_id: Optional[uuid.UUID]
+) -> tuple[dict, list[Meter]]:
+    """Meters a statistics request covers. Access is checked before any reading is read.
+
+    meter_id: that meter (property access required); property_id: its active meters;
+    neither: the active meters of every property the caller may access."""
+    if meter_id is not None and property_id is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Use meter_id or property_id, not both")
+    if meter_id is not None:
+        meter = db.query(Meter).filter(Meter.id == meter_id).first()
+        if not meter:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        require_property_access(db, meter.property_id, user, "read")
+        return {"kind": "meter", "id": str(meter_id)}, [meter]
+    if property_id is not None:
+        get_property_or_404(db, property_id)
+        require_property_access(db, property_id, user, "read")
+        meters = db.query(Meter).filter(Meter.property_id == property_id, Meter.replaced_at.is_(None)).all()
+        return {"kind": "property", "id": str(property_id)}, meters
+    prop_ids = _accessible_property_ids(user, db)
+    meters = (
+        db.query(Meter).filter(Meter.property_id.in_(prop_ids), Meter.replaced_at.is_(None)).all()
+        if prop_ids else []
+    )
+    return {"kind": "all", "id": None}, meters
+
+
+@router.get("/monthly", response_model=MonthlyResponse)
+def monthly_consumption(
+    meter_id: Optional[uuid.UUID] = None,
+    property_id: Optional[uuid.UUID] = None,
+    months: int = Query(12, ge=1, le=24),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consumption per local calendar month, with the same month of the previous year."""
+    scope, meters = _resolve_scope(db, current_user, meter_id, property_id)
+    now = datetime.now(timezone.utc)
+    # months to show + one year back for the previous-year comparison
+    intervals = load_intervals(db, meters, now, window_days=(months + 12) * 31 + 1)
+    by_type: dict[MeterType, list] = {}
+    units: dict[MeterType, str] = {}
+    for m in meters:
+        by_type.setdefault(m.meter_type, []).append(monthly_series(intervals[m.id], now, months))
+        units.setdefault(m.meter_type, m.unit.value)
+    series = [
+        {
+            "meter_type": mt.value,
+            "unit": units[mt],
+            "months": [vars(row) for row in merge_month_series(rows)],
+        }
+        for mt, rows in sorted(by_type.items(), key=lambda kv: kv[0].value)
+    ]
+    return {"scope": scope, "series": series}
 
 
 @router.get("/consumption/{meter_id}")

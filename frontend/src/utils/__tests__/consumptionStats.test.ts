@@ -35,3 +35,17 @@ describe('formatAmount', () => {
     expect(formatAmount(0.1234)).toBe('0,123')
   })
 })
+
+import { monthLabel, chartValue } from '../consumptionStats'
+
+describe('monthly helpers', () => {
+  it('formats the month in German', () => {
+    expect(monthLabel('2026-10')).toMatch(/Okt/)
+    expect(monthLabel('2026-10')).toContain('2026')
+  })
+  it('keeps gaps as null, never 0', () => {
+    expect(chartValue(null)).toBeNull()
+    expect(chartValue(0)).toBe(0)
+    expect(chartValue(12.5)).toBe(12.5)
+  })
+})

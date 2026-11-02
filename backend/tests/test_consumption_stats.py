@@ -208,3 +208,203 @@ class TestTrendPct:
         assert trend_pct(None, 3.0) is None
         assert trend_pct(3.0, None) is None
         assert trend_pct(3.0, 0.0) is None
+
+
+# ── Monthly view (US2) ────────────────────────────────────────────────────────
+
+BERLIN = __import__("zoneinfo").ZoneInfo("Europe/Berlin")
+
+
+def local(y, m, d, hh=0, mm=0):
+    """Berlin wall-clock time as an aware UTC datetime."""
+    return datetime(y, m, d, hh, mm, tzinfo=BERLIN).astimezone(UTC)
+
+
+def months_by_key(rows):
+    return {r.month: r for r in rows}
+
+
+class TestMonthlySeries:
+    def test_interval_is_split_proportionally_by_days(self):
+        from app.services.consumption_stats import monthly_series
+
+        # 1 Jan 00:00 -> 1 Mar 00:00 local (31 + 28 days), 590 units
+        intervals = ivs((0, local(2026, 1, 1)), (590, local(2026, 3, 1)))
+        rows = months_by_key(monthly_series(intervals, local(2026, 3, 1), months=3))
+        assert rows["2026-01"].value == pytest.approx(590 * 31 / 59)
+        assert rows["2026-02"].value == pytest.approx(590 * 28 / 59)
+        assert rows["2026-01"].state == "complete"
+        assert rows["2026-02"].state == "complete"
+
+    def test_shares_add_up_to_the_interval_consumption(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 1, 17, 13, 5)), (777.7, local(2026, 4, 3, 7, 30)))
+        rows = monthly_series(intervals, local(2026, 4, 3, 7, 30), months=4)
+        assert sum(r.value or 0 for r in rows) == pytest.approx(777.7, abs=1e-6)
+
+    def test_gap_month_is_no_data_not_zero(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 1, 1)), (30, local(2026, 2, 1)),
+                        (30, local(2026, 4, 1)), (60, local(2026, 5, 1)))
+        # Feb 1 -> Apr 1 reading unchanged -> skipped (unknown) -> February/March uncovered
+        rows = months_by_key(monthly_series(intervals, local(2026, 5, 1), months=5))
+        assert rows["2026-02"].state == "no_data" and rows["2026-02"].value is None
+        assert rows["2026-03"].state == "no_data" and rows["2026-03"].value is None
+        assert rows["2026-01"].value == pytest.approx(30)
+
+    def test_current_month_is_partial(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 10, 1)), (50, local(2026, 10, 11)))
+        rows = months_by_key(monthly_series(intervals, local(2026, 10, 11), months=2))
+        assert rows["2026-10"].state == "partial"
+        assert rows["2026-10"].value == pytest.approx(50)
+
+    def test_always_exactly_months_entries_oldest_first(self):
+        from app.services.consumption_stats import monthly_series
+
+        rows = monthly_series([], local(2026, 11, 2), months=12)
+        assert [r.month for r in rows][0] == "2025-12"
+        assert [r.month for r in rows][-1] == "2026-11"
+        assert len(rows) == 12
+        assert all(r.state == "no_data" and r.value is None for r in rows)
+
+    def test_long_interval_is_marked_estimated(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 1, 1)), (180, local(2026, 4, 1)))  # 90 days
+        rows = months_by_key(monthly_series(intervals, local(2026, 4, 1), months=4))
+        assert all(rows[m].estimated for m in ("2026-01", "2026-02", "2026-03"))
+
+    def test_short_intervals_are_not_estimated(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 1, 1)), (10, local(2026, 1, 20)), (20, local(2026, 2, 1)))
+        rows = months_by_key(monthly_series(intervals, local(2026, 2, 1), months=2))
+        assert not rows["2026-01"].estimated
+
+    def test_oil_unknown_interval_leaves_no_data(self):
+        from app.services.consumption_stats import monthly_series
+        from app.services.oil_consumption import compute_oil_consumption
+
+        r = rs((500, local(2026, 1, 1)), (480, local(2026, 1, 11)), (1480, local(2026, 2, 1)))
+        result = compute_oil_consumption(r, [], set(), local(2026, 2, 1))
+        rows = months_by_key(monthly_series(result.intervals, local(2026, 2, 1), months=2))
+        # only 1-11 Jan is known (20 L); the delivery interval is unknown
+        assert rows["2026-01"].value == pytest.approx(20)
+        assert rows["2026-01"].state == "partial"
+
+    def test_berlin_month_boundary_summer_time(self):
+        from app.services.consumption_stats import monthly_series
+
+        # 23:30 UTC on 31 Jul is 01:30 on 1 Aug in Berlin (UTC+2)
+        edge = datetime(2026, 7, 31, 23, 30, tzinfo=UTC)
+        intervals = ivs((0, edge - timedelta(days=1)), (10, edge + timedelta(hours=1)))
+        rows = months_by_key(monthly_series(intervals, edge + timedelta(hours=1), months=2))
+        assert rows["2026-07"].value is not None and rows["2026-08"].value is not None
+        # local midnight 1 Aug is 22:00 UTC; the interval ends 02:30 local: 2.5 h of 25 h
+        assert rows["2026-08"].value == pytest.approx(10 * 2.5 / 25, rel=1e-6)
+
+    def test_winter_time_boundary(self):
+        from app.services.consumption_stats import monthly_series
+
+        edge = datetime(2026, 12, 31, 23, 30, tzinfo=UTC)  # 00:30 on 1 Jan in Berlin (UTC+1)
+        intervals = ivs((0, edge - timedelta(hours=1)), (10, edge + timedelta(hours=1)))
+        rows = months_by_key(monthly_series(intervals, edge + timedelta(hours=1), months=2))
+        assert rows["2027-01"].value == pytest.approx(10 * 1.5 / 2, rel=1e-6)
+
+
+class TestPreviousYear:
+    def _two_years(self):
+        # Jan 2025: 30 units, Jan 2026: 45 units, 1/day and 1.5/day
+        return ivs(
+            (0, local(2025, 1, 1)), (31, local(2025, 2, 1)),
+            (31, local(2026, 1, 1)), (31 + 46.5, local(2026, 2, 1)),
+        )
+
+    def test_previous_year_and_percent(self):
+        from app.services.consumption_stats import monthly_series
+
+        rows = months_by_key(monthly_series(self._two_years(), local(2026, 2, 1), months=13))
+        jan = rows["2026-01"]
+        assert jan.value == pytest.approx(46.5)
+        assert jan.previous_year == {"value": pytest.approx(31.0), "state": "complete"}
+        assert jan.delta_pct == pytest.approx(50.0)
+
+    def test_no_previous_year_means_none(self):
+        from app.services.consumption_stats import monthly_series
+
+        rows = months_by_key(monthly_series(self._two_years(), local(2026, 2, 1), months=3))
+        assert rows["2025-12"].previous_year is None
+        assert rows["2025-12"].delta_pct is None
+
+    def test_percent_only_when_both_complete(self):
+        from app.services.consumption_stats import monthly_series
+
+        # current month partial, previous year complete
+        intervals = ivs((0, local(2025, 10, 1)), (31, local(2025, 11, 1)),
+                        (31, local(2026, 10, 1)), (56, local(2026, 10, 16)))
+        rows = months_by_key(monthly_series(intervals, local(2026, 10, 16), months=1))
+        row = rows["2026-10"]
+        assert row.state == "partial"
+        assert row.previous_year is not None
+        assert row.delta_pct is None
+
+    def test_no_percent_when_previous_is_zero(self):
+        from app.services.consumption_stats import monthly_series
+
+        intervals = ivs((0, local(2026, 1, 1)), (10, local(2026, 2, 1)))
+        rows = monthly_series(intervals, local(2026, 2, 1), months=1)
+        assert rows[0].delta_pct is None
+
+
+class TestMergeMonthSeries:
+    """Several meters of one type (a property, or all accessible properties) in one series."""
+
+    def _series(self, *point_lists):
+        from app.services.consumption_stats import monthly_series
+
+        now = local(2026, 3, 1)
+        return [monthly_series(ivs(*pts), now, months=3) for pts in point_lists]
+
+    def test_values_add_up(self):
+        from app.services.consumption_stats import merge_month_series
+
+        a, b = self._series(
+            [(0, local(2026, 1, 1)), (62, local(2026, 3, 1))],
+            [(0, local(2026, 1, 1)), (31, local(2026, 3, 1))],
+        )
+        merged = months_by_key(merge_month_series([a, b]))
+        assert merged["2026-01"].value == pytest.approx((62 + 31) * 31 / 59)
+        assert merged["2026-01"].state == "complete"
+
+    def test_state_is_complete_only_if_every_meter_with_data_is_complete(self):
+        from app.services.consumption_stats import merge_month_series
+
+        a, b = self._series(
+            [(0, local(2026, 1, 1)), (62, local(2026, 3, 1))],
+            [(0, local(2026, 1, 16)), (10, local(2026, 3, 1))],
+        )
+        merged = months_by_key(merge_month_series([a, b]))
+        assert merged["2026-01"].state == "partial"
+
+    def test_no_data_when_no_meter_has_data(self):
+        from app.services.consumption_stats import merge_month_series
+
+        (a,) = self._series([(0, local(2026, 2, 1)), (10, local(2026, 3, 1))])
+        assert months_by_key(merge_month_series([a]))["2026-01"].value is None
+
+    def test_single_series_is_unchanged(self):
+        from app.services.consumption_stats import merge_month_series
+
+        (a,) = self._series([(0, local(2026, 1, 1)), (62, local(2026, 3, 1))])
+        assert [(m.month, m.value, m.state) for m in merge_month_series([a])] == [
+            (m.month, m.value, m.state) for m in a
+        ]
+
+    def test_empty_input(self):
+        from app.services.consumption_stats import merge_month_series
+
+        assert merge_month_series([]) == []

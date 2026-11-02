@@ -23,3 +23,23 @@ export function formatAmount(val: number): string {
   if (val >= 10) return val.toLocaleString('de-DE', { maximumFractionDigits: 1 })
   return val.toLocaleString('de-DE', { maximumFractionDigits: 3 })
 }
+
+export interface MonthRow {
+  month: string
+  value: number | null
+  state: 'complete' | 'partial' | 'no_data'
+  estimated: boolean
+  previous_year: { value: number | null; state: string } | null
+  delta_pct: number | null
+}
+
+/** "2026-10" -> "Okt. 2026" (local calendar month, German). */
+export function monthLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number)
+  return new Date(y, m - 1, 1).toLocaleDateString('de-DE', { month: 'short', year: 'numeric' })
+}
+
+/** Chart value: a month without data stays a gap (null), never 0 (SC-004). */
+export function chartValue(value: number | null): number | null {
+  return value == null ? null : value
+}

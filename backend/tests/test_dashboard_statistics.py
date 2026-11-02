@@ -20,7 +20,7 @@ def _summary(client, user):
 
 
 def _admin(db):
-    return make_user(db, role=UserRole.admin)
+    return make_user(db, role=UserRole.admin, username="stats-admin", email="stats-admin@example.com")
 
 
 class TestSummaryRecentFields:
@@ -103,3 +103,124 @@ class TestSummaryRecentFields:
         db.commit()
         entries = _summary(client, user)["meters"]
         assert [e["meter_name"] for e in entries] == ["A"]
+
+
+# ── GET /api/dashboard/monthly ────────────────────────────────────────────────
+
+class TestMonthlyEndpoint:
+    def _meter_with_year_of_readings(self, db, prop=None, name="Wasser"):
+        prop = prop or make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3, name=name)
+        now = NOW()
+        for i in range(14, -1, -1):
+            make_reading(db, m.id, float((14 - i) * 10), now - timedelta(days=30 * i))
+        return prop, m
+
+    def test_unauthenticated_returns_401(self, client, db):
+        assert client.get("/api/dashboard/monthly").status_code == 401
+
+    def test_meter_scope_returns_requested_months_oldest_first(self, client, db):
+        _, m = self._meter_with_year_of_readings(db)
+        admin = _admin(db)
+        r = client.get(f"/api/dashboard/monthly?meter_id={m.id}", headers=auth_headers(admin))
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scope"] == {"kind": "meter", "id": str(m.id)}
+        assert len(body["series"]) == 1
+        series = body["series"][0]
+        assert series["meter_type"] == "water" and series["unit"] == "m³"
+        months = series["months"]
+        assert len(months) == 12
+        assert [x["month"] for x in months] == sorted(x["month"] for x in months)
+        assert months[-1]["state"] == "partial"
+        assert months[0]["state"] in ("complete", "partial")
+
+    def test_previous_year_is_attached_when_data_exists(self, client, db):
+        _, m = self._meter_with_year_of_readings(db)
+        admin = _admin(db)
+        body = client.get(f"/api/dashboard/monthly?meter_id={m.id}&months=3", headers=auth_headers(admin)).json()
+        assert any(x["previous_year"] is not None for x in body["series"][0]["months"])
+
+    def test_months_bounds(self, client, db):
+        admin = _admin(db)
+        for bad in (0, 25, -1, "x"):
+            r = client.get(f"/api/dashboard/monthly?months={bad}", headers=auth_headers(admin))
+            assert r.status_code == 422, bad
+        assert client.get("/api/dashboard/monthly?months=24", headers=auth_headers(admin)).status_code == 200
+
+    def test_meter_and_property_together_is_422(self, client, db):
+        prop, m = self._meter_with_year_of_readings(db)
+        admin = _admin(db)
+        r = client.get(f"/api/dashboard/monthly?meter_id={m.id}&property_id={prop.id}", headers=auth_headers(admin))
+        assert r.status_code == 422
+
+    def test_malformed_ids_are_422(self, client, db):
+        admin = _admin(db)
+        assert client.get("/api/dashboard/monthly?meter_id=nope", headers=auth_headers(admin)).status_code == 422
+        assert client.get("/api/dashboard/monthly?property_id=nope", headers=auth_headers(admin)).status_code == 422
+
+    def test_unknown_ids_are_404(self, client, db):
+        import uuid
+        admin = _admin(db)
+        assert client.get(f"/api/dashboard/monthly?meter_id={uuid.uuid4()}", headers=auth_headers(admin)).status_code == 404
+        assert client.get(f"/api/dashboard/monthly?property_id={uuid.uuid4()}", headers=auth_headers(admin)).status_code == 404
+
+    def test_foreign_meter_and_property_are_403_without_data(self, client, db):
+        prop, m = self._meter_with_year_of_readings(db)
+        user = make_user(db, role=UserRole.user)
+        h = auth_headers(user)
+        r1 = client.get(f"/api/dashboard/monthly?meter_id={m.id}", headers=h)
+        r2 = client.get(f"/api/dashboard/monthly?property_id={prop.id}", headers=h)
+        assert r1.status_code == 403 and r2.status_code == 403
+        assert "series" not in r1.json() and "series" not in r2.json()
+
+    def test_member_with_read_only_role_can_read(self, client, db):
+        prop, m = self._meter_with_year_of_readings(db)
+        user = make_user(db, role=UserRole.user)
+        db.add(PropertyUser(property_id=prop.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+        r = client.get(f"/api/dashboard/monthly?meter_id={m.id}", headers=auth_headers(user))
+        assert r.status_code == 200
+
+    def test_property_scope_groups_by_meter_type_and_sums_meters(self, client, db):
+        prop, m1 = self._meter_with_year_of_readings(db, name="W1")
+        _, m2 = self._meter_with_year_of_readings(db, prop=prop, name="W2")
+        oil = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="Tank")
+        make_reading(db, oil.id, 1000.0, NOW() - timedelta(days=40))
+        make_reading(db, oil.id, 900.0, NOW() - timedelta(days=1))
+        admin = _admin(db)
+        body = client.get(f"/api/dashboard/monthly?property_id={prop.id}&months=2", headers=auth_headers(admin)).json()
+        assert body["scope"]["kind"] == "property"
+        assert {s["meter_type"] for s in body["series"]} == {"water", "oil"}
+        single = client.get(f"/api/dashboard/monthly?meter_id={m1.id}&months=2", headers=auth_headers(admin)).json()
+        water = next(s for s in body["series"] if s["meter_type"] == "water")["months"]
+        one = single["series"][0]["months"]
+        assert water[-1]["value"] == pytest.approx(2 * one[-1]["value"], rel=1e-6)
+
+    def test_all_scope_only_contains_accessible_properties(self, client, db):
+        mine, _ = self._meter_with_year_of_readings(db)
+        other, _ = self._meter_with_year_of_readings(db)
+        user = make_user(db, role=UserRole.user)
+        db.add(PropertyUser(property_id=mine.id, user_id=user.id, role=PropertyUserRole.user))
+        db.commit()
+        admin = _admin(db)
+        all_admin = client.get("/api/dashboard/monthly?months=2", headers=auth_headers(admin)).json()
+        all_user = client.get("/api/dashboard/monthly?months=2", headers=auth_headers(user)).json()
+        assert all_user["scope"] == {"kind": "all", "id": None}
+        v_user = all_user["series"][0]["months"][-1]["value"]
+        v_admin = all_admin["series"][0]["months"][-1]["value"]
+        assert v_admin == pytest.approx(2 * v_user, rel=1e-6)
+
+    def test_replaced_meters_are_not_part_of_property_scope(self, client, db):
+        prop, m = self._meter_with_year_of_readings(db)
+        m.replaced_at = NOW()
+        db.commit()
+        admin = _admin(db)
+        body = client.get(f"/api/dashboard/monthly?property_id={prop.id}", headers=auth_headers(admin)).json()
+        assert body["series"] == []
+
+    def test_user_without_membership_gets_empty_all_scope(self, client, db):
+        self._meter_with_year_of_readings(db)
+        user = make_user(db, role=UserRole.user)
+        body = client.get("/api/dashboard/monthly", headers=auth_headers(user)).json()
+        assert body["series"] == []

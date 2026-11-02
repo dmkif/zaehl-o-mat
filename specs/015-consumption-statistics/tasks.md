@@ -79,19 +79,19 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US2 (write first)
 
-- [ ] T021 [P] [US2] Pure tests in `backend/tests/test_consumption_stats.py` for `monthly_series`: proportional split across a month boundary; invariant that an interval's month shares sum to its consumption (1e-6); gap month `no_data` with value `None` not 0; current month `partial`; `complete` only when fully covered; `estimated` for intervals > 60 days; oil delivery/unknown interval not counted (spec 2.5); water/electricity decrease skipped
-- [ ] T022 [P] [US2] Pure test for Europe/Berlin boundaries: a reading at 23:30 UTC on the last day of a summer-time month falls into the next month (research R4); winter-time counterpart
-- [ ] T023 [P] [US2] Pure tests for previous-year pairing and `delta_pct` (only when both months `complete`, previous > 0)
-- [ ] T024 [P] [US2] API tests in `backend/tests/test_dashboard_statistics.py` for `GET /api/dashboard/monthly`: meter scope, property scope, `months` bounds (0 and 25 give 422), `meter_id` plus `property_id` gives 422, non-UUID 422, unauthenticated 401, foreign meter/property 403/404 without data, exactly `months` entries oldest first
+- [X] T021 [P] [US2] Pure tests in `backend/tests/test_consumption_stats.py` for `monthly_series`: proportional split across a month boundary; invariant that an interval's month shares sum to its consumption (1e-6); gap month `no_data` with value `None` not 0; current month `partial`; `complete` only when fully covered; `estimated` for intervals > 60 days; oil delivery/unknown interval not counted (spec 2.5); water/electricity decrease skipped
+- [X] T022 [P] [US2] Pure test for Europe/Berlin boundaries: a reading at 23:30 UTC on the last day of a summer-time month falls into the next month (research R4); winter-time counterpart
+- [X] T023 [P] [US2] Pure tests for previous-year pairing and `delta_pct` (only when both months `complete`, previous > 0)
+- [X] T024 [P] [US2] API tests in `backend/tests/test_dashboard_statistics.py` for `GET /api/dashboard/monthly`: meter scope, property scope, `months` bounds (0 and 25 give 422), `meter_id` plus `property_id` gives 422, non-UUID 422, unauthenticated 401, foreign meter/property 403/404 without data, exactly `months` entries oldest first
 
 ### Implementation for US2
 
-- [ ] T025 [US2] Implement `monthly_series` (split at local midnight, coverage states, estimated flag, previous-year pairing) in `backend/app/services/consumption_stats.py`; make T021..T023 pass
-- [ ] T026 [US2] Implement a shared scope resolver (meter / property / all accessible) in `backend/app/routers/dashboard.py` reusing `get_meter_with_access`, `require_property_access` and the accessible-property helper from `backend/app/permissions.py`; no query before the access check
-- [ ] T027 [US2] Implement `GET /api/dashboard/monthly` in `backend/app/routers/dashboard.py` using `stats_loader.load_intervals` with a 24-month window; make T024 pass
-- [ ] T028 [P] [US2] Add month label helper and tests in `frontend/src/utils/consumptionStats.ts` / `frontend/src/utils/__tests__/consumptionStats.test.ts`; add i18n keys for monthly view ("Vorjahr", "keine Daten", "teilweise", "geschätzt")
-- [ ] T029 [US2] Create `frontend/src/components/MonthlyConsumption.vue` (apexcharts bar chart with previous-year overlay toggle, table with value, previous year and percent, states shown as text) with a props-driven scope; add a component test in `frontend/src/components/__tests__/MonthlyConsumption.test.ts`
-- [ ] T030 [US2] Show `MonthlyConsumption` in `frontend/src/views/MeterDetail.vue` (meter scope)
+- [X] T025 [US2] Implement `monthly_series` (split at local midnight, coverage states, estimated flag, previous-year pairing) in `backend/app/services/consumption_stats.py`; make T021..T023 pass
+- [X] T026 [US2] Implement a shared scope resolver (meter / property / all accessible) in `backend/app/routers/dashboard.py` reusing `get_meter_with_access`, `require_property_access` and the accessible-property helper from `backend/app/permissions.py`; no query before the access check
+- [X] T027 [US2] Implement `GET /api/dashboard/monthly` in `backend/app/routers/dashboard.py` using `stats_loader.load_intervals` with a 24-month window; make T024 pass
+- [X] T028 [P] [US2] Add month label helper and tests in `frontend/src/utils/consumptionStats.ts` / `frontend/src/utils/__tests__/consumptionStats.test.ts`; add i18n keys for monthly view ("Vorjahr", "keine Daten", "teilweise", "geschätzt")
+- [X] T029 [US2] Create `frontend/src/components/MonthlyConsumption.vue` (apexcharts bar chart with previous-year overlay toggle, table with value, previous year and percent, states shown as text) with a props-driven scope; add a component test in `frontend/src/components/__tests__/MonthlyConsumption.test.ts`
+- [X] T030 [US2] Show `MonthlyConsumption` in `frontend/src/views/MeterDetail.vue` (meter scope)
 
 ---
 
@@ -123,13 +123,13 @@ description: "Task list for feature 015 - consumption statistics"
 
 - [ ] T035 [P] [US6] Pure tests for `aggregate_overall` in `backend/tests/test_consumption_stats.py`: sum and mean per property; properties without data excluded and counted in `properties_used`; `mean_per_property` omitted when `properties_used == 1`; trend recomputed on sums; mixed units give no total; two tanks add up
 - [ ] T036 [P] [US6] API tests in `backend/tests/test_dashboard_statistics.py`: totals equal the sum of the per-property figures; user with access to one of two properties never sees data or totals of the other and gets no `overall` (SC-008); global admin sees all; user without any property gets empty `statistics`
-- [ ] T037 [P] [US6] API tests: `/monthly?property_id=` and `/monthly` (all accessible) group series by meter type and include only accessible properties; foreign `property_id` gives 403/404
+- [X] T037 [P] [US6] API tests: `/monthly?property_id=` and `/monthly` (all accessible) group series by meter type and include only accessible properties; foreign `property_id` gives 403/404
 
 ### Implementation for US6
 
 - [ ] T038 [US6] Implement `aggregate_overall` and `group_statistics` in `backend/app/services/consumption_stats.py`; make T035 pass
 - [ ] T039 [US6] Add the `statistics` block to `GET /api/dashboard/summary` in `backend/app/routers/dashboard.py` computed only from the caller's accessible properties; make T036 pass
-- [ ] T040 [US6] Support the property and all-accessible scopes in `GET /api/dashboard/monthly` aggregation (series per meter type, summed over meters); make T037 pass
+- [X] T040 [US6] Support the property and all-accessible scopes in `GET /api/dashboard/monthly` aggregation (series per meter type, summed over meters); make T037 pass
 - [ ] T041 [P] [US6] Dashboard UI: per-property statistic blocks and, only with two or more properties, an overall block (total, mean per property with the number of properties used, trend) in `frontend/src/views/Dashboard.vue`; add i18n keys
 - [ ] T042 [US6] Add a scope selector (property / all) and the monthly view to the dashboard using `MonthlyConsumption` (scope props) in `frontend/src/views/Dashboard.vue`
 
