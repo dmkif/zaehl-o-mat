@@ -17,40 +17,11 @@ from app.models import (
 from app.routers.oil_deliveries import open_probable_deliveries
 from app.schemas.oil_deliveries import ProbableDeliveryResponse
 from app.services.buy_signal import compute_oil_buy_signal
+from app.services.consumption_stats import yearly_rate
 from app.services.oil_loader import load_oil_results
+from app.services.stats_loader import load_intervals
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
-
-def _avg_daily_consumption_365d(meter_id: uuid.UUID, db: Session) -> Optional[float]:
-    """Compute average daily consumption over the last 365 days using consecutive reading pairs.
-
-    Sums positive deltas, so it only fits meters whose value increases over time (water,
-    electricity). Oil tanks use app.services.oil_consumption instead.
-    """
-    since = datetime.now(timezone.utc) - timedelta(days=365)
-    readings = (
-        db.query(Reading)
-        .filter(Reading.meter_id == meter_id, Reading.read_at >= since)
-        .order_by(Reading.read_at.asc())
-        .all()
-    )
-    if len(readings) < 2:
-        return None
-
-    total_consumption = 0.0
-    total_days = 0.0
-    for i in range(1, len(readings)):
-        delta = float(readings[i].value) - float(readings[i - 1].value)
-        if delta > 0:
-            days = (readings[i].read_at - readings[i - 1].read_at).total_seconds() / 86400
-            if days > 0:
-                total_consumption += delta
-                total_days += days
-
-    if total_days == 0:
-        return None
-    return round(total_consumption / total_days, 4)
 
 
 def _accessible_property_ids(user: User, db: Session) -> list[uuid.UUID]:
@@ -96,6 +67,8 @@ def dashboard_summary(
     now = datetime.now(timezone.utc)
     oil_meters = [m for m in meters if m.meter_type == MeterType.oil]
     oil_results = load_oil_results(db, oil_meters, now)
+    # Every other meter type: one batched readings query for all meters (feature 015)
+    other_intervals = load_intervals(db, [m for m in meters if m.meter_type != MeterType.oil], now)
 
     meter_summaries = []
     for m in meters:
@@ -103,7 +76,7 @@ def dashboard_summary(
         if m.meter_type == MeterType.oil:
             avg_daily = oil_results[m.id].liters_per_day
         else:
-            avg_daily = _avg_daily_consumption_365d(m.id, db)
+            avg_daily = yearly_rate(other_intervals[m.id])
         meter_summaries.append(
             {
                 "meter_id": str(m.id),

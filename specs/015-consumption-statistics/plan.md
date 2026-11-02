@@ -89,8 +89,8 @@ backend/
 │   │   ├── oil_loader.py                # readings via the shared selection; + window_days
 │   │   ├── consumption_stats.py         # NEW, pure: intervals for non-oil, recent/last rate, trend,
 │   │   │                                #   month split + coverage, year-to-date, overall aggregation, flags
-│   │   └── stats_loader.py              # NEW, DB glue: batch readings ("counting readings"), intervals per meter,
-│   │                                    #   prices; the only place that selects which readings count
+│   │   ├── reading_selection.py         # NEW: counting_readings(), the only place that selects which readings count
+│   │   └── stats_loader.py              # NEW, DB glue: intervals per meter in batch, prices
 │   ├── routers/dashboard.py             # summary: additive fields + `statistics`; new /monthly and /yearly
 │   └── schemas/dashboard.py             # NEW: Pydantic response models for the new endpoints
 └── tests/

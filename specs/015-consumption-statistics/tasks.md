@@ -23,9 +23,9 @@ description: "Task list for feature 015 - consumption statistics"
 
 ## Phase 1: Setup
 
-- [ ] T001 Add `tzdata` (exact `==` pin to the current PyPI release) to `backend/requirements.txt`; verify `zoneinfo.ZoneInfo("Europe/Berlin")` loads in a clean `python:3.12-slim` (research R4)
-- [ ] T002 [P] Create empty test modules `backend/tests/test_consumption_stats.py` and `backend/tests/test_dashboard_statistics.py` with the shared imports/fixtures used by `backend/tests/test_dashboard.py`
-- [ ] T003 [P] Create `backend/app/schemas/dashboard.py` with Pydantic response models for `/monthly` and `/yearly` and the `statistics` block of the summary, matching `specs/015-consumption-statistics/contracts/api.md` (models only, no logic)
+- [X] T001 Add `tzdata` (exact `==` pin to the current PyPI release) to `backend/requirements.txt`; verify `zoneinfo.ZoneInfo("Europe/Berlin")` loads in a clean `python:3.12-slim` (research R4)
+- [X] T002 [P] Create empty test modules `backend/tests/test_consumption_stats.py` and `backend/tests/test_dashboard_statistics.py` with the shared imports/fixtures used by `backend/tests/test_dashboard.py`
+- [X] T003 [P] Create `backend/app/schemas/dashboard.py` with Pydantic response models for `/monthly` and `/yearly` and the `statistics` block of the summary, matching `specs/015-consumption-statistics/contracts/api.md` (models only, no logic)
 
 ---
 
@@ -33,14 +33,14 @@ description: "Task list for feature 015 - consumption statistics"
 
 **Purpose**: One interval representation, one reading selection, a regression net around existing values (FR-017, FR-018, SC-005).
 
-- [ ] T004 Write a regression test class in `backend/tests/test_dashboard.py` that pins today's values for water, electricity and oil: `avg_daily_consumption_365d`, `oil_reichweite` (single tank), type aggregates, cost forecast. Run it on the unchanged code and keep it green through all later tasks
-- [ ] T005 [P] Write pure tests in `backend/tests/test_consumption_stats.py` for `intervals_from_readings` (positive delta = known, zero delta = known with 0, negative delta = unknown/skipped, identical timestamps ignored, one reading = empty) and for equality with the old `_avg_daily_consumption_365d` result on the same readings
-- [ ] T006 Create `backend/app/services/consumption_stats.py` with `intervals_from_readings(readings) -> list[Interval]` reusing `Interval` from `backend/app/services/oil_consumption.py`, and `yearly_rate(intervals)`; make T005 pass
-- [ ] T007 [P] Write tests in `backend/tests/test_oil_consumption.py` that `compute_oil_consumption(..., window_days=365)` equals the current result and that a longer `window_days` includes older readings; then add the optional `window_days: int = WINDOW_DAYS` parameter in `backend/app/services/oil_consumption.py` (default behaviour unchanged, research R7)
-- [ ] T008 Create `backend/app/services/stats_loader.py` with `counting_readings(db, meter_ids, since)` (the single selection of readings that count, research R2; today every reading) and `load_intervals(db, meters, now, window_days)` doing one readings query for all meters, oil meters through `compute_oil_consumption` with deliveries/dismissals once per property, others through `intervals_from_readings` (research R3)
-- [ ] T009 Change `backend/app/services/oil_loader.py` so `load_oil_results` obtains its readings from `stats_loader.counting_readings` and forwards `window_days`; confirm `backend/tests/test_oil_deliveries.py`, `backend/tests/test_oil_consumption.py` and T004 stay green
-- [ ] T010 Replace the per-meter query helper `_avg_daily_consumption_365d` in `backend/app/routers/dashboard.py` by the batch loader (`stats_loader.load_intervals` + `consumption_stats.yearly_rate`); T004 and the existing `backend/tests/test_dashboard.py` must stay green with identical values
-- [ ] T011 [P] Add `tank_group_key(meter)` (returns the property id) and `group_rates(...)` helpers to `backend/app/services/consumption_stats.py` with tests in `backend/tests/test_consumption_stats.py` (two tanks sum, one tank unchanged, different units yield no total)
+- [X] T004 Write a regression test class in `backend/tests/test_dashboard.py` that pins today's values for water, electricity and oil: `avg_daily_consumption_365d`, `oil_reichweite` (single tank), type aggregates, cost forecast. Run it on the unchanged code and keep it green through all later tasks
+- [X] T005 [P] Write pure tests in `backend/tests/test_consumption_stats.py` for `intervals_from_readings` (positive delta = known, zero delta = known with 0, negative delta = unknown/skipped, identical timestamps ignored, one reading = empty) and for equality with the old `_avg_daily_consumption_365d` result on the same readings
+- [X] T006 Create `backend/app/services/consumption_stats.py` with `intervals_from_readings(readings) -> list[Interval]` reusing `Interval` from `backend/app/services/oil_consumption.py`, and `yearly_rate(intervals)`; make T005 pass
+- [X] T007 [P] Write tests in `backend/tests/test_oil_consumption.py` that `compute_oil_consumption(..., window_days=365)` equals the current result and that a longer `window_days` includes older readings; then add the optional `window_days: int = WINDOW_DAYS` parameter in `backend/app/services/oil_consumption.py` (default behaviour unchanged, research R7)
+- [X] T008 Create `backend/app/services/reading_selection.py` with `counting_readings(db, meter_ids, since)` and `backend/app/services/stats_loader.py` with `load_intervals`; `counting_readings` lives in its own module so `oil_loader` and `stats_loader` both use it without a circular import. Original: `counting_readings(db, meter_ids, since)` (the single selection of readings that count, research R2; today every reading) and `load_intervals(db, meters, now, window_days)` doing one readings query for all meters, oil meters through `compute_oil_consumption` with deliveries/dismissals once per property, others through `intervals_from_readings` (research R3)
+- [X] T009 Change `backend/app/services/oil_loader.py` so `load_oil_results` obtains its readings from `stats_loader.counting_readings` and forwards `window_days`; confirm `backend/tests/test_oil_deliveries.py`, `backend/tests/test_oil_consumption.py` and T004 stay green
+- [X] T010 Replace the per-meter query helper `_avg_daily_consumption_365d` in `backend/app/routers/dashboard.py` by the batch loader (`stats_loader.load_intervals` + `consumption_stats.yearly_rate`); T004 and the existing `backend/tests/test_dashboard.py` must stay green with identical values
+- [X] T011 [P] Add `tank_group_key(meter)` (returns the property id) and `group_rates(...)` helpers to `backend/app/services/consumption_stats.py` with tests in `backend/tests/test_consumption_stats.py` (two tanks sum, one tank unchanged, different units yield no total)
 
 **Checkpoint**: backend values identical to before, one loader, one interval type.
 

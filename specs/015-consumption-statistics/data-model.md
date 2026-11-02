@@ -13,7 +13,7 @@
 | `consumption` | litres / m³ / kWh, `None` = unknown (probable delivery, dismissed jump, decreasing water/electricity value) |
 | `state` | `known`, `probable_delivery`, `dismissed_jump` (water/electricity decrease: `skipped`) |
 
-Water/electricity intervals are built from consecutive readings (R1). Rule: positive delta is consumption; zero delta is a known interval with 0 consumption; negative delta is unknown (`skipped`).
+Water/electricity intervals are built from consecutive readings (R1). Rule: only a positive delta is consumption; a zero or negative delta is unknown (`skipped`), exactly like the existing yearly average (SC-005).
 
 ### MeterRates (per active meter)
 
