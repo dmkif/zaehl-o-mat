@@ -551,3 +551,37 @@ class TestUnusuallyHighFlag:
         m = make_meter(db, prop.id)
         make_reading(db, m.id, 5.0)
         assert _summary(client, _admin(db))["meters"][0]["unusually_high"] is False
+
+
+# ── Performance guard (SC-006) ────────────────────────────────────────────────
+
+class TestSummaryQueryCount:
+    """The summary must not issue more queries when there are more meters."""
+
+    def _count(self, client, db, meters):
+        from sqlalchemy import event
+        from tests.conftest import engine
+
+        prop = make_property(db, f"P{meters}")
+        for i in range(meters):
+            m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3, name=f"W{i}")
+            make_reading(db, m.id, 0.0, NOW() - timedelta(days=50))
+            make_reading(db, m.id, 50.0, NOW())
+        admin = make_user(db, role=UserRole.admin, username=f"u{meters}", email=f"u{meters}@example.com")
+        headers = auth_headers(admin)
+        statements = []
+
+        def count(conn, cursor, statement, params, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            assert client.get("/api/dashboard/summary", headers=headers).status_code == 200
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+        return len([s for s in statements if "readings" in s])
+
+    def test_readings_queries_do_not_grow_with_the_number_of_meters(self, client, db):
+        few = self._count(client, db, 2)
+        many = self._count(client, db, 12)
+        assert many == few

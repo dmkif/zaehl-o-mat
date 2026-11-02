@@ -174,11 +174,11 @@ description: "Task list for feature 015 - consumption statistics"
 
 ## Phase 9: Polish and cross-cutting
 
-- [ ] T052 [P] Performance check (SC-006): add a test in `backend/tests/test_dashboard_statistics.py` that counts SQL statements for the summary with 10 meters and asserts the number does not grow with meter count; compare to `main`
-- [ ] T053 [P] Security review pass against plan.md OWASP mapping: all new endpoints behind `get_current_user`, parameters validated, no raw SQL, no `v-html`; run `bandit` and `eslint` as in `.github/workflows/test.yaml`
-- [ ] T054 [P] Update `README.md` dashboard feature line (statistics, monthly view, overall figures) and the API notes if present; no new env variables
-- [ ] T055 Run the full suites (`cd backend && python -m pytest -q`, `cd frontend && npx vitest run && npm run build`) and the walkthrough in `specs/015-consumption-statistics/quickstart.md`
-- [ ] T056 Prepare the PR description: summary, the deliberate change of the oil range with several tanks (FR-024, justification), the new `tzdata` dependency (supply-chain justification), OWASP mapping, tests added
+- [X] T052 [P] Performance check (SC-006): add a test in `backend/tests/test_dashboard_statistics.py` that counts SQL statements for the summary with 10 meters and asserts the number does not grow with meter count; compare to `main`
+- [X] T053 [P] Security review pass against plan.md OWASP mapping: all new endpoints behind `get_current_user`, parameters validated, no raw SQL, no `v-html`; run `bandit` and `eslint` as in `.github/workflows/test.yaml`
+- [X] T054 [P] Update `README.md` dashboard feature line (statistics, monthly view, overall figures) and the API notes if present; no new env variables
+- [X] T055 Run the full suites (`cd backend && python -m pytest -q`, `cd frontend && npx vitest run && npm run build`) and the walkthrough in `specs/015-consumption-statistics/quickstart.md`
+- [X] T056 Prepare the PR description: summary, the deliberate change of the oil range with several tanks (FR-024, justification), the new `tzdata` dependency (supply-chain justification), OWASP mapping, tests added
 
 ---
 
