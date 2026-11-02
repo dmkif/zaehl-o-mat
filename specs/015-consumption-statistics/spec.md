@@ -190,8 +190,8 @@ With more than one property, the operator sees every statistic in two scopes: **
 - **FR-014**: The system MUST show cost for year and month views only where a price is known (oil: recorded delivery prices; other types: recorded price per unit) and MUST omit cost otherwise.
 - **FR-015**: Water and electricity meters MUST show an "unusually high" marker when the 30-day rate is at least twice the yearly average and at least 60 days of data exist; oil tanks MUST NOT show this marker.
 - **FR-016**: All new figures MUST respect the existing property access rules: a user sees statistics only for properties they may access.
-- **FR-017**: Existing figures (yearly average, range, type aggregate, cost forecast) MUST keep their current values and behaviour, with one deliberate exception: the oil range of a property with several tanks (FR-041).
-- **FR-041**: All active oil tanks of a property form one *tank group* (one heating supply): the oil range is the sum of the current levels divided by the sum of the tanks' rates, for both the yearly and the 30-day rate. For a property with one tank the value is unchanged. The per-tank figures stay visible. Splitting tanks into several separate groups is out of scope (see Assumptions).
+- **FR-017**: Existing figures (yearly average, range, type aggregate, cost forecast) MUST keep their current values and behaviour, with one deliberate exception: the oil range of a property with several tanks (FR-024).
+- **FR-024**: All active oil tanks of a property form one *tank group* (one heating supply): the oil range is the sum of the current levels divided by the sum of the tanks' rates, for both the yearly and the 30-day rate. For a property with one tank the value is unchanged. The per-tank figures stay visible. Splitting tanks into several separate groups is out of scope (see Assumptions).
 - **FR-018**: All new figures MUST be calculated by one shared calculation per meter type, so dashboard, detail page and range cannot disagree.
 - **FR-019**: Month boundaries MUST follow the Europe/Berlin calendar.
 
