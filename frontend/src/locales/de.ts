@@ -30,6 +30,12 @@ export default {
     meters: 'Aktive Zähler',
     oil_price: 'Heizöl-Marktpreis',
   },
+  stats: {
+    last30: '30 Tage',
+    since_last_reading: 'seit letzter Ablesung',
+    vs_average: 'ggü. ∅',
+    per_day: '/Tag',
+  },
   meter_types: {
     electricity: 'Strom',
     water: 'Wasser',

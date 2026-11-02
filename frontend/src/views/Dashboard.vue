@@ -35,6 +35,7 @@
             <div v-if="m.avg_daily_consumption_365d != null" class="text-sm text-gray-500 dark:text-gray-400 mt-1">
               ∅ {{ formatConsumption(m.avg_daily_consumption_365d) }} {{ m.unit }}/Tag
             </div>
+            <TrendLine :meter="m" />
           </template>
         </MeterCard>
       </div>
@@ -133,6 +134,7 @@ import { apiFetch } from '@/utils/api'
 import { permsFor } from '@/utils/propertyRole'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
+import TrendLine from '@/components/TrendLine.vue'
 import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()

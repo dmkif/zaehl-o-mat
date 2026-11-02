@@ -54,18 +54,18 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US1 (write first)
 
-- [ ] T012 [P] [US1] Pure tests in `backend/tests/test_consumption_stats.py` for `recent_rate`: interval crossing the window start counts whole (spec 1.6), last reading older than 30 days gives `None` (1.3), oil noise cannot make it negative (1.5), unknown oil interval skipped (1.4), fewer than two readings gives `None` (1.7), heating-season scenario above
-- [ ] T013 [P] [US1] Pure tests for `last_interval_rate` (known, unknown, none) and `trend_pct` (`None` when yearly missing or <= 0, one decimal, sign) in `backend/tests/test_consumption_stats.py`
-- [ ] T014 [P] [US1] API tests in `backend/tests/test_dashboard_statistics.py`: summary meters carry `avg_daily_consumption_30d`, `daily_consumption_last_interval`, `trend_30d_vs_365d_pct` for water and oil; single reading gives all three `null`; replaced meter excluded; unauthenticated 401; user without membership sees none (negative tests, Principle X)
-- [ ] T015 [P] [US1] Vitest tests in `frontend/src/utils/__tests__/consumptionStats.test.ts` for `trendClass` (> +10 increase, < -10 decrease, else neutral, `null` neutral) and `formatTrend` (signed, German decimal comma)
+- [X] T012 [P] [US1] Pure tests in `backend/tests/test_consumption_stats.py` for `recent_rate`: interval crossing the window start counts whole (spec 1.6), last reading older than 30 days gives `None` (1.3), oil noise cannot make it negative (1.5), unknown oil interval skipped (1.4), fewer than two readings gives `None` (1.7), heating-season scenario above
+- [X] T013 [P] [US1] Pure tests for `last_interval_rate` (known, unknown, none) and `trend_pct` (`None` when yearly missing or <= 0, one decimal, sign) in `backend/tests/test_consumption_stats.py`
+- [X] T014 [P] [US1] API tests in `backend/tests/test_dashboard_statistics.py`: summary meters carry `avg_daily_consumption_30d`, `daily_consumption_last_interval`, `trend_30d_vs_365d_pct` for water and oil; single reading gives all three `null`; replaced meter excluded; unauthenticated 401; user without membership sees none (negative tests, Principle X)
+- [X] T015 [P] [US1] Vitest tests in `frontend/src/utils/__tests__/consumptionStats.test.ts` for `trendClass` (> +10 increase, < -10 decrease, else neutral, `null` neutral) and `formatTrend` (signed, German decimal comma)
 
 ### Implementation for US1
 
-- [ ] T016 [US1] Add `recent_rate`, `last_interval_rate`, `trend_pct` and the constants `RECENT_DAYS = 30` in `backend/app/services/consumption_stats.py` (data-model MeterRates); make T012/T013 pass
-- [ ] T017 [US1] Extend the per-meter entries of `GET /api/dashboard/summary` in `backend/app/routers/dashboard.py` with the three new fields (contracts section 1); make T014 pass; existing fields unchanged (T004 green)
-- [ ] T018 [P] [US1] Create `frontend/src/utils/consumptionStats.ts` with `trendClass`, `formatTrend`; make T015 pass
-- [ ] T019 [P] [US1] Add i18n keys (`stats.last30`, `stats.sinceLastReading`, `stats.vsAverage`, ...) in `frontend/src/locales/de.ts` and `frontend/src/locales/en.ts`
-- [ ] T020 [US1] Create `frontend/src/components/TrendLine.vue` (30-day rate with unit, colored percentage, "seit letzter Ablesung"; nothing when values are `null`) and render it in the `extra` slot of `MeterCard` in `frontend/src/views/Dashboard.vue`; add a component test `frontend/src/components/__tests__/TrendLine.test.ts`
+- [X] T016 [US1] Add `recent_rate`, `last_interval_rate`, `trend_pct` and the constants `RECENT_DAYS = 30` in `backend/app/services/consumption_stats.py` (data-model MeterRates); make T012/T013 pass
+- [X] T017 [US1] Extend the per-meter entries of `GET /api/dashboard/summary` in `backend/app/routers/dashboard.py` with the three new fields (contracts section 1); make T014 pass; existing fields unchanged (T004 green)
+- [X] T018 [P] [US1] Create `frontend/src/utils/consumptionStats.ts` with `trendClass`, `formatTrend`; make T015 pass
+- [X] T019 [P] [US1] Add i18n keys (`stats.last30`, `stats.sinceLastReading`, `stats.vsAverage`, ...) in `frontend/src/locales/de.ts` and `frontend/src/locales/en.ts`
+- [X] T020 [US1] Create `frontend/src/components/TrendLine.vue` (30-day rate with unit, colored percentage, "seit letzter Ablesung"; nothing when values are `null`) and render it in the `extra` slot of `MeterCard` in `frontend/src/views/Dashboard.vue`; add a component test `frontend/src/components/__tests__/TrendLine.test.ts`
 
 **Checkpoint**: US1 deliverable on its own (shippable MVP).
 

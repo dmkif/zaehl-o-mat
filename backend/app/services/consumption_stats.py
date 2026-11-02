@@ -10,6 +10,7 @@ Water and electricity: only a rising value is consumption. An interval whose
 value stays equal or falls is unknown (neither litres nor days), exactly like the
 yearly average that existed before this module.
 """
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
 
 from app.services.oil_consumption import Interval, _utc
@@ -63,3 +64,42 @@ def sum_rates(rates: Iterable[Optional[float]]) -> Optional[float]:
     if not present:
         return None
     return round(sum(present), 4)
+
+
+RECENT_DAYS = 30
+
+
+def recent_rate(intervals: Iterable[Interval], now: datetime, days: int = RECENT_DAYS) -> Optional[float]:
+    """Net consumption per day over the known intervals that end within the last ``days`` days.
+
+    An interval crossing the window start counts whole, so sparse readings (one per month)
+    still give a rate. Unknown intervals are skipped like in the yearly rate; the result is
+    clamped to >= 0 (oil reading noise). None when no known interval ends in the window."""
+    since = _utc(now) - timedelta(days=days)
+    net = 0.0
+    known_days = 0.0
+    for iv in intervals:
+        if iv.consumption is not None and _utc(iv.to_at) > since:
+            net += iv.consumption
+            known_days += iv.days
+    if known_days <= 0:
+        return None
+    return round(max(0.0, net) / known_days, 4)
+
+
+def last_interval_rate(intervals: Iterable[Interval]) -> Optional[float]:
+    """Rate of the newest interval (since the last reading); None if it is unknown."""
+    ordered = list(intervals)
+    if not ordered:
+        return None
+    last = ordered[-1]
+    if last.consumption is None or last.days <= 0:
+        return None
+    return round(max(0.0, last.consumption) / last.days, 4)
+
+
+def trend_pct(recent: Optional[float], yearly: Optional[float]) -> Optional[float]:
+    """Percent difference of the recent rate to the yearly rate, one decimal; None if not defined."""
+    if recent is None or yearly is None or yearly <= 0:
+        return None
+    return round((recent / yearly - 1) * 100, 1)

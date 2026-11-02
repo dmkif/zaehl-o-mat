@@ -17,7 +17,7 @@ from app.models import (
 from app.routers.oil_deliveries import open_probable_deliveries
 from app.schemas.oil_deliveries import ProbableDeliveryResponse
 from app.services.buy_signal import compute_oil_buy_signal
-from app.services.consumption_stats import yearly_rate
+from app.services.consumption_stats import last_interval_rate, recent_rate, trend_pct, yearly_rate
 from app.services.oil_loader import load_oil_results
 from app.services.stats_loader import load_intervals
 
@@ -75,8 +75,11 @@ def dashboard_summary(
         latest = latest_map.get(m.id)
         if m.meter_type == MeterType.oil:
             avg_daily = oil_results[m.id].liters_per_day
+            intervals = oil_results[m.id].intervals
         else:
-            avg_daily = yearly_rate(other_intervals[m.id])
+            intervals = other_intervals[m.id]
+            avg_daily = yearly_rate(intervals)
+        recent = recent_rate(intervals, now)
         meter_summaries.append(
             {
                 "meter_id": str(m.id),
@@ -87,6 +90,9 @@ def dashboard_summary(
                 "latest_value": str(latest.value) if latest else None,
                 "latest_read_at": latest.read_at.isoformat() if latest else None,
                 "avg_daily_consumption_365d": avg_daily,
+                "avg_daily_consumption_30d": recent,
+                "daily_consumption_last_interval": last_interval_rate(intervals),
+                "trend_30d_vs_365d_pct": trend_pct(recent, avg_daily),
             }
         )
 

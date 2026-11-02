@@ -30,6 +30,12 @@ export default {
     meters: 'Active meters',
     oil_price: 'Heating oil market price',
   },
+  stats: {
+    last30: '30 days',
+    since_last_reading: 'since last reading',
+    vs_average: 'vs. avg',
+    per_day: '/day',
+  },
   meter_types: {
     electricity: 'Electricity',
     water: 'Water',

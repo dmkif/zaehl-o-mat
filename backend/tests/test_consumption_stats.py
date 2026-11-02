@@ -99,3 +99,112 @@ class TestTankGroup:
         from app.services.consumption_stats import sum_rates
 
         assert sum_rates([2.0, None]) == 2.0
+
+
+def ivs(*points):
+    return intervals_from_readings(rs(*points))
+
+
+class TestRecentRate:
+    def test_heating_season_shows_in_30_day_rate(self):
+        from app.services.consumption_stats import recent_rate, yearly_rate
+
+        # 100 days at 1/day, then 20 days at 8/day
+        intervals = ivs((0, at(0)), (100, at(100)), (260, at(120)))
+        now = at(120)
+        assert yearly_rate(intervals) == pytest.approx(260 / 120, rel=1e-3)
+        # the 100-day interval ended 20 days ago -> inside the window and counts whole
+        assert recent_rate(intervals, now) == pytest.approx(260 / 120, rel=1e-3)
+
+    def test_only_intervals_ending_in_window(self):
+        from app.services.consumption_stats import recent_rate
+
+        intervals = ivs((0, at(0)), (100, at(100)), (260, at(120)), (420, at(140)))
+        # window = days 110..140: only (120->140) ends after day 110 and (100->120) ends at 120
+        # -> both count: 320 over 40 days
+        assert recent_rate(intervals, at(140)) == pytest.approx(320 / 40)
+        # window = days 120.. : only the last one counts: 160 / 20
+        assert recent_rate(intervals, at(150)) == pytest.approx(8.0)
+
+    def test_interval_crossing_window_start_counts_whole(self):
+        from app.services.consumption_stats import recent_rate
+
+        intervals = ivs((0, at(0)), (300, at(60)))
+        assert recent_rate(intervals, at(80)) == pytest.approx(5.0)  # ends 20 days ago
+
+    def test_none_when_last_reading_older_than_window(self):
+        from app.services.consumption_stats import recent_rate
+
+        intervals = ivs((0, at(0)), (300, at(60)))
+        assert recent_rate(intervals, at(91)) is None
+
+    def test_none_without_intervals(self):
+        from app.services.consumption_stats import recent_rate
+
+        assert recent_rate([], at(10)) is None
+
+    def test_unknown_interval_is_skipped(self):
+        from app.services.consumption_stats import recent_rate
+
+        # decrease -> skipped; only the last known interval counts
+        intervals = ivs((100, at(0)), (50, at(10)), (150, at(20)))
+        assert recent_rate(intervals, at(20)) == pytest.approx(10.0)
+
+    def test_oil_noise_is_absorbed_and_never_negative(self):
+        from app.services.consumption_stats import recent_rate
+        from app.services.oil_consumption import compute_oil_consumption
+
+        # tank level 1000, +5 L reading error, then falling
+        r = rs((1000, at(0)), (1005, at(5)), (990, at(10)))
+        result = compute_oil_consumption(r, [], set(), at(10))
+        assert recent_rate(result.intervals, at(10)) == pytest.approx(1.0)  # (1000-990)/10
+        flat = compute_oil_consumption(rs((1000, at(0)), (1003, at(5))), [], set(), at(5))
+        assert recent_rate(flat.intervals, at(5)) == 0.0  # net negative clamps to 0
+
+    def test_oil_probable_delivery_does_not_count(self):
+        from app.services.consumption_stats import recent_rate
+        from app.services.oil_consumption import compute_oil_consumption
+
+        r = rs((500, at(0)), (1500, at(10)))
+        result = compute_oil_consumption(r, [], set(), at(10))
+        assert recent_rate(result.intervals, at(10)) is None
+
+
+class TestLastIntervalRate:
+    def test_known(self):
+        from app.services.consumption_stats import last_interval_rate
+
+        assert last_interval_rate(ivs((0, at(0)), (10, at(5)), (50, at(15)))) == pytest.approx(4.0)
+
+    def test_unknown_last_interval(self):
+        from app.services.consumption_stats import last_interval_rate
+
+        assert last_interval_rate(ivs((100, at(0)), (50, at(5)))) is None
+
+    def test_oil_probable_delivery_last_interval_is_unknown(self):
+        from app.services.consumption_stats import last_interval_rate
+        from app.services.oil_consumption import compute_oil_consumption
+
+        result = compute_oil_consumption(rs((500, at(0)), (1500, at(10))), [], set(), at(10))
+        assert last_interval_rate(result.intervals) is None
+
+    def test_none_without_intervals(self):
+        from app.services.consumption_stats import last_interval_rate
+
+        assert last_interval_rate([]) is None
+
+
+class TestTrendPct:
+    def test_signed_one_decimal(self):
+        from app.services.consumption_stats import trend_pct
+
+        assert trend_pct(12.0, 3.0) == 300.0
+        assert trend_pct(2.0, 3.0) == -33.3
+        assert trend_pct(3.0, 3.0) == 0.0
+
+    def test_none_when_a_value_is_missing_or_yearly_not_positive(self):
+        from app.services.consumption_stats import trend_pct
+
+        assert trend_pct(None, 3.0) is None
+        assert trend_pct(3.0, None) is None
+        assert trend_pct(3.0, 0.0) is None
