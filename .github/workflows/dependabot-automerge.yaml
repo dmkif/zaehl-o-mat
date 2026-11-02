@@ -1,0 +1,49 @@
+name: Dependabot auto-merge
+
+# Turns on auto-merge for Dependabot pull requests that are not a major update. GitHub merges
+# them only when every required check of the branch protection is green (tests, E2E, SAST,
+# dependency and image scans), so a red check keeps the pull request open.
+#
+# Not auto-merged (reviewed by hand):
+#   - major updates in any ecosystem
+#   - minor updates of Docker base images (e.g. python 3.12 -> 3.14): CI tests the code on the
+#     runner's Python, not on the interpreter inside the image
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  automerge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge unless a major (or Docker minor) update is part of it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
+          DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          manual=$(jq --arg eco "$ECOSYSTEM" '
+            [.[] | select(.updateType == "version-update:semver-major"
+                          or ($eco == "docker" and .updateType == "version-update:semver-minor"))] | length
+          ' <<<"$DEPENDENCIES")
+          if [ "$manual" != "0" ]; then
+            echo "$manual update(s) need a manual review: auto-merge stays off"
+            exit 0
+          fi
+          gh pr merge --auto --squash "$PR_URL"
+          echo "auto-merge enabled for $PR_URL"

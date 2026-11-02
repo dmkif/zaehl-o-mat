@@ -1,0 +1,38 @@
+name: Dependabot rebase
+
+# The branch protection requires branches to be up to date. After every merge to main the
+# next Dependabot pull request that fell behind is rebased by Dependabot (one at a time, oldest
+# first); its checks run again and auto-merge then merges it, which starts the next round.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: dependabot-rebase
+  cancel-in-progress: false
+
+jobs:
+  rebase-next:
+    name: Rebase the next Dependabot pull request
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Ask Dependabot to rebase the oldest pull request that is behind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          next=$(gh pr list --state open --author 'app/dependabot' --json number,mergeStateStatus,createdAt \
+            --jq '[.[] | select(.mergeStateStatus == "BEHIND")] | sort_by(.createdAt) | .[0].number // empty')
+          if [ -z "$next" ]; then
+            echo "no Dependabot pull request is behind"
+            exit 0
+          fi
+          gh pr comment "$next" --body "@dependabot rebase"
+          echo "asked Dependabot to rebase #$next"

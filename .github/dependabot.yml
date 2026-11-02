@@ -4,27 +4,62 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      pip-backend-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: pip
     directory: /ocr-service
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      pip-ocr-service-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      npm-frontend-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      github-actions-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: docker
     directory: /backend
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      docker-backend-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: docker
     directory: /frontend
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      docker-frontend-minor-patch:
+        update-types: [minor, patch]
   - package-ecosystem: docker
     directory: /ocr-service
     schedule:
       interval: weekly
+    # one pull request per ecosystem and directory for minor and patch updates;
+    # majors stay single pull requests and are reviewed by hand
+    groups:
+      docker-ocr-service-minor-patch:
+        update-types: [minor, patch]

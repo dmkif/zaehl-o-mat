@@ -309,6 +309,12 @@ Requires a Go toolchain on `PATH` (the gitleaks hook builds itself) and
 `npm ci` already run under `frontend/`. Run against the whole repo any time
 with `pre-commit run --all-files`.
 
+## Releases and dependency updates
+
+Every merge to `main` gets the next version number automatically (`.github/workflows/release.yaml`). The bump follows the commit subjects since the last tag: `feat` raises the minor number, a breaking change (`type!:` or `BREAKING CHANGE`) raises the major number (while the major is 0: the minor number), everything else raises the patch number. The workflow tags the commit and starts the build, which publishes the images (`X.Y.Z`, `X.Y`) and the Helm chart.
+
+Dependabot opens one grouped pull request per ecosystem for minor and patch updates (`.github/dependabot.yml`). `.github/workflows/dependabot-automerge.yaml` turns on auto-merge for them; GitHub merges only when every required check is green (tests, browser E2E, SAST, dependency and image scans). Major updates and minor updates of Docker base images (for example `python:3.12-slim` to `3.14-slim`) are not merged automatically and need a manual review. After each merge, `.github/workflows/dependabot-rebase.yaml` asks Dependabot to rebase the next pull request that fell behind.
+
 ## Contributing
 
 Changes land via pull request against `main` — direct pushes are blocked
