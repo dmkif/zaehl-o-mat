@@ -16,6 +16,12 @@
         <apexchart type="area" height="250" :options="chartOptions" :series="chartSeries" />
       </div>
 
+      <!-- Consumption per month (feature 015) -->
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 mb-6">
+        <h2 class="font-semibold mb-3">{{ $t('stats.monthly_title') }}</h2>
+        <MonthlyConsumption :meter-id="meterId" />
+      </div>
+
       <!-- Add reading + OCR -->
       <div v-if="canWrite" class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4 mb-6">
         <h2 class="font-semibold mb-3">{{ $t('meter.add_reading') }}</h2>
@@ -25,7 +31,7 @@
       <!-- Readings table -->
       <div class="bg-white dark:bg-gray-800 rounded-2xl shadow p-4">
         <h2 class="font-semibold mb-3">{{ $t('meter.readings') }}</h2>
-        <table class="w-full text-sm">
+        <table class="w-full text-sm" data-testid="readings-table">
           <thead>
             <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-gray-700">
               <th class="text-left py-2">{{ $t('reading.date') }}</th>
@@ -185,6 +191,7 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { apiFetch } from '@/utils/api'
 import OcrCapture from '@/components/OcrCapture.vue'
+import MonthlyConsumption from '@/components/MonthlyConsumption.vue'
 import { usePropertyPerms } from '@/utils/usePropertyPerms'
 
 const authStore = useAuthStore()

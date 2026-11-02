@@ -382,3 +382,66 @@ class TestOilRealData:
         meters = client.get("/api/dashboard/summary", headers=auth_headers(admin)).json()["meters"]
         w = next(m for m in meters if m["meter_type"] == "water")
         assert w["avg_daily_consumption_365d"] == pytest.approx(10.0, rel=0.01)
+
+
+class TestPinnedExistingValues:
+    """Feature 015 regression net (SC-005): the figures that existed before the statistics
+    feature keep their values while the calculation moves to the shared interval code."""
+
+    def _admin(self, db):
+        return make_user(db, role=UserRole.admin)
+
+    def _summary(self, client, admin):
+        r = client.get("/api/dashboard/summary", headers=auth_headers(admin))
+        assert r.status_code == 200
+        return r.json()
+
+    def test_water_skips_decreasing_interval(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        now = datetime.now(timezone.utc)
+        make_reading(db, m.id, 0.0, now - timedelta(days=60))
+        make_reading(db, m.id, 300.0, now - timedelta(days=30))
+        make_reading(db, m.id, 280.0, now - timedelta(days=10))  # decrease: interval ignored
+        make_reading(db, m.id, 380.0, now)
+        entry = self._summary(client, self._admin(db))["meters"][0]
+        # (300 + 100) m3 over (30 + 10) days
+        assert entry["avg_daily_consumption_365d"] == pytest.approx(10.0, abs=0.01)
+
+    def test_electricity_rate(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.electricity, unit=MeterUnit.kwh, name="Strom")
+        now = datetime.now(timezone.utc)
+        make_reading(db, m.id, 0.0, now - timedelta(days=20))
+        make_reading(db, m.id, 100.0, now - timedelta(days=10))
+        make_reading(db, m.id, 300.0, now)
+        entry = self._summary(client, self._admin(db))["meters"][0]
+        assert entry["avg_daily_consumption_365d"] == pytest.approx(15.0, abs=0.01)
+
+    def test_oil_rate_range_and_aggregate_single_tank(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="Tank")
+        now = datetime.now(timezone.utc)
+        for days_ago, level in ((40, 1000.0), (30, 900.0), (20, 905.0), (10, 800.0), (0, 700.0)):
+            make_reading(db, m.id, level, now - timedelta(days=days_ago))
+        admin = self._admin(db)
+        body = self._summary(client, admin)
+        # net balance 1000 - 700 over 40 days; the +5 L rise is noise
+        assert body["meters"][0]["avg_daily_consumption_365d"] == pytest.approx(7.5, abs=0.01)
+        assert body["oil_reichweite"][str(prop.id)] == 93  # floor(700 / 7.5)
+        agg = client.get(f"/api/dashboard/property/{prop.id}/type-aggregates", headers=auth_headers(admin)).json()
+        oil = next(a for a in agg["aggregates"] if a["meter_type"] == "oil")
+        assert oil["total_consumption"] == pytest.approx(300.0, abs=0.01)
+
+    def test_water_type_aggregate_sums_positive_deltas(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        now = datetime.now(timezone.utc)
+        make_reading(db, m.id, 0.0, now - timedelta(days=60))
+        make_reading(db, m.id, 300.0, now - timedelta(days=30))
+        make_reading(db, m.id, 280.0, now - timedelta(days=10))
+        make_reading(db, m.id, 380.0, now)
+        admin = self._admin(db)
+        agg = client.get(f"/api/dashboard/property/{prop.id}/type-aggregates", headers=auth_headers(admin)).json()
+        water = next(a for a in agg["aggregates"] if a["meter_type"] == "water")
+        assert water["total_consumption"] == pytest.approx(400.0, abs=0.01)

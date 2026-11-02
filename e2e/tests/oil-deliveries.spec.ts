@@ -20,8 +20,8 @@ test.describe('oil deliveries', () => {
     await expect(card).toContainText('816')
     // tile: average per day over the known period, 558 L / 164 d
     await expect(card).toContainText(/∅ 3,[3-5]\d* L\/Tag/)
-    // range = level / rate, about 240 days; the property section renders "Reichweite: N Tage"
-    const range = page.getByText(/Reichweite: \d+ Tage/)
+    // range = level / rate, about 240 days; the property section renders "Reichweite (Jahresschnitt): N Tage"
+    const range = page.getByText(/Reichweite \(Jahresschnitt\): \d+ Tage/)
     await expect(range.first()).toBeVisible()
     const days = (await range.allTextContents()).map((t) => Number(t.match(/(\d+) Tage/)![1]))
     expect(days.some((d) => d >= 225 && d <= 250), `Reichweite values ${days}`).toBe(true)

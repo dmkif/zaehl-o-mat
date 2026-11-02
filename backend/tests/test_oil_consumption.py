@@ -309,3 +309,25 @@ class TestNoiseRobustness:
         span = (pts[-1][1] - pts[0][1]).total_seconds() / 86400
         expected = max(0.0, (pts[0][0] - pts[-1][0]) / span)
         assert result.liters_per_day == pytest.approx(expected, abs=1e-3)
+
+
+class TestWindowDays:
+    """Feature 015: the window is a parameter; the default stays 365 days."""
+
+    def _long(self):
+        return readings((1000, days(0)), (900, days(100)), (800, days(500)), (700, days(520)))
+
+    def test_default_window_is_365_days(self):
+        now = days(520)
+        assert calc(self._long(), now=now).liters_per_day == compute_oil_consumption(
+            self._long(), [], set(), now, window_days=365
+        ).liters_per_day
+
+    def test_default_ignores_readings_older_than_a_year(self):
+        # only (800, day 500) and (700, day 520) are inside 365 days: 100 L / 20 d
+        assert calc(self._long(), now=days(520)).liters_per_day == pytest.approx(5.0)
+
+    def test_longer_window_includes_older_readings(self):
+        result = compute_oil_consumption(self._long(), [], set(), days(520), window_days=730)
+        # net balance 1000 - 700 over 520 days
+        assert result.liters_per_day == pytest.approx(300 / 520, rel=1e-3)

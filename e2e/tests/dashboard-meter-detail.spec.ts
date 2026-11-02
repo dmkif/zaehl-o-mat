@@ -15,7 +15,7 @@ test.describe('dashboard and meter detail', () => {
     await expect(page).toHaveURL(new RegExp(`/properties/${s.properties.prop_a.id}/meters/${s.meters.meter_a_water.id}$`))
     await expect(page.getByRole('heading', { name: 'Ablesungen' })).toBeVisible()
     // the 3 seeded readings 100 / 110 / 120 m³, newest first
-    const rows = page.locator('tbody tr')
+    const rows = page.getByTestId('readings-table').locator('tbody tr')
     await expect(rows).toHaveCount(3)
     await expect(rows.first()).toContainText('120')
     await expect(rows.last()).toContainText('100')
@@ -42,7 +42,7 @@ test.describe('dashboard and meter detail', () => {
     expect(redirect!.status()).toBe(307)
     expect((await redirect!.allHeaders())['location']).toMatch(/^https:\/\//)
 
-    const rows = page.locator('tbody tr')
+    const rows = page.getByTestId('readings-table').locator('tbody tr')
     await expect(rows).toHaveCount(3)
     await expect(rows.first()).toContainText('5020') // water2: base 5000 + 2 * 10
   })

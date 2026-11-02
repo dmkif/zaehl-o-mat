@@ -35,8 +35,42 @@
             <div v-if="m.avg_daily_consumption_365d != null" class="text-sm text-gray-500 dark:text-gray-400 mt-1">
               ∅ {{ formatConsumption(m.avg_daily_consumption_365d) }} {{ m.unit }}/Tag
             </div>
+            <TrendLine :meter="m" />
           </template>
         </MeterCard>
+      </div>
+
+      <!-- Statistics per property and overall (feature 015) -->
+      <div
+        v-if="summary?.statistics?.overall"
+        class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+        data-testid="overall-statistics"
+      >
+        <h2 class="text-lg font-semibold mb-3">{{ $t('stats.overall_title') }}</h2>
+        <TypeStatistics :types="summary.statistics.overall" overall />
+      </div>
+      <template v-for="(entry, propId) in summary?.statistics?.by_property" :key="`stats-${propId}`">
+        <div class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800" :data-testid="`property-statistics-${propId}`">
+          <h2 class="text-lg font-semibold mb-3">{{ entry.name }}</h2>
+          <TypeStatistics :types="entry.types" />
+        </div>
+      </template>
+
+      <!-- Consumption per month for a property or all (feature 015) -->
+      <div v-if="propertyOptions.length" class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 class="text-lg font-semibold">{{ $t('stats.monthly_title') }}</h2>
+          <label v-if="propertyOptions.length > 1" class="text-sm flex items-center gap-2">
+            {{ $t('stats.scope_label') }}
+            <select v-model="monthlyScope" class="rounded-lg border dark:bg-gray-700 dark:border-gray-600 px-2 py-1" data-testid="monthly-scope">
+              <option value="">{{ $t('stats.scope_all') }}</option>
+              <option v-for="o in propertyOptions" :key="o.id" :value="o.id">{{ o.name }}</option>
+            </select>
+          </label>
+        </div>
+        <MonthlyConsumption :property-id="monthlyScope || undefined" />
+        <h3 class="font-medium mt-4 mb-2">{{ $t('stats.yearly_title') }}</h3>
+        <YearlySummary :property-id="monthlyScope || undefined" />
       </div>
 
       <!-- Probable oil deliveries (level rose between two readings) -->
@@ -70,8 +104,11 @@
       <template v-for="(days, propId) in summary?.oil_reichweite" :key="propId">
         <div v-if="days != null" class="mt-6 p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           <h2 class="text-lg font-semibold mb-3">⛽ Heizöltank</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-300">
-            Reichweite: <span class="font-semibold">{{ days }} Tage</span>
+          <p class="text-sm text-gray-600 dark:text-gray-300" data-testid="range-year">
+            {{ $t('stats.range_year') }}: <span class="font-semibold">{{ $t('stats.range_days', { n: days }) }}</span>
+          </p>
+          <p v-if="summary?.oil_reichweite_30d?.[propId] != null" class="text-sm text-gray-600 dark:text-gray-300" data-testid="range-30d">
+            {{ $t('stats.range_30d') }}: <span class="font-semibold">{{ $t('stats.range_days', { n: summary.oil_reichweite_30d[propId] }) }}</span>
           </p>
           <div class="mt-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
             <div
@@ -133,6 +170,10 @@ import { apiFetch } from '@/utils/api'
 import { permsFor } from '@/utils/propertyRole'
 import StatCard from '@/components/StatCard.vue'
 import MeterCard from '@/components/MeterCard.vue'
+import TrendLine from '@/components/TrendLine.vue'
+import TypeStatistics from '@/components/TypeStatistics.vue'
+import MonthlyConsumption from '@/components/MonthlyConsumption.vue'
+import YearlySummary from '@/components/YearlySummary.vue'
 import VueApexCharts from 'vue3-apexcharts'
 
 const authStore = useAuthStore()
@@ -143,6 +184,10 @@ const summary = ref<any>(null)
 // property id -> caller's role in it (GET /api/properties `my_role`); decides who sees the write buttons
 const propertyRoles = ref<Map<string, string>>(new Map())
 const typeAggregates = ref<Record<string, any>>({})
+const monthlyScope = ref('')  // '' = all accessible properties
+const propertyOptions = computed(() =>
+  Object.entries(summary.value?.statistics?.by_property ?? {}).map(([id, e]: [string, any]) => ({ id, name: e.name })),
+)
 const oilPriceHistory = ref<{ history: Array<{date: string; price: number}>; forecast: Array<{date: string; price: number}> } | null>(null)
 
 // ── Buy signal ────────────────────────────────────────────────────────────────

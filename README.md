@@ -9,6 +9,7 @@ A self-hosted utility meter management application. Take a photo of any meter (e
 - Serial number detection — warns when the photo doesn't match the registered meter
 - Oil heating price tracking (daily cronjob, heizoel-aktuell source)
 - Dashboard with consumption overview, daily averages per meter, meter type aggregates, and heating oil buy signal
+- Consumption statistics: 30-day rate and trend against the yearly average per meter, consumption per month with the same month of the previous year, year to date against last year with cost where a price is known, oil range for the tank group at the yearly and the 30-day rate, an "unusually high" marker for water and electricity, and the same figures per property and across all accessible properties (`/api/dashboard/summary`, `/api/dashboard/monthly`, `/api/dashboard/yearly`)
 - Admins and superadmins can edit or delete individual readings directly in the meter detail view
 - Role-based access: `superadmin` / `admin` / `manager` / `user`
 - SSO via OIDC (Authentik or any OpenID Connect provider) with PKCE

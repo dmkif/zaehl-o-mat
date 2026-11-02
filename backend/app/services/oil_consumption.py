@@ -39,7 +39,7 @@ class Interval:
     days: float
     # None for an unknown interval (probable delivery or dismissed jump)
     consumption: Optional[float]
-    state: str  # "known" | "probable_delivery" | "dismissed_jump"
+    state: str  # "known" | "probable_delivery" | "dismissed_jump" | "skipped" (water/electricity)
 
 
 @dataclass(frozen=True)
@@ -91,10 +91,13 @@ def assign_deliveries(readings_by_meter: dict, deliveries) -> dict:
     return assigned
 
 
-def compute_oil_consumption(readings, deliveries, dismissed, now: datetime) -> ConsumptionResult:
+def compute_oil_consumption(
+    readings, deliveries, dismissed, now: datetime, window_days: int = WINDOW_DAYS
+) -> ConsumptionResult:
     """readings: objects with id/value/read_at; deliveries: objects with liters/delivered_at;
-    dismissed: set of (from_reading_id, to_reading_id); now: end of the 365-day window."""
-    since = _utc(now) - timedelta(days=WINDOW_DAYS)
+    dismissed: set of (from_reading_id, to_reading_id); now: end of the window;
+    window_days: length of the window (default 365, the rate shown on the dashboard)."""
+    since = _utc(now) - timedelta(days=window_days)
     points = sorted(
         (r for r in readings if _utc(r.read_at) >= since),
         key=lambda r: (_utc(r.read_at), r.id),
