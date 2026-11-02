@@ -514,3 +514,40 @@ class TestMonthlyCost:
         by_month = {r["month"]: r for r in body["series"][0]["months"]}
         assert by_month["2026-09"]["cost"] == pytest.approx(900.0)
         assert by_month["2026-08"]["cost"] is None
+
+
+class TestUnusuallyHighFlag:
+    def test_water_meter_with_doubled_pace_is_flagged(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        now = NOW()
+        make_reading(db, m.id, 0.0, now - timedelta(days=150))
+        make_reading(db, m.id, 60.0, now - timedelta(days=60))    # 0.67/day
+        make_reading(db, m.id, 180.0, now - timedelta(days=20))   # 3/day
+        make_reading(db, m.id, 300.0, now)                         # 6/day
+        e = _summary(client, _admin(db))["meters"][0]
+        assert e["unusually_high"] is True
+
+    def test_same_pattern_on_an_oil_tank_is_not_flagged(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.oil, unit=MeterUnit.liter, name="Tank")
+        now = NOW()
+        for days_ago, level in ((150, 1000.0), (60, 940.0), (20, 820.0), (0, 700.0)):
+            make_reading(db, m.id, level, now - timedelta(days=days_ago))
+        e = _summary(client, _admin(db))["meters"][0]
+        assert e["unusually_high"] is False
+
+    def test_young_meter_is_not_flagged(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id, meter_type=MeterType.water, unit=MeterUnit.m3)
+        now = NOW()
+        make_reading(db, m.id, 0.0, now - timedelta(days=30))
+        make_reading(db, m.id, 1.0, now - timedelta(days=20))
+        make_reading(db, m.id, 100.0, now)
+        assert _summary(client, _admin(db))["meters"][0]["unusually_high"] is False
+
+    def test_flag_is_false_when_there_is_nothing_to_compare(self, client, db):
+        prop = make_property(db)
+        m = make_meter(db, prop.id)
+        make_reading(db, m.id, 5.0)
+        assert _summary(client, _admin(db))["meters"][0]["unusually_high"] is False

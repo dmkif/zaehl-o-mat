@@ -59,6 +59,7 @@ export default {
     previous_period: 'Vorjahr (gleicher Zeitraum)',
     cost: 'Kosten',
     cost_partial: 'unvollständig (nicht alle Preise bekannt)',
+    unusually_high: 'Ungewöhnlich hoher Verbrauch',
     per_day: '/Tag',
   },
   meter_types: {

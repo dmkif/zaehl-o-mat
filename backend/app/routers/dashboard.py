@@ -22,7 +22,7 @@ from app.schemas.dashboard import MonthlyResponse, YearlyResponse
 from app.services.consumption_stats import (
     LOCAL_TZ,
     aggregate_overall, delivery_spend, group_range, group_statistics, last_interval_rate, merge_month_series, monthly_series, recent_rate, tank_group_key,
-    trend_pct, yearly_rate, month_bounds, month_totals, unit_price_costs, year_summary,
+    trend_pct, unusually_high, yearly_rate, month_bounds, month_totals, unit_price_costs, year_summary,
 )
 from app.services.oil_loader import load_oil_results
 from app.services.stats_loader import load_intervals
@@ -109,6 +109,7 @@ def dashboard_summary(
                 "avg_daily_consumption_30d": recent,
                 "daily_consumption_last_interval": last_interval_rate(intervals),
                 "trend_30d_vs_365d_pct": trend_pct(recent, avg_daily),
+                "unusually_high": unusually_high(intervals, recent, avg_daily, m.meter_type.value),
             }
         )
 

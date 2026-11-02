@@ -162,13 +162,13 @@ description: "Task list for feature 015 - consumption statistics"
 
 ### Tests for US5 (write first)
 
-- [ ] T048 [P] [US5] Pure tests for `unusually_high` (factor 2 boundary, 60-day data minimum, oil always false) in `backend/tests/test_consumption_stats.py`; API test that the summary meter entry carries the flag in `backend/tests/test_dashboard_statistics.py`
-- [ ] T049 [P] [US5] Vitest assertion in `frontend/src/components/__tests__/TrendLine.test.ts` that the marker renders only when `unusually_high` is true
+- [X] T048 [P] [US5] Pure tests for `unusually_high` (factor 2 boundary, 60-day data minimum, oil always false) in `backend/tests/test_consumption_stats.py`; API test that the summary meter entry carries the flag in `backend/tests/test_dashboard_statistics.py`
+- [X] T049 [P] [US5] Vitest assertion in `frontend/src/components/__tests__/TrendLine.test.ts` that the marker renders only when `unusually_high` is true
 
 ### Implementation for US5
 
-- [ ] T050 [US5] Implement `unusually_high` with named constants (`UNUSUAL_FACTOR = 2`, `UNUSUAL_MIN_DAYS = 60`) in `backend/app/services/consumption_stats.py`; add it to the summary meter entries in `backend/app/routers/dashboard.py`
-- [ ] T051 [US5] Render the marker in `frontend/src/components/TrendLine.vue`; i18n keys
+- [X] T050 [US5] Implement `unusually_high` with named constants (`UNUSUAL_FACTOR = 2`, `UNUSUAL_MIN_DAYS = 60`) in `backend/app/services/consumption_stats.py`; add it to the summary meter entries in `backend/app/routers/dashboard.py`
+- [X] T051 [US5] Render the marker in `frontend/src/components/TrendLine.vue`; i18n keys
 
 ---
 

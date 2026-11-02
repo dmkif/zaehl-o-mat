@@ -668,3 +668,38 @@ class TestUnitPriceCost:
         from app.services.consumption_stats import unit_price_costs
 
         assert unit_price_costs([("2026-01", 10.0)], []) == ({}, False)
+
+
+class TestUnusuallyHigh:
+    def _long(self):
+        return ivs((0, at(0)), (80, at(80)), (160, at(100)))  # 1/day, then 4/day
+
+    def test_flag_when_recent_is_at_least_double(self):
+        from app.services.consumption_stats import unusually_high
+
+        assert unusually_high(self._long(), recent=4.0, yearly=1.6, meter_type="water") is True
+
+    def test_boundary_exactly_double_counts(self):
+        from app.services.consumption_stats import unusually_high
+
+        assert unusually_high(self._long(), recent=2.0, yearly=1.0, meter_type="electricity") is True
+        assert unusually_high(self._long(), recent=1.99, yearly=1.0, meter_type="electricity") is False
+
+    def test_never_for_oil(self):
+        from app.services.consumption_stats import unusually_high
+
+        assert unusually_high(self._long(), recent=40.0, yearly=1.0, meter_type="oil") is False
+
+    def test_needs_60_days_of_data(self):
+        from app.services.consumption_stats import unusually_high
+
+        short = ivs((0, at(0)), (10, at(20)), (100, at(30)))
+        assert unusually_high(short, recent=9.0, yearly=1.0, meter_type="water") is False
+
+    def test_false_without_values(self):
+        from app.services.consumption_stats import unusually_high
+
+        assert unusually_high(self._long(), recent=None, yearly=1.0, meter_type="water") is False
+        assert unusually_high(self._long(), recent=4.0, yearly=None, meter_type="water") is False
+        assert unusually_high(self._long(), recent=4.0, yearly=0.0, meter_type="water") is False
+        assert unusually_high([], recent=4.0, yearly=1.0, meter_type="water") is False

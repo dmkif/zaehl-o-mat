@@ -433,3 +433,24 @@ def unit_price_costs(months: Iterable[tuple[str, Optional[float]]], prices: list
 
 
 month_bounds = _month_bounds
+
+
+UNUSUAL_FACTOR = 2.0
+UNUSUAL_MIN_DAYS = 60
+
+
+def unusually_high(
+    intervals: Iterable[Interval], recent: Optional[float], yearly: Optional[float], meter_type: str
+) -> bool:
+    """Water / electricity: the recent rate is at least twice the yearly rate and there is
+    enough history (60 days) to call it unusual. Never for oil: more oil in cold weather is
+    expected, the trend alone tells that story."""
+    if meter_type == "oil" or recent is None or yearly is None or yearly <= 0:
+        return False
+    ordered = list(intervals)
+    if not ordered:
+        return False
+    span_days = (_utc(max(iv.to_at for iv in ordered)) - _utc(min(iv.from_at for iv in ordered))).total_seconds() / 86400
+    if span_days < UNUSUAL_MIN_DAYS:
+        return False
+    return recent >= UNUSUAL_FACTOR * yearly

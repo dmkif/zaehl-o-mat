@@ -47,4 +47,13 @@ describe('TrendLine (spec 015)', () => {
     expect(el.querySelector('[data-testid=trend-pct]')).toBeNull()
     expect(el.textContent).toContain('30 Tage')
   })
+
+  it('shows the unusual marker only when the server says so', async () => {
+    const on = await render({ unit: 'm³', avg_daily_consumption_30d: 1, unusually_high: true })
+    expect(on.querySelector('[data-testid=unusually-high]')).not.toBeNull()
+    const off = await render({ unit: 'm³', avg_daily_consumption_30d: 1, unusually_high: false })
+    expect(off.querySelector('[data-testid=unusually-high]')).toBeNull()
+    const oil = await render({ unit: 'L', avg_daily_consumption_30d: 9, trend_30d_vs_365d_pct: 300 })
+    expect(oil.querySelector('[data-testid=unusually-high]')).toBeNull()
+  })
 })
