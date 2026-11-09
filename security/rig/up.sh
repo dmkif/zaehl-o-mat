@@ -34,7 +34,7 @@ mkdir -p "$STATE/pids" "$STATE/uploads"
 chmod 700 "$STATE"
 
 # --- python venv --------------------------------------------------------------
-if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import fastapi, uvicorn, sqlalchemy, alembic, psycopg2, httpx, pytest, pytest_asyncio, pytest_timeout, authlib, PIL' 2>/dev/null; then
+if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import fastapi, uvicorn, sqlalchemy, alembic, psycopg, httpx, pytest, pytest_asyncio, pytest_timeout, authlib, PIL' 2>/dev/null; then
   log "creating security/.venv from security/requirements.txt"
   rm -rf "$VENV"
   "${SEC_PYTHON:-python3}" -m venv "$VENV"
@@ -88,7 +88,7 @@ ok=0
 for _ in $(seq 1 60); do
   # initdb restarts the server once; require two consecutive successes over TCP
   if podman exec "$PG_CONTAINER" pg_isready -h 127.0.0.1 -U rig -d rig >/dev/null 2>&1 \
-     && "$PY" -c "import psycopg2,sys;psycopg2.connect(sys.argv[1]).close()" "$DATABASE_URL" 2>/dev/null; then
+     && "$PY" -c "import psycopg,sys;psycopg.connect(sys.argv[1]).close()" "$DATABASE_URL" 2>/dev/null; then
     ok=$((ok+1)); [ "$ok" -ge 2 ] && break
   else ok=0; fi
   sleep 1
