@@ -7,6 +7,13 @@ metadata:
     app.kubernetes.io/component: backend
 spec:
   replicas: {{ .Values.replicaCount }}
+  {{- if .Values.persistence.enabled }}
+  # The uploads volume is ReadWriteOnce: a rolling update would start the new
+  # pod while the old one still holds the volume, and on another node it never
+  # becomes ready. Recreate stops the old pod first.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "zaehl-o-mat.selectorLabels" . | nindent 6 }}
