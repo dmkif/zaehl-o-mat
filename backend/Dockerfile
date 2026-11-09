@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps for psycopg2
+# System deps for the PostgreSQL driver (libpq)
 # upgrade: Debian security fixes that the slim base image does not carry yet
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \

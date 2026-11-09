@@ -399,10 +399,9 @@ async def _client(client, name):
 
 
 def _db(rig):
-    import psycopg2
+    import psycopg
 
-    conn = psycopg2.connect(rig["DATABASE_URL"])
-    conn.autocommit = True
+    conn = psycopg.connect(rig["DATABASE_URL"], autocommit=True)
     return conn
 
 
