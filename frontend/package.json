@@ -24,7 +24,7 @@
     "@tailwindcss/vite": "^4.3.4",
     "@typescript-eslint/parser": "^8.72.1",
     "@vitejs/plugin-vue": "^6.0.10",
-    "@vitest/ui": "^1.6.1",
+    "@vitest/ui": "^5.1.0",
     "@vue/tsconfig": "^0.9.1",
     "eslint": "^10.14.0",
     "eslint-plugin-security": "^4.2.1",
@@ -32,7 +32,7 @@
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
     "vite": "^8.3.6",
-    "vitest": "^1.6.1",
+    "vitest": "^5.1.0",
     "vue-eslint-parser": "^10.4.2",
     "vue-tsc": "^3.3.14"
   }
