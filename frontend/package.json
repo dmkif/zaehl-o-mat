@@ -11,18 +11,18 @@
     "lint:security": "eslint ."
   },
   "dependencies": {
-    "apexcharts": "^8.7.0",
+    "apexcharts": "^8.8.1",
     "pinia": "^3.0.4",
     "vue": "^3.5.45",
     "vue-advanced-cropper": "^2.8.9",
     "vue-i18n": "^11.4.18",
-    "vue-router": "^5.4.0",
+    "vue-router": "^5.5.0",
     "vue3-apexcharts": "^1.11.3"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.10",
-    "@tailwindcss/vite": "^4.3.4",
-    "@typescript-eslint/parser": "^8.72.1",
+    "@tailwindcss/vite": "^4.3.5",
+    "@typescript-eslint/parser": "^8.72.2",
     "@vitejs/plugin-vue": "^6.0.10",
     "@vitest/ui": "^5.1.0",
     "@vue/tsconfig": "^0.9.1",
@@ -31,7 +31,7 @@
     "happy-dom": "^21.0.4",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.2",
-    "vite": "^8.3.6",
+    "vite": "^8.3.8",
     "vitest": "^5.1.0",
     "vue-eslint-parser": "^10.4.2",
     "vue-tsc": "^3.3.14"
