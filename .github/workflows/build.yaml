@@ -39,7 +39,7 @@ jobs:
 
       - name: Extract Docker metadata (backend)
         id: meta-backend
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
@@ -60,7 +60,7 @@ jobs:
 
       - name: Extract Docker metadata (frontend)
         id: meta-frontend
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
@@ -81,7 +81,7 @@ jobs:
 
       - name: Extract Docker metadata (ocr)
         id: meta-ocr
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.OCR_IMAGE }}
           tags: |
