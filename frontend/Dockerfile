@@ -6,7 +6,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM ghcr.io/static-web-server/static-web-server:2@sha256:23be6c04d474979d6e738081918f5874f88502a150d1123fd000719101a0f05c
+FROM ghcr.io/static-web-server/static-web-server:2@sha256:ccf2d666ffe5f8ef2ec96bc40f07757605998c04b78f7d8fdb98a584dd4f5717
 
 COPY --from=build /app/dist /public
 
